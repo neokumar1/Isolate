@@ -187,7 +187,7 @@ struct LibraryView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 36)
+        .padding(.top, 50)
         .padding(.bottom, 6)
     }
     

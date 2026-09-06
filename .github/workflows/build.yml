@@ -29,3 +29,7 @@ jobs:
       - name: Build macOS App (Release)
         run: |
           xcodebuild -scheme Isolate -configuration Release -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+
+      - name: Run Unit Tests
+        run: |
+          xcodebuild test -scheme Isolate -destination 'platform=macOS' -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO

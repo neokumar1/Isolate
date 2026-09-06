@@ -80,7 +80,7 @@ public struct PlayerView: View {
             HStack(spacing: 16) {
                 if let isSidebarVisible = isSidebarVisible {
                     sidebarToggleButton(isSidebarVisible: isSidebarVisible)
-                        .padding(.leading, isSidebarVisible.wrappedValue ? 0 : 64)
+                        .padding(.leading, isSidebarVisible.wrappedValue ? 0 : 80)
                 }
                 
                 AlbumArtView(image: engineManager.albumArt)
@@ -1728,7 +1728,7 @@ struct StemBalanceHUDView: View {
     
     var body: some View {
         HStack(spacing: 8) {
-            stemChannelCard(
+            StemChannelCardView(
                 index: 0,
                 name: "VOCALS",
                 vol: engineManager.vocalVolume,
@@ -1738,7 +1738,7 @@ struct StemBalanceHUDView: View {
                 magnitudes: engineManager.vocalEQMagnitudes,
                 accentColor: .white
             )
-            stemChannelCard(
+            StemChannelCardView(
                 index: 1,
                 name: "DRUMS",
                 vol: engineManager.drumVolume,
@@ -1748,7 +1748,7 @@ struct StemBalanceHUDView: View {
                 magnitudes: engineManager.drumEQMagnitudes,
                 accentColor: .red
             )
-            stemChannelCard(
+            StemChannelCardView(
                 index: 2,
                 name: "BASS",
                 vol: engineManager.bassVolume,
@@ -1758,7 +1758,7 @@ struct StemBalanceHUDView: View {
                 magnitudes: engineManager.bassEQMagnitudes,
                 accentColor: .red
             )
-            stemChannelCard(
+            StemChannelCardView(
                 index: 3,
                 name: "OTHER",
                 vol: engineManager.otherVolume,
@@ -1771,92 +1771,37 @@ struct StemBalanceHUDView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+// MARK: - Stem Channel Card Subview
+struct StemChannelCardView: View {
+    @Environment(AudioEngineManager.self) private var engineManager
+    let index: Int
+    let name: String
+    let vol: Double
+    let pan: Float
+    let isMuted: Bool
+    let isSolo: Bool
+    let magnitudes: [Float]
+    let accentColor: Color
     
-    private func stemChannelCard(
-        index: Int,
-        name: String,
-        vol: Double,
-        pan: Float,
-        isMuted: Bool,
-        isSolo: Bool,
-        magnitudes: [Float],
-        accentColor: Color
-    ) -> some View {
+    private var isAudible: Bool {
         let anySolo = engineManager.vocalSolo || engineManager.drumSolo || engineManager.bassSolo || engineManager.otherSolo
-        let isAudible = !isMuted && (!anySolo || isSolo)
-        let audioEnergy = (engineManager.isPlaying && isAudible) ? CGFloat(magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))) * 2.8 : 0.0
-        let clampedEnergy = max(0.0, min(1.0, audioEnergy))
-        
-        return VStack(spacing: 3) {
-            // Header Row: Stem Name & Volume Readout
-            HStack {
-                Text(name)
-                    .font(.custom("DotGothic16-Regular", size: 9.0))
-                    .fontWeight(.bold)
-                    .foregroundColor(accentColor)
-                Spacer()
-                Text(isMuted ? "MUTED" : (isSolo ? "SOLO" : "\(Int(vol * 100))%"))
-                    .font(.custom("DotGothic16-Regular", size: 8.0))
-                    .foregroundColor(isMuted ? .red : (isSolo ? .red : .gray))
-            }
-            
-            // Live 10-Segment LED VU Audio Meter
-            HStack(spacing: 1.5) {
-                ForEach(0..<10, id: \.self) { seg in
-                    let segThreshold = CGFloat(seg + 1) / 10.0
-                    let isLit = clampedEnergy >= segThreshold
-                    let isPeak = seg >= 8
-                    let segColor: Color = isPeak ? Color.red : (accentColor == .red ? Color.red.opacity(0.9) : Color.white.opacity(0.9))
-                    
-                    Rectangle()
-                        .fill(isLit ? segColor : Color.white.opacity(0.06))
-                        .frame(height: 5)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 1))
-            
-            // Interactive Quick Mute & Solo Buttons
-            HStack(spacing: 4) {
-                Button(action: {
-                    Haptics.playClick()
-                    engineManager.toggleMute(index)
-                }) {
-                    Text("M")
-                        .font(.custom("DotGothic16-Regular", size: 8.0))
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 2)
-                        .background(isMuted ? Color.red : Color.white.opacity(0.06))
-                        .foregroundColor(isMuted ? .black : Color.gray)
-                        .clipShape(RoundedRectangle(cornerRadius: 2))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .stroke(isMuted ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                
-                Button(action: {
-                    Haptics.playClick()
-                    engineManager.soloStem(index)
-                }) {
-                    Text("S")
-                        .font(.custom("DotGothic16-Regular", size: 8.0))
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 2)
-                        .background(isSolo ? Color.red : Color.white.opacity(0.06))
-                        .foregroundColor(isSolo ? .black : Color.gray)
-                        .clipShape(RoundedRectangle(cornerRadius: 2))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .stroke(isSolo ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
+        return !isMuted && (!anySolo || isSolo)
+    }
+    
+    private var clampedEnergy: CGFloat {
+        guard engineManager.isPlaying && isAudible else { return 0.0 }
+        let avg = magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))
+        let energy = CGFloat(avg) * 2.8
+        return max(0.0, min(1.0, energy))
+    }
+    
+    var body: some View {
+        VStack(spacing: 3) {
+            headerRow
+            vuMeterRow
+            actionsRow
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 6)
@@ -1865,8 +1810,81 @@ struct StemBalanceHUDView: View {
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(isSolo ? Color.red : (isMuted ? Color.white.opacity(0.08) : Color.white.opacity(0.08)), lineWidth: 1)
+                .stroke(isSolo ? Color.red : Color.white.opacity(0.08), lineWidth: 1)
         )
+    }
+    
+    private var headerRow: some View {
+        HStack {
+            Text(name)
+                .font(.custom("DotGothic16-Regular", size: 9.0))
+                .fontWeight(.bold)
+                .foregroundColor(accentColor)
+            Spacer()
+            Text(isMuted ? "MUTED" : (isSolo ? "SOLO" : "\(Int(vol * 100))%"))
+                .font(.custom("DotGothic16-Regular", size: 8.0))
+                .foregroundColor(isMuted ? .red : (isSolo ? .red : .gray))
+        }
+    }
+    
+    private var vuMeterRow: some View {
+        HStack(spacing: 1.5) {
+            ForEach(0..<10, id: \.self) { seg in
+                let segThreshold = CGFloat(seg + 1) / 10.0
+                let isLit = clampedEnergy >= segThreshold
+                let isPeak = seg >= 8
+                let segColor: Color = isPeak ? Color.red : (accentColor == .red ? Color.red.opacity(0.9) : Color.white.opacity(0.9))
+                
+                Rectangle()
+                    .fill(isLit ? segColor : Color.white.opacity(0.06))
+                    .frame(height: 5)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 1))
+    }
+    
+    private var actionsRow: some View {
+        HStack(spacing: 4) {
+            Button(action: {
+                Haptics.playClick()
+                engineManager.toggleMute(index)
+            }) {
+                Text("M")
+                    .font(.custom("DotGothic16-Regular", size: 8.0))
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
+                    .background(isMuted ? Color.red : Color.white.opacity(0.06))
+                    .foregroundColor(isMuted ? .black : Color.gray)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(isMuted ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            Button(action: {
+                Haptics.playClick()
+                engineManager.soloStem(index)
+            }) {
+                Text("S")
+                    .font(.custom("DotGothic16-Regular", size: 8.0))
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
+                    .background(isSolo ? Color.red : Color.white.opacity(0.06))
+                    .foregroundColor(isSolo ? .black : Color.gray)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(isSolo ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
     }
 }
 

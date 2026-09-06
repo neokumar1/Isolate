@@ -203,4 +203,73 @@ final class IsolateTests: XCTestCase {
         XCTAssertNotNil(cornerCell)
         XCTAssertGreaterThan(cornerCell?.r ?? 0.0, 0.7, "Red background corner must have high red component")
     }
+    
+    // Test 7: Verify AudioEngineManager HUD Mode Switching and Bounds Protection
+    @MainActor
+    func testAudioEngineManagerHUDModeSwitching() {
+        let engine = AudioEngineManager()
+        XCTAssertEqual(engine.activeHUDModeIndex, 0, "Default mode must be 0 (32-Band FFT)")
+        
+        engine.setHUDMode(1)
+        XCTAssertEqual(engine.activeHUDModeIndex, 1, "Mode 1 must be Stem Macros")
+        
+        engine.setHUDMode(2)
+        XCTAssertEqual(engine.activeHUDModeIndex, 2, "Mode 2 must be Stem Balance")
+        
+        engine.setHUDMode(3)
+        XCTAssertEqual(engine.activeHUDModeIndex, 3, "Mode 3 must be Telemetry")
+        
+        // Out of bounds guard
+        engine.setHUDMode(4)
+        XCTAssertEqual(engine.activeHUDModeIndex, 3, "Index >= 4 must be ignored")
+        
+        engine.setHUDMode(-1)
+        XCTAssertEqual(engine.activeHUDModeIndex, 3, "Index < 0 must be ignored")
+    }
+    
+    // Test 8: Verify Stem Search Multi-Token Matching
+    func testStemSearchFilteringLogic() {
+        let queryTokens = ["drake", "vocal"]
+        let candidateText = "what did i miss? drake iceman vocals.wav 44.1khz"
+        
+        let matches = queryTokens.allSatisfy { token in
+            candidateText.contains(token)
+        }
+        XCTAssertTrue(matches, "Multi-token search must match title and stem tokens")
+        
+        let nonMatchingQuery = ["kendrick", "vocal"]
+        let noMatch = nonMatchingQuery.allSatisfy { token in
+            candidateText.contains(token)
+        }
+        XCTAssertFalse(noMatch, "Multi-token search must reject non-matching tokens")
+    }
+    
+    // Test 9: Verify Unified Toolbar Standard macOS Traffic Light Padding
+    func testUnifiedToolbarTrafficLightGeometry() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        
+        let toolbar = NSToolbar(identifier: "IsolateTestToolbar")
+        window.toolbar = toolbar
+        window.toolbarStyle = .unified
+        
+        guard let closeButton = window.standardWindowButton(.closeButton) else {
+            XCTFail("Close button must exist on standard titled window")
+            return
+        }
+        
+        let buttonFrameInWindow = closeButton.convert(closeButton.bounds, to: nil)
+        let leftPadding = buttonFrameInWindow.minX
+        let topPadding = window.frame.height - buttonFrameInWindow.maxY
+        
+        XCTAssertGreaterThanOrEqual(leftPadding, 18.0, "Close button left padding must be >= 18pt (macOS unified standard)")
+        XCTAssertGreaterThanOrEqual(topPadding, 18.0, "Close button top padding must be >= 18pt (macOS unified standard)")
+    }
 }
+

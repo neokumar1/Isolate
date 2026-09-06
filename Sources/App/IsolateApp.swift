@@ -1043,12 +1043,19 @@ struct WindowAccessor: NSViewRepresentable {
         window.title = ""
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
         window.isOpaque = false
         window.backgroundColor = .black
         window.minSize = NSSize(width: 960, height: 580)
         window.isMovableByWindowBackground = false
-        window.toolbar = nil
+        
+        if window.toolbar == nil {
+            let toolbar = NSToolbar(identifier: "IsolateMainWindowToolbar")
+            toolbar.displayMode = .iconOnly
+            window.toolbar = toolbar
+            window.toolbarStyle = .unified
+        }
     }
 }
 
