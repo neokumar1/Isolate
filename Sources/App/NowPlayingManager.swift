@@ -174,6 +174,11 @@ public final class NowPlayingManager: NSObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
     
+    public func clear() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+    
     public func cleanTrackTitle(_ raw: String) -> String {
         var clean = raw
         // Strip common audio extensions

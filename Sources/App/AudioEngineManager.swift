@@ -137,6 +137,15 @@ public final class AudioEngineManager: @unchecked Sendable {
         Haptics.playClick()
     }
     
+    // MARK: - HUD Visualizer Mode State (0: 32-BAND FFT, 1: STEM MACROS, 2: STEM BALANCE, 3: TELEMETRY)
+    public var activeHUDModeIndex: Int = 0
+    
+    @MainActor
+    public func setHUDMode(_ index: Int) {
+        guard index >= 0 && index < 4 else { return }
+        activeHUDModeIndex = index
+    }
+    
     private var lastSyncedNowPlayingSec: Int = -1
     
     public var totalTrackDuration: Double? {
@@ -798,6 +807,58 @@ public final class AudioEngineManager: @unchecked Sendable {
             print("Failed to load cached stems: \(error)")
             showError("FAILED TO LOAD STEMS FOR '\(track.title.uppercased())'")
         }
+    }
+    
+    @MainActor
+    public func unloadTrack() {
+        // 1. Hard stop all audio players & invalidate playback timers
+        vocalPlayer.stop()
+        drumPlayer.stop()
+        bassPlayer.stop()
+        otherPlayer.stop()
+        originalPlayer.stop()
+        isPlaying = false
+        timer?.invalidate()
+        timer = nil
+        
+        // 2. Clear all audio file references
+        fileVocals = nil
+        fileDrums = nil
+        fileBass = nil
+        fileOther = nil
+        audioFile = nil
+        
+        // 3. Reset all playback state and metadata to default standby
+        currentTrackID = nil
+        currentTrackName = "NO TRACK LOADED"
+        trackTitle = ""
+        trackArtist = "Isolate"
+        trackAlbum = "4-Stem Neural Audio"
+        albumArt = nil
+        trackBPM = "124.0 BPM"
+        trackMusicalKey = "F# MINOR"
+        trackSampleRate = "44.1 kHz"
+        trackBitDepth = "24-BIT PCM"
+        trackAudioFormat = "WAV"
+        pitchShiftSemitones = 0.0
+        playbackRate = 1.0
+        playbackProgress = 0.0
+        seekFrameOffset = 0
+        currentTimeString = "00:00 / -00:00"
+        detailedTimecode = "00:00.000 / -00:00.000"
+        isLooping = false
+        loopStartProgress = 0.0
+        loopEndProgress = 1.0
+        isBypassed = false
+        
+        // 4. Reset stem volumes, pan, mutes, solos to default unity
+        applyResetMix()
+        
+        // 5. Clear all visualizers
+        clearVisualizers()
+        
+        // 6. Clear system Now Playing center
+        NowPlayingManager.shared.clear()
     }
     
     // MARK: - Active Async Tasks

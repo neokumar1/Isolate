@@ -16,8 +16,6 @@ struct LibraryView: View {
     
     @State private var isSettingsHovered = false
     @FocusState private var isSearchFocused: Bool
-    @State private var searchBarGlobalFrame: CGRect = .zero
-    @State private var clickMonitor: Any? = nil
     
     // Custom Nothing Scrollbar State
     @State private var containerHeight: CGFloat = 0
@@ -106,6 +104,11 @@ struct LibraryView: View {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { return tracks }
         
+        // If searching generic stem terms, all tracks have 4 isolated stems
+        if trimmed == "stem" || trimmed == "stems" || trimmed == "all" {
+            return tracks
+        }
+        
         let queryTokens = trimmed
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
@@ -116,7 +119,13 @@ struct LibraryView: View {
             let titleLower = track.title.lowercased()
             let filenameLower = track.originalURL.lastPathComponent.lowercased()
             let pathLower = track.originalURL.path.lowercased()
-            let combined = "\(titleLower) \(filenameLower) \(pathLower)"
+            let extLower = track.originalURL.pathExtension.lowercased()
+            let vocalLower = track.vocalStemURL.lastPathComponent.lowercased()
+            let drumLower = track.drumStemURL.lastPathComponent.lowercased()
+            let bassLower = track.bassStemURL.lastPathComponent.lowercased()
+            let otherLower = track.otherStemURL.lastPathComponent.lowercased()
+            
+            let combined = "\(titleLower) \(filenameLower) \(pathLower) \(extLower) \(vocalLower) \(drumLower) \(bassLower) \(otherLower)"
             
             // Direct substring match
             if combined.contains(trimmed) { return true }
@@ -148,41 +157,6 @@ struct LibraryView: View {
                 footerView
             }
             .background(Color.black.opacity(0.85))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                isSearchFocused = false
-                NSApp.keyWindow?.makeFirstResponder(nil)
-                if activeMenuTrackID != nil {
-                    activeMenuTrackID = nil
-                }
-            }
-        }
-        .onAppear {
-            if clickMonitor == nil {
-                clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
-                    guard isSearchFocused else { return event }
-                    if let window = NSApp.keyWindow {
-                        let loc = event.locationInWindow
-                        let windowH = window.frame.height
-                        let flippedY = windowH - loc.y
-                        let clickPoint = CGPoint(x: loc.x, y: flippedY)
-                        
-                        if !searchBarGlobalFrame.isEmpty && !searchBarGlobalFrame.contains(clickPoint) {
-                            DispatchQueue.main.async {
-                                window.makeFirstResponder(nil)
-                                isSearchFocused = false
-                            }
-                        }
-                    }
-                    return event
-                }
-            }
-        }
-        .onDisappear {
-            if let monitor = clickMonitor {
-                NSEvent.removeMonitor(monitor)
-                clickMonitor = nil
-            }
         }
     }
     
@@ -214,7 +188,7 @@ struct LibraryView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 36)
-        .padding(.bottom, 8)
+        .padding(.bottom, 6)
     }
     
     private var searchBar: some View {
@@ -232,9 +206,18 @@ struct LibraryView: View {
                     isSearchFocused = false
                     NSApp.keyWindow?.makeFirstResponder(nil)
                 }
+                .onExitCommand {
+                    if !searchText.isEmpty {
+                        searchText = ""
+                    } else {
+                        isSearchFocused = false
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                    }
+                }
             
             if !searchText.isEmpty {
                 Button(action: {
+                    Haptics.playClick()
                     searchText = ""
                 }) {
                     Image(systemName: "xmark.circle.fill")
@@ -251,17 +234,10 @@ struct LibraryView: View {
             RoundedRectangle(cornerRadius: 3)
                 .stroke(isSearchFocused ? Color.red.opacity(0.8) : Color.white.opacity(0.12), lineWidth: 1)
         )
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear {
-                        searchBarGlobalFrame = geo.frame(in: .global)
-                    }
-                    .onChange(of: geo.frame(in: .global)) { _, newFrame in
-                        searchBarGlobalFrame = newFrame
-                    }
-            }
-        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isSearchFocused = true
+        }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }

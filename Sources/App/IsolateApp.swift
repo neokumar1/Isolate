@@ -23,6 +23,7 @@ struct IsolateApp: App {
                 isShowingAboutModal: $isShowingAboutModal,
                 isShowingSettingsModal: $isShowingSettingsModal
             )
+            .ignoresSafeArea()
             .overlay {
                 if engineManager.isSplitting {
                     SplittingProgressModal()
@@ -453,6 +454,9 @@ struct ContentView: View {
                             isShowingDeleteModal = false
                         },
                         onDelete: {
+                            let trackID = track.id
+                            let wasActive = (engineManager.currentTrackID == trackID)
+                            
                             try? FileManager.default.removeItem(at: track.vocalStemURL)
                             try? FileManager.default.removeItem(at: track.drumStemURL)
                             try? FileManager.default.removeItem(at: track.bassStemURL)
@@ -460,6 +464,10 @@ struct ContentView: View {
                             
                             modelContext.delete(track)
                             try? modelContext.save()
+                            
+                            if wasActive {
+                                engineManager.unloadTrack()
+                            }
                             isShowingDeleteModal = false
                         }
                     )
@@ -1013,19 +1021,13 @@ struct DeleteModalCard: View {
     }
 }
 
-// MARK: - Window Accessor to eliminate title text next to traffic lights
+// MARK: - Window Accessor
 struct WindowAccessor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
             if let window = view.window {
-                window.title = ""
-                window.titleVisibility = .hidden
-                window.titlebarAppearsTransparent = true
-                window.styleMask.insert(.fullSizeContentView)
-                window.isOpaque = false
-                window.backgroundColor = .black
-                window.minSize = NSSize(width: 960, height: 580)
+                applyWindowStyling(to: window)
             }
         }
         return view
@@ -1033,11 +1035,20 @@ struct WindowAccessor: NSViewRepresentable {
     
     func updateNSView(_ nsView: NSView, context: Context) {
         if let window = nsView.window {
-            window.title = ""
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.minSize = NSSize(width: 960, height: 580)
+            applyWindowStyling(to: window)
         }
+    }
+    
+    private func applyWindowStyling(to window: NSWindow) {
+        window.title = ""
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.isOpaque = false
+        window.backgroundColor = .black
+        window.minSize = NSSize(width: 960, height: 580)
+        window.isMovableByWindowBackground = false
+        window.toolbar = nil
     }
 }
 

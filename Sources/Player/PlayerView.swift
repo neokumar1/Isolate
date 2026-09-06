@@ -19,6 +19,7 @@ struct GridBackground: View {
                 .stroke(Color.white.opacity(0.04), lineWidth: 1)
             }
         }
+        .ignoresSafeArea()
     }
 }
 
@@ -35,7 +36,7 @@ public struct PlayerView: View {
     public var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                VStack(spacing: 16) {
+                VStack(spacing: 8) {
                     headerView
                     stemMixerView
                 }
@@ -79,6 +80,7 @@ public struct PlayerView: View {
             HStack(spacing: 16) {
                 if let isSidebarVisible = isSidebarVisible {
                     sidebarToggleButton(isSidebarVisible: isSidebarVisible)
+                        .padding(.leading, isSidebarVisible.wrappedValue ? 0 : 64)
                 }
                 
                 AlbumArtView(image: engineManager.albumArt)
@@ -97,10 +99,10 @@ public struct PlayerView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
         }
-        .frame(height: 124)
+        .frame(height: 110)
     }
     
     private func sidebarToggleButton(isSidebarVisible: Binding<Bool>) -> some View {
@@ -243,6 +245,27 @@ public struct PlayerView: View {
             Button("") { engineManager.applyAcapella() }.keyboardShortcut("a", modifiers: []).hidden()
             Button("") { engineManager.applyInstrumental() }.keyboardShortcut("i", modifiers: []).hidden()
             Button("") { engineManager.toggleLoop() }.keyboardShortcut("l", modifiers: []).hidden()
+            
+            // HUD Visualizer Mode Switching (⌘1 - ⌘4)
+            Button("") {
+                Haptics.playClick()
+                engineManager.setHUDMode(0)
+            }.keyboardShortcut("1", modifiers: [.command]).hidden()
+            
+            Button("") {
+                Haptics.playClick()
+                engineManager.setHUDMode(1)
+            }.keyboardShortcut("2", modifiers: [.command]).hidden()
+            
+            Button("") {
+                Haptics.playClick()
+                engineManager.setHUDMode(2)
+            }.keyboardShortcut("3", modifiers: [.command]).hidden()
+            
+            Button("") {
+                Haptics.playClick()
+                engineManager.setHUDMode(3)
+            }.keyboardShortcut("4", modifiers: [.command]).hidden()
             
             // On-The-Fly Loop Setters ([ and ])
             Button("") {
@@ -1396,12 +1419,11 @@ struct HeaderCenterTelemetryModule: View {
     let isMedium: Bool
     let isWide: Bool
     
-    @State private var activeModeIndex: Int = 0 // 0: FFT, 1: MACROS, 2: TELEMETRY, 3: BALANCE
-    private let modes = ["32-BAND FFT", "STEM MACROS", "TELEMETRY", "STEM BALANCE"]
+    private let modes = ["32-BAND FFT", "STEM MACROS", "STEM BALANCE", "TELEMETRY"]
     
     var body: some View {
         ZStack {
-            Color.black.opacity(0.65)
+            Color.black.opacity(0.70)
             
             // Outer hardware frame
             Rectangle()
@@ -1410,10 +1432,10 @@ struct HeaderCenterTelemetryModule: View {
             // Red corner brackets (Nothing aesthetic)
             CornerBrackets()
             
-            VStack(spacing: 4) {
-                // Top Telemetry / Mode Switcher Bar
+            VStack(spacing: 0) {
+                // Top Telemetry / Mode Switcher Header Bar
                 HStack(spacing: 8) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         Text("[")
                             .font(.custom("DotGothic16-Regular", size: 10))
                             .foregroundColor(.gray)
@@ -1425,41 +1447,42 @@ struct HeaderCenterTelemetryModule: View {
                             .foregroundColor(.gray)
                     }
                     
-                    if isWide {
-                        HStack(spacing: 12) {
+                    if isWide || isMedium {
+                        HStack(spacing: 8) {
                             Text("• \(engineManager.effectiveBPM)")
                                 .font(.custom("DotGothic16-Regular", size: 10))
                                 .foregroundColor(.white)
                             Text("• \(engineManager.effectiveMusicalKey)")
                                 .font(.custom("DotGothic16-Regular", size: 10))
                                 .foregroundColor(.red)
-                            Text("• \(engineManager.trackSampleRate) • \(engineManager.trackBitDepth)")
+                            Text("• \(engineManager.trackSampleRate)")
                                 .font(.custom("DotGothic16-Regular", size: 9.5))
                                 .foregroundColor(.gray)
                         }
                     }
                     
-                    Spacer()
+                    Spacer(minLength: 8)
                     
                     // Mode Switcher Tabs
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         ForEach(0..<modes.count, id: \.self) { idx in
                             Button(action: {
                                 Haptics.playClick()
-                                withAnimation(nil) {
-                                    activeModeIndex = idx
-                                }
+                                engineManager.setHUDMode(idx)
                             }) {
                                 Text(modes[idx])
                                     .font(.custom("DotGothic16-Regular", size: 8.5))
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
-                                    .background(activeModeIndex == idx ? Color.red : Color.white.opacity(0.04))
-                                    .foregroundColor(activeModeIndex == idx ? .black : (isWide && idx == 0 ? .white : .gray))
+                                    .fontWeight(engineManager.activeHUDModeIndex == idx ? .bold : .regular)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(engineManager.activeHUDModeIndex == idx ? Color.red : Color.white.opacity(0.05))
+                                    .foregroundColor(engineManager.activeHUDModeIndex == idx ? .black : Color.white.opacity(0.85))
+                                    .clipShape(RoundedRectangle(cornerRadius: 2))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 2)
-                                            .stroke(activeModeIndex == idx ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                                            .stroke(engineManager.activeHUDModeIndex == idx ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
                                     )
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
@@ -1468,79 +1491,56 @@ struct HeaderCenterTelemetryModule: View {
                     // Neural Engine Activity LED
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(engineManager.isPlaying ? Color.red : Color.gray.opacity(0.6))
+                            .fill(engineManager.isPlaying ? Color.red : Color.gray.opacity(0.5))
                             .frame(width: 5, height: 5)
+                            .shadow(color: engineManager.isPlaying ? Color.red.opacity(0.8) : Color.clear, radius: 3)
                         Text("ANE")
                             .font(.custom("DotGothic16-Regular", size: 9))
                             .foregroundColor(engineManager.isPlaying ? .red : .gray)
                     }
                 }
                 .padding(.horizontal, 10)
-                .padding(.top, 6)
+                .frame(height: 28)
                 
                 Divider()
-                    .background(Color.white.opacity(0.08))
+                    .background(Color.white.opacity(0.10))
                 
-                // Content View
-                if isWide {
-                    // Wide 16-inch screen layout
-                    if activeModeIndex == 0 {
+                // Display Body
+                ZStack {
+                    switch engineManager.activeHUDModeIndex {
+                    case 0:
                         Spectrum32BandView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 6)
-                    } else {
-                        HStack(spacing: 14) {
-                            Spectrum32BandView()
-                                .frame(maxWidth: .infinity)
-                            
-                            Divider()
-                                .background(Color.white.opacity(0.08))
-                            
-                            if activeModeIndex == 1 {
-                                StemMacroPresetsView(compact: false)
-                                    .frame(maxWidth: 480)
-                            } else if activeModeIndex == 2 {
-                                StudioTelemetryHUDView()
-                                    .frame(maxWidth: 480)
-                            } else {
-                                StemBalanceHUDView()
-                                    .frame(maxWidth: 480)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 6)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                    case 1:
+                        StemMacroPresetsView()
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                    case 2:
+                        StemBalanceHUDView()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                    case 3:
+                        StudioTelemetryHUDView()
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                    default:
+                        Spectrum32BandView()
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                     }
-                } else {
-                    // Medium screen layout
-                    Group {
-                        switch activeModeIndex {
-                        case 0:
-                            Spectrum32BandView()
-                        case 1:
-                            StemMacroPresetsView(compact: true)
-                        case 2:
-                            StudioTelemetryHUDView()
-                        case 3:
-                            StemBalanceHUDView()
-                        default:
-                            Spectrum32BandView()
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(height: 100)
     }
 }
 
-// MARK: - 32-Band Dot-Matrix FFT Spectrum Visualizer (100% Full-Width & Apple-Grade Fluid Physics)
+// MARK: - 32-Band Dot-Matrix FFT Spectrum Visualizer
 struct Spectrum32BandView: View {
     @Environment(AudioEngineManager.self) private var engineManager
     
-    // 32 Frequency Bins across standard 20Hz - 20kHz
     private var magnitudes: [Float] {
         engineManager.masterEQMagnitudes
     }
@@ -1550,7 +1550,7 @@ struct Spectrum32BandView: View {
             let totalWidth = geo.size.width
             let totalHeight = geo.size.height
             let barCount = 32
-            let spacing: CGFloat = 2.5
+            let spacing: CGFloat = 2.0
             let totalSpacing = spacing * CGFloat(barCount - 1)
             let barWidth = max(2.0, (totalWidth - totalSpacing) / CGFloat(barCount))
             
@@ -1571,8 +1571,7 @@ struct FFT32BarColumn: View {
     let width: CGFloat
     let barIndex: Int
     
-    // 16 Discrete Vertical LED segments per frequency band
-    private let blockCount = 16
+    private let blockCount = 14
     private let blockSpacing: CGFloat = 1.5
     
     var body: some View {
@@ -1600,7 +1599,7 @@ struct FFT32BarColumn: View {
                 
                 let activeColor: Color = {
                     if isTopTwoBlocks {
-                        return Color.red // Nothing hardware red peak warning
+                        return Color.red
                     } else if isUpperMidBlock {
                         return Color.white
                     } else {
@@ -1617,13 +1616,12 @@ struct FFT32BarColumn: View {
     }
 }
 
-// MARK: - Stem Macro Presets View
+// MARK: - Stem Macro Quick Presets
 struct StemMacroPresetsView: View {
     @Environment(AudioEngineManager.self) private var engineManager
-    let compact: Bool
     
     private var isAcapellaActive: Bool {
-        engineManager.vocalSolo && !engineManager.vocalMuted
+        engineManager.vocalSolo && !engineManager.vocalMuted && !engineManager.drumSolo && !engineManager.bassSolo && !engineManager.otherSolo
     }
     
     private var isInstrumentalActive: Bool {
@@ -1635,37 +1633,41 @@ struct StemMacroPresetsView: View {
     }
     
     private var isKaraokeActive: Bool {
-        abs(engineManager.vocalVolume - 0.25) < 0.05 && !engineManager.vocalMuted && !engineManager.drumMuted
+        abs(engineManager.vocalVolume - 0.25) < 0.05 && !engineManager.vocalMuted && !engineManager.drumMuted && !engineManager.bassMuted && !engineManager.otherMuted
     }
     
     private var isDnBActive: Bool {
-        engineManager.vocalMuted && !engineManager.drumMuted && !engineManager.bassMuted && engineManager.otherMuted
+        engineManager.vocalMuted && engineManager.otherMuted && !engineManager.drumMuted && !engineManager.bassMuted
     }
     
     var body: some View {
         VStack(spacing: 5) {
-            HStack(spacing: compact ? 4 : 6) {
-                macroButton(title: "ACAPELLA", isActive: isAcapellaActive) {
+            HStack(spacing: 6) {
+                macroButton(title: "ACAPELLA", desc: "SOLO VOCALS", isActive: isAcapellaActive) {
                     engineManager.applyAcapella()
                 }
-                macroButton(title: "INSTRUMENTAL", isActive: isInstrumentalActive) {
+                macroButton(title: "INSTRUMENTAL", desc: "MUTE VOCALS", isActive: isInstrumentalActive) {
                     engineManager.applyInstrumental()
                 }
-                macroButton(title: "DRUMLESS", isActive: isDrumlessActive) {
+                macroButton(title: "DRUMLESS", desc: "MUTE DRUMS", isActive: isDrumlessActive) {
                     engineManager.applyDrumless()
                 }
-                macroButton(title: "KARAOKE", isActive: isKaraokeActive) {
+                macroButton(title: "KARAOKE", desc: "-12dB VOCALS", isActive: isKaraokeActive) {
                     engineManager.applyKaraoke()
                 }
-                macroButton(title: "D&B", isActive: isDnBActive) {
+                macroButton(title: "D&B", desc: "DRUMS + BASS", isActive: isDnBActive) {
                     engineManager.applyDrumAndBass()
                 }
-                macroButton(title: "RESET", isActive: false) {
+                macroButton(title: "RESET MIX", desc: "UNITY 0dB", isActive: false) {
                     engineManager.applyResetMix()
                 }
             }
+            .frame(maxWidth: .infinity)
             
-            HStack {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 4, height: 4)
                 Text(activePresetDescription)
                     .font(.custom("DotGothic16-Regular", size: 9))
                     .foregroundColor(.gray)
@@ -1673,135 +1675,263 @@ struct StemMacroPresetsView: View {
                 Spacer()
             }
         }
-        .frame(maxHeight: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
     
     private var activePresetDescription: String {
-        if isAcapellaActive { return "ACTIVE: VOCAL ISOLATION (BACKING MUTED)" }
-        if isInstrumentalActive { return "ACTIVE: INSTRUMENTAL (VOCALS MUTED)" }
-        if isDrumlessActive { return "ACTIVE: DRUMLESS PRACTICE TRACK" }
-        if isKaraokeActive { return "ACTIVE: KARAOKE MODE (-12dB LEAD VOCALS)" }
-        if isDnBActive { return "ACTIVE: DRUM & BASS (VOCALS & OTHER MUTED)" }
-        return "ACTIVE: BALANCED 4-STEM MASTER (UNITY GAIN)"
+        if isAcapellaActive { return "STATUS: VOCAL ISOLATION • BACKING STEMS MUTED" }
+        if isInstrumentalActive { return "STATUS: INSTRUMENTAL • LEAD VOCALS MUTED" }
+        if isDrumlessActive { return "STATUS: DRUMLESS PRACTICE • DRUMS MUTED" }
+        if isKaraokeActive { return "STATUS: KARAOKE MODE • -12dB LEAD VOCALS" }
+        if isDnBActive { return "STATUS: DRUM & BASS • VOCALS & OTHER MUTED" }
+        return "STATUS: BALANCED 4-STEM MASTER • 0.0 dB UNITY GAIN"
     }
     
-    private func macroButton(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+    private func macroButton(title: String, desc: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: {
-            if isActive {
-                engineManager.applyResetMix()
-            } else {
-                action()
-            }
+            action()
         }) {
-            Text(title)
-                .font(.custom("DotGothic16-Regular", size: compact ? 9.0 : 10.0))
-                .fontWeight(.bold)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, compact ? 5 : 8)
-                .padding(.vertical, compact ? 4 : 5)
-                .background(isActive ? Color.red : Color.white.opacity(0.06))
-                .foregroundColor(isActive ? .black : .white)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3)
-                        .stroke(isActive ? Color.red : Color.gray.opacity(0.5), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 3))
+            VStack(spacing: 2) {
+                HStack(spacing: 3) {
+                    if isActive {
+                        Circle()
+                            .fill(Color.black)
+                            .frame(width: 4, height: 4)
+                    }
+                    Text(title)
+                        .font(.custom("DotGothic16-Regular", size: 9.5))
+                        .fontWeight(.bold)
+                }
+                Text(desc)
+                    .font(.custom("DotGothic16-Regular", size: 7.5))
+                    .opacity(isActive ? 0.85 : 0.6)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 4)
+            .background(isActive ? Color.red : Color.white.opacity(0.04))
+            .foregroundColor(isActive ? .black : .white)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(isActive ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 }
 
-// MARK: - Studio Telemetry HUD View
-struct StudioTelemetryHUDView: View {
-    @Environment(AudioEngineManager.self) private var engineManager
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 6) {
-                telemetryBox(label: "TEMPO / KEY", value: "\(engineManager.effectiveBPM) • \(engineManager.effectiveMusicalKey)")
-                telemetryBox(label: "AUDIO FORMAT", value: "\(engineManager.trackBitDepth) • \(engineManager.trackSampleRate)")
-            }
-            HStack(spacing: 6) {
-                telemetryBox(label: "TIMECODE", value: engineManager.detailedTimecode)
-                telemetryBox(label: "NEURAL ENGINE", value: "\(AudioEngineManager.systemChipName) ANE • REALTIME")
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-    
-    private func telemetryBox(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.red.opacity(0.85))
-                    .frame(width: 3.5, height: 3.5)
-                Text(label)
-                    .font(.custom("DotGothic16-Regular", size: 8.0))
-                    .foregroundColor(.red.opacity(0.85))
-                Spacer()
-            }
-            Text(value)
-                .font(.custom("DotGothic16-Regular", size: 9.5))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3.5)
-        .background(Color.white.opacity(0.03))
-        .overlay(
-            Rectangle()
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-    }
-}
-
-// MARK: - Stem Balance HUD View
+// MARK: - Stem Balance HUD View with Live VU Meters & Direct Quick Actions
 struct StemBalanceHUDView: View {
     @Environment(AudioEngineManager.self) private var engineManager
     
     var body: some View {
         HStack(spacing: 8) {
-            stemMeter(name: "VOC", vol: engineManager.vocalVolume, isMuted: engineManager.vocalMuted, isSolo: engineManager.vocalSolo, color: .white)
-            stemMeter(name: "DRM", vol: engineManager.drumVolume, isMuted: engineManager.drumMuted, isSolo: engineManager.drumSolo, color: .red)
-            stemMeter(name: "BAS", vol: engineManager.bassVolume, isMuted: engineManager.bassMuted, isSolo: engineManager.bassSolo, color: .red)
-            stemMeter(name: "OTH", vol: engineManager.otherVolume, isMuted: engineManager.otherMuted, isSolo: engineManager.otherSolo, color: .white)
+            stemChannelCard(
+                index: 0,
+                name: "VOCALS",
+                vol: engineManager.vocalVolume,
+                pan: engineManager.vocalPan,
+                isMuted: engineManager.vocalMuted,
+                isSolo: engineManager.vocalSolo,
+                magnitudes: engineManager.vocalEQMagnitudes,
+                accentColor: .white
+            )
+            stemChannelCard(
+                index: 1,
+                name: "DRUMS",
+                vol: engineManager.drumVolume,
+                pan: engineManager.drumPan,
+                isMuted: engineManager.drumMuted,
+                isSolo: engineManager.drumSolo,
+                magnitudes: engineManager.drumEQMagnitudes,
+                accentColor: .red
+            )
+            stemChannelCard(
+                index: 2,
+                name: "BASS",
+                vol: engineManager.bassVolume,
+                pan: engineManager.bassPan,
+                isMuted: engineManager.bassMuted,
+                isSolo: engineManager.bassSolo,
+                magnitudes: engineManager.bassEQMagnitudes,
+                accentColor: .red
+            )
+            stemChannelCard(
+                index: 3,
+                name: "OTHER",
+                vol: engineManager.otherVolume,
+                pan: engineManager.otherPan,
+                isMuted: engineManager.otherMuted,
+                isSolo: engineManager.otherSolo,
+                magnitudes: engineManager.otherEQMagnitudes,
+                accentColor: .white
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func stemChannelCard(
+        index: Int,
+        name: String,
+        vol: Double,
+        pan: Float,
+        isMuted: Bool,
+        isSolo: Bool,
+        magnitudes: [Float],
+        accentColor: Color
+    ) -> some View {
+        let anySolo = engineManager.vocalSolo || engineManager.drumSolo || engineManager.bassSolo || engineManager.otherSolo
+        let isAudible = !isMuted && (!anySolo || isSolo)
+        let audioEnergy = (engineManager.isPlaying && isAudible) ? CGFloat(magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))) * 2.8 : 0.0
+        let clampedEnergy = max(0.0, min(1.0, audioEnergy))
+        
+        return VStack(spacing: 3) {
+            // Header Row: Stem Name & Volume Readout
+            HStack {
+                Text(name)
+                    .font(.custom("DotGothic16-Regular", size: 9.0))
+                    .fontWeight(.bold)
+                    .foregroundColor(accentColor)
+                Spacer()
+                Text(isMuted ? "MUTED" : (isSolo ? "SOLO" : "\(Int(vol * 100))%"))
+                    .font(.custom("DotGothic16-Regular", size: 8.0))
+                    .foregroundColor(isMuted ? .red : (isSolo ? .red : .gray))
+            }
+            
+            // Live 10-Segment LED VU Audio Meter
+            HStack(spacing: 1.5) {
+                ForEach(0..<10, id: \.self) { seg in
+                    let segThreshold = CGFloat(seg + 1) / 10.0
+                    let isLit = clampedEnergy >= segThreshold
+                    let isPeak = seg >= 8
+                    let segColor: Color = isPeak ? Color.red : (accentColor == .red ? Color.red.opacity(0.9) : Color.white.opacity(0.9))
+                    
+                    Rectangle()
+                        .fill(isLit ? segColor : Color.white.opacity(0.06))
+                        .frame(height: 5)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 1))
+            
+            // Interactive Quick Mute & Solo Buttons
+            HStack(spacing: 4) {
+                Button(action: {
+                    Haptics.playClick()
+                    engineManager.toggleMute(index)
+                }) {
+                    Text("M")
+                        .font(.custom("DotGothic16-Regular", size: 8.0))
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 2)
+                        .background(isMuted ? Color.red : Color.white.opacity(0.06))
+                        .foregroundColor(isMuted ? .black : Color.gray)
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(isMuted ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: {
+                    Haptics.playClick()
+                    engineManager.soloStem(index)
+                }) {
+                    Text("S")
+                        .font(.custom("DotGothic16-Regular", size: 8.0))
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 2)
+                        .background(isSolo ? Color.red : Color.white.opacity(0.06))
+                        .foregroundColor(isSolo ? .black : Color.gray)
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(isSolo ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .overlay(
+            RoundedRectangle(cornerRadius: 3)
+                .stroke(isSolo ? Color.red : (isMuted ? Color.white.opacity(0.08) : Color.white.opacity(0.08)), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Studio Telemetry HUD Diagnostics View
+struct StudioTelemetryHUDView: View {
+    @Environment(AudioEngineManager.self) private var engineManager
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            telemetryCard(
+                title: "HARMONICS / TEMPO",
+                line1: "\(engineManager.effectiveBPM) • \(engineManager.effectiveMusicalKey)",
+                line2: "PITCH: \(Int(engineManager.pitchShiftSemitones.rounded())) ST [\(engineManager.pitchShiftSemitones == 0 ? "ROOT" : (engineManager.pitchShiftSemitones > 0 ? "+\(Int(engineManager.pitchShiftSemitones))" : "\(Int(engineManager.pitchShiftSemitones))"))]"
+            )
+            
+            telemetryCard(
+                title: "AUDIO DSP PIPELINE",
+                line1: "\(engineManager.trackBitDepth) • \(engineManager.trackSampleRate)",
+                line2: "AVAudioEngine 32-BIT FLOAT"
+            )
+            
+            telemetryCard(
+                title: "NEURAL ENGINE (ANE)",
+                line1: "\(AudioEngineManager.systemChipName)",
+                line2: engineManager.isPlaying ? "REALTIME ACTIVE • 5.1x" : "STANDBY • READY"
+            )
+            
+            telemetryCard(
+                title: "TIMECODE & BYPASS",
+                line1: engineManager.detailedTimecode,
+                line2: engineManager.isBypassed ? "BYPASS: ON (ORIGINAL)" : "BYPASS: OFF (4-STEMS)"
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
     
-    private func stemMeter(name: String, vol: Double, isMuted: Bool, isSolo: Bool, color: Color) -> some View {
-        VStack(spacing: 3) {
-            HStack {
-                Text(name)
-                    .font(.custom("DotGothic16-Regular", size: 9.5))
-                    .foregroundColor(color)
+    private func telemetryCard(title: String, line1: String, line2: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 3.5, height: 3.5)
+                Text(title)
+                    .font(.custom("DotGothic16-Regular", size: 8.0))
+                    .foregroundColor(.red.opacity(0.9))
                 Spacer()
-                Text(isMuted ? "MUTE" : (isSolo ? "SOLO" : "\(Int(vol * 100))%"))
-                    .font(.custom("DotGothic16-Regular", size: 8.5))
-                    .foregroundColor(isMuted ? .red : .gray)
             }
-            
-            GeometryReader { geo in
-                let w = geo.size.width
-                let fillW = isMuted ? 0.0 : w * max(0, min(1, vol))
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                    Rectangle()
-                        .fill(color)
-                        .frame(width: fillW)
-                }
-            }
-            .frame(height: 5)
-            .clipShape(RoundedRectangle(cornerRadius: 1))
+            Text(line1)
+                .font(.custom("DotGothic16-Regular", size: 9.0))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            Text(line2)
+                .font(.custom("DotGothic16-Regular", size: 8.0))
+                .foregroundColor(.gray)
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
-        .padding(5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
         .background(Color.white.opacity(0.03))
-        .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .overlay(
+            RoundedRectangle(cornerRadius: 3)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
@@ -1847,6 +1977,7 @@ struct ShortcutsHUDModal: View {
             VStack(alignment: .leading, spacing: 8) {
                 hudRow(keys: ["1", "2", "3", "4"], action: "Exclusive Solo Vocals, Drums, Bass, Other")
                 hudRow(keys: ["V", "D", "B", "O"], action: "Toggle Mute for individual channels")
+                hudRow(keys: ["⌘1", "⌘2", "⌘3", "⌘4"], action: "Switch HUD: FFT, Macros, Balance, Telemetry")
                 hudRow(keys: ["[", "]"], action: "Set A-B Loop Start and End points on the fly")
                 hudRow(keys: ["L"], action: "Toggle A-B Region Loop On / Off")
                 hudRow(keys: ["A", "I", "R"], action: "Acapella, Instrumental, Reset Unity Mix")
