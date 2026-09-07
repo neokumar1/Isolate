@@ -1115,7 +1115,16 @@ public final class DotMatrixImageProcessor {
         ) else { return nil }
         
         context.interpolationQuality = .high
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        // Aspect-fill: scale to fill gridSize x gridSize without distorting aspect ratio
+        let imgW = CGFloat(cgImage.width)
+        let imgH = CGFloat(cgImage.height)
+        let scale = max(CGFloat(width) / max(1, imgW), CGFloat(height) / max(1, imgH))
+        let drawW = imgW * scale
+        let drawH = imgH * scale
+        let drawX = (CGFloat(width) - drawW) * 0.5
+        let drawY = (CGFloat(height) - drawH) * 0.5
+        context.draw(cgImage, in: CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
         
         var matrix = [[DotMatrixCell]](
             repeating: [DotMatrixCell](repeating: DotMatrixCell(r: 0, g: 0, b: 0, luminance: 0), count: width),
@@ -1144,24 +1153,78 @@ public final class DotMatrixImageProcessor {
     }
 }
 
-// MARK: - Album Art View (High-Fidelity Artwork with Nothing Hardware Framing)
+// MARK: - Album Art View with Authentic Nothing Hardware Dot-Matrix LED Screen
 struct AlbumArtView: View {
     let image: NSImage?
     var size: CGFloat = 100
+    @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
+    @State private var dotMatrix: [[DotMatrixCell]]? = nil
+    @State private var showHighRes = false
+    
+    // Constant hardware OLED display panel substrate (deep black #0A0A0A)
+    // Ensures consistent LED dot contrast and eliminates distortion in both Light Mode and Dark Mode
+    private let panelSubstrate = Color(red: 0.04, green: 0.04, blue: 0.04)
     
     var body: some View {
         ZStack {
-            theme.surface
+            // Hardware OLED display substrate
+            panelSubstrate
             
-            if let img = image {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+            if let _ = image {
+                if showHighRes, let img = image {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: size, height: size)
+                        .clipped()
+                } else if let matrix = dotMatrix {
+                    // Real-Time 50x50 Full-Color RGB Dot-Matrix LED Screen
+                    Canvas { context, sz in
+                        let gridSize = 50
+                        let cellWidth = sz.width / CGFloat(gridSize)
+                        let cellHeight = sz.height / CGFloat(gridSize)
+                        
+                        let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterWaveformAmplitudes.reduce(0, +) / Float(max(1, engineManager.masterWaveformAmplitudes.count))) : 0.0
+                        let pulse = engineManager.isPlaying ? 1.0 + (audioEnergy * 0.05) : 1.0
+                        
+                        // Uniform, crisp circular LED dot radius across all luminance levels (fill ratio 0.90)
+                        let baseDotRadius = (cellWidth * 0.5) * 0.90
+                        let dotRadius = min(cellWidth * 0.48, baseDotRadius * CGFloat(pulse))
+                        
+                        for y in 0..<gridSize {
+                            for x in 0..<gridSize {
+                                let cell = matrix[y][x]
+                                let centerX = CGFloat(x) * cellWidth + (cellWidth * 0.5)
+                                let centerY = CGFloat(y) * cellHeight + (cellHeight * 0.5)
+                                
+                                let dotRect = CGRect(
+                                    x: centerX - dotRadius,
+                                    y: centerY - dotRadius,
+                                    width: dotRadius * 2,
+                                    height: dotRadius * 2
+                                )
+                                
+                                let dotColor = Color(
+                                    red: Double(cell.r),
+                                    green: Double(cell.g),
+                                    blue: Double(cell.b)
+                                )
+                                context.fill(Path(ellipseIn: dotRect), with: .color(dotColor))
+                            }
+                        }
+                    }
                     .frame(width: size, height: size)
-                    .clipped()
+                } else if let img = image {
+                    // Smooth transitional placeholder while dot matrix loads
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: size, height: size)
+                        .clipped()
+                }
             } else {
-                // Standby diagnostic crosslines
+                // Standby diagnostic crosslines when no artwork exists
                 ZStack {
                     theme.surface
                     Rectangle()
@@ -1183,7 +1246,7 @@ struct AlbumArtView: View {
                 }
             }
             
-            // Outer Hardware Border
+            // Outer Hardware Border (Theme-aware)
             Rectangle()
                 .stroke(theme.cardBorder, lineWidth: 1)
             
@@ -1193,6 +1256,32 @@ struct AlbumArtView: View {
         .frame(width: size, height: size)
         .clipped()
         .contentShape(Rectangle())
+        .onTapGesture {
+            guard image != nil else { return }
+            Haptics.playClick()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                showHighRes.toggle()
+            }
+        }
+        .onChange(of: image) { _, newImage in
+            updateMatrix(for: newImage)
+        }
+        .onAppear {
+            updateMatrix(for: image)
+        }
+    }
+    
+    private func updateMatrix(for img: NSImage?) {
+        guard let img = img else {
+            dotMatrix = nil
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            let matrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50)
+            await MainActor.run {
+                self.dotMatrix = matrix
+            }
+        }
     }
 }
 
