@@ -1,17 +1,40 @@
-# 📦 Isolate Installation Guide
+# Installation Guide
 
-Welcome to **Isolate** — the raw 4-stem audio isolation workstation for macOS Apple Silicon.
-
-> [!NOTE]
-> **No Runtimes Required**: Isolate is a 100% self-contained native macOS app. You do not need Python, Node.js, Docker, or external audio libraries to install and run Isolate.
-
-Choose the installation method that fits your workflow:
+Isolate is a standalone macOS application. You do not need Python, Node.js, Docker, or any external runtimes to install and run it.
 
 ---
 
-## ⚡ Method 1: Instant 1-Line Terminal Install (Recommended)
+## Method 1: Homebrew Cask (recommended)
 
-This is the fastest method. It downloads the latest release, installs `Isolate.app` directly into `/Applications`, and automatically removes the macOS quarantine attribute so it opens with **0 warnings**.
+```bash
+brew install --cask TheConfidentCoder/isolate/isolate
+```
+
+To update in the future:
+
+```bash
+brew upgrade isolate
+```
+
+---
+
+## Method 2: Direct download (DMG)
+
+1. Download `Isolate.dmg` from [Releases](https://github.com/TheConfidentCoder/Isolate/releases/latest).
+2. Open the disk image and drag `Isolate.app` into your `/Applications` folder.
+3. Open `Isolate.app` from Applications.
+
+### Gatekeeper note
+
+Because Isolate is an independent open-source project without a paid Apple Developer certificate, macOS may show a prompt saying the developer cannot be verified on first launch.
+
+To open the app:
+- **Terminal**: Run `xattr -cr /Applications/Isolate.app`
+- **System Settings**: Open **System Settings** > **Privacy & Security**, scroll down to Security, and click **Open Anyway**.
+
+---
+
+## Method 3: Terminal install script
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TheConfidentCoder/Isolate/main/install.sh | bash
@@ -19,56 +42,14 @@ curl -fsSL https://raw.githubusercontent.com/TheConfidentCoder/Isolate/main/inst
 
 ---
 
-## 🍺 Method 2: Homebrew Cask
+## Method 4: Build from source
 
-Install via Homebrew:
-
-```bash
-brew install --cask TheConfidentCoder/isolate/isolate
-```
-
-Or tap the repository first:
-```bash
-brew tap TheConfidentCoder/isolate https://github.com/TheConfidentCoder/Isolate
-brew install --cask isolate
-```
-
----
-
-## 💿 Method 3: DMG Installer (Drag & Drop)
-
-1. Download **`Isolate.dmg`** from [GitHub Releases](https://github.com/TheConfidentCoder/Isolate/releases/latest).
-2. Double-click the DMG to open the Nothing OS-styled installer window.
-3. Drag **`Isolate.app`** into your **`Applications`** folder.
-4. Launch `Isolate.app` from `/Applications`.
-
-> [!NOTE]  
-> If macOS displays *"Apple could not verify Isolate.app is free of malware"*:
-> 
-> **Option A (Instant 1-Second Terminal Fix):**
-> ```bash
-> xattr -cr /Applications/Isolate.app
-> ```
-> 
-> **Option B (macOS System Settings):**
-> 1. Click **Done** on the alert.
-> 2. Open **System Settings** → **Privacy & Security**.
-> 3. Scroll to **Security** and click **Open Anyway** next to *"Isolate.app was blocked"*.
-> 4. Enter your password and click **Open**.
-
----
-
-## 🛠 Method 4: Build from Source
+Prerequisites: Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```bash
-# Clone
 git clone https://github.com/TheConfidentCoder/Isolate.git
 cd Isolate
-
-# Generate Xcode project with XcodeGen
 xcodegen generate
-
-# Build Release binary
 xcodebuild -scheme Isolate -configuration Release -destination 'platform=macOS' build
 open build/Release/Isolate.app
 ```
