@@ -410,6 +410,16 @@ struct ContentView: View {
             }
             .keyboardShortcut(",", modifiers: [.command])
             .hidden()
+            
+            // Global ⌘B Keyboard Shortcut for Sidebar Toggle
+            Button("") {
+                Haptics.playClick()
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+                    isSidebarVisible.toggle()
+                }
+            }
+            .keyboardShortcut("b", modifiers: [.command])
+            .hidden()
         }
         .overlay {
             // MARK: - Window-Centered Nothing-Style Rename Modal

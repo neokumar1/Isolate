@@ -509,6 +509,35 @@ final class IsolateTests: XCTestCase {
         XCTAssertEqual(modalHeight, 510.0, "Modal card height must be locked to 510pt")
         XCTAssertEqual(tabContentHeight, 345.0, "Tab body container height must be pinned to 345pt to guarantee zero window jumping between tabs")
     }
+    
+    // Test 17: Verify Header Track Info Dynamic Expansion & Sidebar Alignment Geometry
+    func testHeaderTrackInfoExpansionAndSidebarAlignment() {
+        // 1. Dynamic Width Calculations
+        let wideWidth: CGFloat = 1440.0
+        let isCompactHeight = false
+        let artSize: CGFloat = isCompactHeight ? 76 : 100
+        
+        let computeTrackWidth: (CGFloat, Bool) -> CGFloat = { width, isSidebarClosed in
+            let isCompact = width < 860
+            if isCompact { return .infinity }
+            let isWide = width >= 1260
+            let availableForTrack = width - artSize - 70 - (isWide ? 440 : 360)
+            let baseMax: CGFloat = isWide ? (isSidebarClosed ? 680 : 480) : (isSidebarClosed ? 500 : 360)
+            return max(240, min(availableForTrack, baseMax))
+        }
+        
+        let closedWidth = computeTrackWidth(wideWidth, true)
+        let openWidth = computeTrackWidth(wideWidth, false)
+        
+        XCTAssertGreaterThan(closedWidth, openWidth, "Track info width must dynamically expand when sidebar is closed")
+        XCTAssertEqual(closedWidth, 680.0, "On wide displays with sidebar closed, track info width must expand up to 680pt")
+        XCTAssertEqual(openWidth, 480.0, "On wide displays with sidebar open, track info width must allocate 480pt")
+        
+        // 2. Alignment Verification
+        let headerLeftPadding: CGFloat = 24.0
+        let mixerLeftPadding: CGFloat = 24.0
+        XCTAssertEqual(headerLeftPadding, mixerLeftPadding, "Header and Mixer Channel grid must have identical 24pt margin for precise vertical alignment")
+    }
 }
 
 

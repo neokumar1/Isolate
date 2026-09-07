@@ -86,18 +86,25 @@ public struct PlayerView: View {
             let isCompact = width < 860
             let isMedium = width >= 860 && width < 1260
             let isWide = width >= 1260
+            let isSidebarClosed = (isSidebarVisible?.wrappedValue == false)
             let artSize: CGFloat = isCompactHeight ? 76 : 100
             
-            HStack(spacing: isCompactHeight ? 12 : 16) {
+            let maxTrackInfoWidth: CGFloat = {
+                if isCompact { return .infinity }
+                let availableForTrack = width - (isCompactHeight ? 76 : 100) - 70 - (isWide ? 440 : 360)
+                let baseMax: CGFloat = isWide ? (isSidebarClosed ? 680 : 480) : (isSidebarClosed ? 500 : 360)
+                return max(240, min(availableForTrack, baseMax))
+            }()
+            
+            HStack(spacing: isCompactHeight ? 10 : 14) {
                 if let isSidebarVisible = isSidebarVisible {
                     sidebarToggleButton(isSidebarVisible: isSidebarVisible)
-                        .padding(.leading, isSidebarVisible.wrappedValue ? 0 : 80)
                 }
                 
                 AlbumArtView(image: engineManager.albumArt, size: artSize)
                 
                 trackInfoView(isCompact: isCompact, isCompactHeight: isCompactHeight)
-                    .frame(minWidth: 150, maxWidth: isCompact ? .infinity : 280, alignment: .leading)
+                    .frame(minWidth: 180, maxWidth: maxTrackInfoWidth, alignment: .leading)
                 
                 if !isCompact {
                     Spacer(minLength: 12)
@@ -120,7 +127,7 @@ public struct PlayerView: View {
     private func sidebarToggleButton(isSidebarVisible: Binding<Bool>) -> some View {
         Button(action: {
             Haptics.playClick()
-            withAnimation(nil) { // 0ms Instant Nothing Hardware Snap
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
                 isSidebarVisible.wrappedValue.toggle()
             }
         }) {
@@ -140,36 +147,59 @@ public struct PlayerView: View {
             .frame(width: 28, height: 28)
             .background(theme.surfaceSecondary)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(theme.hairline, lineWidth: 0.5)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(isSidebarVisible.wrappedValue ? "Hide Library Sidebar (⌘B)" : "Show Library Sidebar (⌘B)")
     }
     
     private func trackInfoView(isCompact: Bool, isCompactHeight: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: isCompactHeight ? 3 : 5) {
-            MarqueeText(text: engineManager.currentTrackName, font: .custom("DotGothic16-Regular", size: isCompact ? 20 : (isCompactHeight ? 20 : 24)))
-                .foregroundColor(.red)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            MarqueeText(
+                text: engineManager.currentTrackName,
+                fontSize: isCompact ? 20 : (isCompactHeight ? 20 : 24),
+                color: .red,
+                height: isCompactHeight ? 26 : 30
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
             
             if !engineManager.trackArtist.isEmpty && engineManager.trackArtist != "Isolate" {
-                Text("\(engineManager.trackArtist.uppercased()) • \(engineManager.trackAlbum.uppercased())")
-                    .font(.custom("DotGothic16-Regular", size: 10.0))
-                    .foregroundColor(theme.textSecondary)
+                let artistAlbum = "\(engineManager.trackArtist.uppercased()) • \(engineManager.trackAlbum.uppercased())"
+                MarqueeText(
+                    text: artistAlbum,
+                    fontSize: isCompactHeight ? 9.5 : 10.5,
+                    color: theme.textSecondary,
+                    height: isCompactHeight ? 14 : 16
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("ISOLATE AUDIO CORE • 4-STEM NEURAL DSP")
+                    .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.5 : 10.5))
+                    .foregroundColor(theme.textMuted)
                     .lineLimit(1)
             }
             
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Text(engineManager.isBypassed ? "SOURCE: ORIGINAL MASTER" : "SOURCE: 4-STEM ISOLATION")
-                    .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 10 : 11))
+                    .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.5 : 10.5))
                     .foregroundColor(engineManager.isBypassed ? .yellow : theme.textSecondary)
                 
-                HStack(spacing: 5) {
+                Text("•")
+                    .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.0 : 10.0))
+                    .foregroundColor(theme.textMuted)
+                
+                HStack(spacing: 4) {
                     Circle()
-                        .fill(engineManager.isPlaying ? Color.red : Color.gray)
-                        .frame(width: 5, height: 5)
+                        .fill(engineManager.isPlaying ? Color.red : theme.textMuted)
+                        .frame(width: 4.5, height: 4.5)
+                        .shadow(color: engineManager.isPlaying ? Color.red.opacity(0.6) : Color.clear, radius: 2)
                     
                     Text(engineManager.isPlaying ? "ACTIVE" : "STANDBY")
-                        .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.5 : 10.5))
+                        .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.0 : 10.0))
                         .foregroundColor(engineManager.isPlaying ? .red : theme.textSecondary)
                 }
             }
@@ -1754,7 +1784,9 @@ struct TransportBar: View {
 
 struct MarqueeText: View {
     let text: String
-    let font: Font
+    var fontSize: CGFloat = 24
+    var color: Color = .primary
+    var height: CGFloat = 30
     
     @State private var offset: CGFloat = 0
     @State private var animationTask: Task<Void, Never>? = nil
@@ -1762,74 +1794,108 @@ struct MarqueeText: View {
     var body: some View {
         GeometryReader { geo in
             let containerWidth = geo.size.width
-            let textWidth = measureTextWidth(text)
+            let textWidth = measureTextWidth(text, size: fontSize)
+            let overflow = textWidth - containerWidth
+            let needsScroll = overflow > 4 && containerWidth > 30
             
-            Text(text)
-                .font(font)
-                .fixedSize(horizontal: true, vertical: false)
-                .offset(x: offset)
-                .frame(width: containerWidth, alignment: .leading)
-                .clipped()
-                .onAppear {
-                    updateAnimation(containerWidth: containerWidth, textWidth: textWidth)
+            ZStack(alignment: .leading) {
+                Text(text)
+                    .font(.custom("DotGothic16-Regular", size: fontSize))
+                    .foregroundColor(color)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .offset(x: offset)
+            }
+            .frame(width: containerWidth, alignment: .leading)
+            .clipped()
+            .mask(
+                Group {
+                    if needsScroll {
+                        HStack(spacing: 0) {
+                            LinearGradient(
+                                colors: [.clear, .black],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: 4)
+                            
+                            Rectangle().fill(Color.black)
+                            
+                            LinearGradient(
+                                colors: [.black, .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: 8)
+                        }
+                    } else {
+                        Rectangle().fill(Color.black)
+                    }
                 }
-                .onChange(of: text) { _, _ in
-                    updateAnimation(containerWidth: containerWidth, textWidth: textWidth)
-                }
-                .onChange(of: containerWidth) { _, newWidth in
-                    updateAnimation(containerWidth: newWidth, textWidth: textWidth)
-                }
+            )
+            .onAppear {
+                startAnimation(containerWidth: containerWidth, textWidth: textWidth)
+            }
+            .onChange(of: text) { _, _ in
+                startAnimation(containerWidth: containerWidth, textWidth: textWidth)
+            }
+            .onChange(of: containerWidth) { _, newWidth in
+                startAnimation(containerWidth: newWidth, textWidth: textWidth)
+            }
+            .onDisappear {
+                animationTask?.cancel()
+                animationTask = nil
+            }
         }
-        .frame(height: 32)
+        .frame(height: height)
     }
     
-    private func measureTextWidth(_ string: String) -> CGFloat {
-        let font = NSFont(name: "DotGothic16-Regular", size: 26) ?? NSFont.monospacedSystemFont(ofSize: 26, weight: .regular)
+    private func measureTextWidth(_ string: String, size: CGFloat) -> CGFloat {
+        let font = NSFont(name: "DotGothic16-Regular", size: size) ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         let attr: [NSAttributedString.Key: Any] = [.font: font]
         return ceil((string as NSString).size(withAttributes: attr).width)
     }
     
-    private func updateAnimation(containerWidth: CGFloat, textWidth: CGFloat) {
+    private func startAnimation(containerWidth: CGFloat, textWidth: CGFloat) {
         animationTask?.cancel()
         animationTask = nil
-        offset = 0
         
-        let diff = textWidth - containerWidth
-        guard diff > 8, containerWidth > 50 else {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             offset = 0
+        }
+        
+        let overflow = textWidth - containerWidth
+        guard overflow > 6, containerWidth > 40 else {
             return
         }
         
         animationTask = Task { @MainActor in
-            let speed: CGFloat = 28.0 // px per second
-            let totalTime = Double(diff / speed)
-            let steps = max(1, Int(diff / 8))
-            let timePerStep = totalTime / Double(steps)
+            let speed: CGFloat = 30.0 // readable 30 points per second
+            let duration = max(1.5, Double(overflow / speed))
             
             while !Task.isCancelled {
-                // Settle at start
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                // Settle at start so user can read initial text
+                try? await Task.sleep(nanoseconds: 2_200_000_000)
                 guard !Task.isCancelled else { break }
                 
-                // Ping to end
-                for step in 1...steps {
-                    offset = -CGFloat(step) * (diff / CGFloat(steps))
-                    try? await Task.sleep(nanoseconds: UInt64(timePerStep * 1_000_000_000))
-                    guard !Task.isCancelled else { break }
+                // Smooth GPU easeInOut glide to end
+                withAnimation(.easeInOut(duration: duration)) {
+                    offset = -overflow
                 }
-                offset = -diff
+                try? await Task.sleep(nanoseconds: UInt64((duration + 0.1) * 1_000_000_000))
+                guard !Task.isCancelled else { break }
                 
                 // Settle at end
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 guard !Task.isCancelled else { break }
                 
-                // Pong back to start
-                for step in 1...steps {
-                    offset = -diff + CGFloat(step) * (diff / CGFloat(steps))
-                    try? await Task.sleep(nanoseconds: UInt64(timePerStep * 1_000_000_000))
-                    guard !Task.isCancelled else { break }
+                // Smooth GPU easeInOut glide back to start
+                withAnimation(.easeInOut(duration: duration)) {
+                    offset = 0
                 }
-                offset = 0
+                try? await Task.sleep(nanoseconds: UInt64((duration + 0.1) * 1_000_000_000))
+                guard !Task.isCancelled else { break }
             }
         }
     }
@@ -2812,16 +2878,17 @@ struct ShortcutsHUDModal: View {
                 .background(theme.hairline)
             
             VStack(alignment: .leading, spacing: 8) {
+                hudRow(keys: ["⌘", "B"], action: "Toggle Audio Library Sidebar")
                 hudRow(keys: ["1", "2", "3", "4"], action: "Exclusive Solo Vocals, Drums, Bass, Other")
                 hudRow(keys: ["V", "D", "B", "O"], action: "Toggle Mute for individual channels")
-                hudRow(keys: ["⌘1", "⌘2", "⌘3", "⌘4"], action: "Switch HUD: FFT, Macros, Balance, Telemetry")
+                hudRow(keys: ["⌘1-5"], action: "Switch HUD: FFT, Macros, Balance, Telemetry, EQ")
+                hudRow(keys: ["⌘", "E"], action: "Toggle Master EQ Processing On / Off")
                 hudRow(keys: ["[", "]"], action: "Set A-B Loop Start and End points on the fly")
                 hudRow(keys: ["L"], action: "Toggle A-B Region Loop On / Off")
                 hudRow(keys: ["A", "I", "R"], action: "Acapella, Instrumental, Reset Unity Mix")
                 hudRow(keys: ["Space"], action: "Play / Pause playback")
-                hudRow(keys: ["B"], action: "Toggle Bypass (Original vs Separated Stems)")
-                hudRow(keys: ["E"], action: "Export 4-Stem Audio Archive")
                 hudRow(keys: ["⌘", "O"], action: "Import / Batch Import audio tracks")
+                hudRow(keys: ["⌘", ","], action: "Open Studio Settings Modal")
                 hudRow(keys: ["?"], action: "Toggle this Shortcut Cheat Sheet")
             }
         }
