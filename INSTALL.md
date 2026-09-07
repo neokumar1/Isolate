@@ -2,6 +2,9 @@
 
 Welcome to **Isolate** — the raw 4-stem audio isolation workstation for macOS Apple Silicon.
 
+> [!NOTE]
+> **No Runtimes Required**: Isolate is a 100% self-contained native macOS app. You do not need Python, Node.js, Docker, or external audio libraries to install and run Isolate.
+
 Choose the installation method that fits your workflow:
 
 ---
