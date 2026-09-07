@@ -168,8 +168,9 @@ public struct PlayerView: View {
         let anySolo = engine.vocalSolo || engine.drumSolo || engine.bassSolo || engine.otherSolo
         let anyMuted = engine.vocalMuted || engine.drumMuted || engine.bassMuted || engine.otherMuted
         
-        return HStack(spacing: 18) {
+        return HStack(spacing: 16) {
             StemChannelView(
+                channelIndex: 0,
                 title: "VOCALS",
                 volume: $engine.vocalVolume,
                 pan: $engine.vocalPan,
@@ -188,6 +189,7 @@ public struct PlayerView: View {
                 onResetEQ: { engine.resetStemEQ(0) }
             )
             StemChannelView(
+                channelIndex: 1,
                 title: "DRUMS",
                 volume: $engine.drumVolume,
                 pan: $engine.drumPan,
@@ -206,6 +208,7 @@ public struct PlayerView: View {
                 onResetEQ: { engine.resetStemEQ(1) }
             )
             StemChannelView(
+                channelIndex: 2,
                 title: "BASS",
                 volume: $engine.bassVolume,
                 pan: $engine.bassPan,
@@ -224,6 +227,7 @@ public struct PlayerView: View {
                 onResetEQ: { engine.resetStemEQ(2) }
             )
             StemChannelView(
+                channelIndex: 3,
                 title: "OTHER",
                 volume: $engine.otherVolume,
                 pan: $engine.otherPan,
@@ -338,6 +342,7 @@ public struct PlayerView: View {
 }
 
 struct StemChannelView: View {
+    var channelIndex: Int = 0
     let title: String
     @Binding var volume: Double
     @Binding var pan: Float
@@ -357,6 +362,32 @@ struct StemChannelView: View {
     
     @State private var isMutedHovered = false
     @State private var isSoloedHovered = false
+    
+    private var channelTag: String {
+        String(format: "CH %02d", channelIndex + 1)
+    }
+    
+    private var shortcutHint: String {
+        switch channelIndex {
+        case 0: return "[V / 1]"
+        case 1: return "[D / 2]"
+        case 2: return "[B / 3]"
+        case 3: return "[O / 4]"
+        default: return ""
+        }
+    }
+    
+    private var topAccentColor: Color {
+        if isSoloed {
+            return Color.red
+        } else if isAnySoloed {
+            return Color.clear
+        } else if isMuted {
+            return Color.gray.opacity(0.2)
+        } else {
+            return Color.white.opacity(0.25)
+        }
+    }
     
     private var effectiveVolume: Double {
         if isAnySoloed {
@@ -394,10 +425,35 @@ struct StemChannelView: View {
     }
     
     var body: some View {
-        VStack(spacing: 6) {
-            Text(title)
-                .font(.custom("DotGothic16-Regular", size: 15))
-                .foregroundColor(.white)
+        VStack(spacing: 8) {
+            // Top Accent Status Bar
+            Rectangle()
+                .fill(topAccentColor)
+                .frame(height: 2)
+                .animation(.easeInOut(duration: 0.15), value: isSoloed)
+                .animation(.easeInOut(duration: 0.15), value: isMuted)
+            
+            // Channel Header (Index & Shortcut tag + Stem Title)
+            VStack(spacing: 2) {
+                HStack {
+                    Text(channelTag)
+                        .font(.custom("DotGothic16-Regular", size: 9.5))
+                        .foregroundColor(.gray)
+                    
+                    Spacer()
+                    
+                    Text(shortcutHint)
+                        .font(.custom("DotGothic16-Regular", size: 8.5))
+                        .foregroundColor(Color.white.opacity(0.35))
+                }
+                .padding(.horizontal, 4)
+                
+                Text(title)
+                    .font(.custom("DotGothic16-Regular", size: 16))
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 2)
             
             // Dynamic Island Symmetrical Dot-Matrix Waveform per stem
             StemDynamicWaveformView(
@@ -406,12 +462,12 @@ struct StemChannelView: View {
                 effectiveVolume: effectiveVolume,
                 isPlaying: isPlaying
             )
-            .frame(height: 24)
+            .frame(height: 32)
             
             // Rotary Stereo Panning Dial
             PanKnobView(pan: $pan)
             
-            // 3-Band Rotary EQ Section
+            // 3-Band Rotary EQ Section (Open hardware strip, no nested box)
             StemEQChannelStripView(
                 low: $lowGain,
                 mid: $midGain,
@@ -420,6 +476,7 @@ struct StemChannelView: View {
                 onReset: onResetEQ
             )
             
+            // Volume Readout (% and dB)
             VStack(spacing: 1) {
                 Text("\(Int(volume * 100))%")
                     .font(.custom("DotGothic16-Regular", size: 13.0))
@@ -436,29 +493,26 @@ struct StemChannelView: View {
                     volume = 1.0
                 }
             }
+            .padding(.top, 2)
             
+            // Hardware Fader - Expands dynamically to fill available window height
             CustomFader(value: $volume, label: title)
-                .frame(height: 190)
+                .frame(minHeight: 180, maxHeight: .infinity)
             
-            HStack(spacing: 8) {
+            // Mute & Solo Hardware Switches
+            HStack(spacing: 10) {
                 muteButton
                 soloButton
             }
+            .padding(.bottom, 6)
         }
-        .padding(.vertical, 12)
         .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.5))
+        .background(Color.white.opacity(0.018))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
         .opacity(isDimmed ? 0.35 : 1.0)
-        .overlay(
-            RoundedRectangle(cornerRadius: 0)
-                .stroke(
-                    hasFocusOutline ? Color.red.opacity(0.85) : Color.white.opacity(0.1),
-                    lineWidth: hasFocusOutline ? 1.5 : 1
-                )
-        )
         .animation(.easeInOut(duration: 0.15), value: isDimmed)
-        .animation(.easeInOut(duration: 0.15), value: hasFocusOutline)
     }
     
     private var muteButton: some View {
@@ -478,7 +532,7 @@ struct StemChannelView: View {
             Text("M")
                 .font(.custom("DotGothic16-Regular", size: 13))
                 .fontWeight(.bold)
-                .frame(width: 34, height: 30)
+                .frame(width: 38, height: 30)
                 .background(bg)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -508,7 +562,7 @@ struct StemChannelView: View {
             Text("S")
                 .font(.custom("DotGothic16-Regular", size: 13))
                 .fontWeight(.bold)
-                .frame(width: 34, height: 30)
+                .frame(width: 38, height: 30)
                 .background(bg)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -553,7 +607,7 @@ struct PanKnobView: View {
                 Text("‹")
                     .font(.custom("DotGothic16-Regular", size: 11))
                     .foregroundColor(.gray)
-                    .frame(width: 12, height: 16)
+                    .frame(width: 14, height: 18)
             }
             .buttonStyle(.plain)
             
@@ -561,7 +615,7 @@ struct PanKnobView: View {
                 .font(.custom("DotGothic16-Regular", size: 10.5))
                 .fontWeight(.bold)
                 .foregroundColor(abs(pan) < 0.05 ? .white : .red)
-                .frame(width: 34)
+                .frame(width: 38)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     Haptics.playAlignment()
@@ -582,16 +636,16 @@ struct PanKnobView: View {
                 Text("›")
                     .font(.custom("DotGothic16-Regular", size: 11))
                     .foregroundColor(.gray)
-                    .frame(width: 12, height: 16)
+                    .frame(width: 14, height: 18)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
-        .background(isHovered ? Color.white.opacity(0.08) : Color.white.opacity(0.02))
+        .background(isHovered ? Color.white.opacity(0.06) : Color.white.opacity(0.02))
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(abs(pan) > 0.05 ? Color.red.opacity(0.6) : Color.white.opacity(0.1), lineWidth: 1)
+                .stroke(abs(pan) > 0.05 ? Color.red.opacity(0.6) : Color.white.opacity(0.08), lineWidth: 0.5)
         )
         .onHover { isHovered = $0 }
     }
@@ -627,7 +681,7 @@ struct RotaryEQKnobView: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(bandName)
-                .font(.custom("DotGothic16-Regular", size: 8.5))
+                .font(.custom("DotGothic16-Regular", size: 9.0))
                 .foregroundColor(.gray)
             
             ZStack {
@@ -635,17 +689,17 @@ struct RotaryEQKnobView: View {
                 Circle()
                     .trim(from: 0.125, to: 0.875)
                     .stroke(
-                        Color.white.opacity(0.10),
-                        style: StrokeStyle(lineWidth: 2.0, lineCap: .round)
+                        Color.white.opacity(0.12),
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(90))
-                    .frame(width: 24, height: 24)
+                    .frame(width: 28, height: 28)
                 
                 // Zero Detent Pip at 12 o'clock
                 Rectangle()
-                    .fill(Color.white.opacity(0.25))
-                    .frame(width: 1, height: 2.5)
-                    .offset(y: -12)
+                    .fill(Color.white.opacity(0.35))
+                    .frame(width: 1, height: 3)
+                    .offset(y: -14)
                 
                 // Active Gain Arc
                 if !isBypassed && abs(gain) >= 0.15 {
@@ -654,39 +708,39 @@ struct RotaryEQKnobView: View {
                             .trim(from: 0.5, to: 0.5 + (Double(gain) / 24.0) * 0.75)
                             .stroke(
                                 Color.red,
-                                style: StrokeStyle(lineWidth: 2.0, lineCap: .round)
+                                style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                             )
                             .rotationEffect(.degrees(90))
-                            .frame(width: 24, height: 24)
+                            .frame(width: 28, height: 28)
                     } else {
                         Circle()
                             .trim(from: 0.5 - (Double(abs(gain)) / 24.0) * 0.75, to: 0.5)
                             .stroke(
-                                Color.white.opacity(0.55),
-                                style: StrokeStyle(lineWidth: 2.0, lineCap: .round)
+                                Color.white.opacity(0.65),
+                                style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                             )
                             .rotationEffect(.degrees(90))
-                            .frame(width: 24, height: 24)
+                            .frame(width: 28, height: 28)
                     }
                 }
                 
                 // Pointer Needle
                 Rectangle()
                     .fill(accentColor)
-                    .frame(width: 1.5, height: 6)
-                    .offset(y: -6)
+                    .frame(width: 1.5, height: 7)
+                    .offset(y: -7)
                     .rotationEffect(.degrees(normalizedAngle))
                 
                 // Center Knob Cap
                 Circle()
-                    .fill(Color.black)
-                    .frame(width: 14, height: 14)
+                    .fill(Color(white: 0.08))
+                    .frame(width: 16, height: 16)
                     .overlay(
                         Circle()
-                            .stroke(isHovered ? Color.red.opacity(0.8) : Color.white.opacity(0.18), lineWidth: 1)
+                            .stroke(isHovered ? Color.red.opacity(0.85) : Color.white.opacity(0.2), lineWidth: 1)
                     )
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 32, height: 32)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -719,10 +773,15 @@ struct RotaryEQKnobView: View {
             }
             
             Text(gainString)
-                .font(.custom("DotGothic16-Regular", size: 8.0))
+                .font(.custom("DotGothic16-Regular", size: 8.5))
                 .foregroundColor(accentColor)
+            
+            Text(freqLabel)
+                .font(.custom("DotGothic16-Regular", size: 7.5))
+                .foregroundColor(Color.white.opacity(0.35))
         }
-        .frame(width: 32)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
 }
@@ -760,23 +819,23 @@ struct StemEQChannelStripView: View {
     }
     
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             // Header: [EQ] label + Bypass toggle + Quick reset
-            HStack(spacing: 3) {
+            HStack {
                 Button(action: {
                     Haptics.playClick()
                     isBypassed.toggle()
                 }) {
-                    HStack(spacing: 2.5) {
+                    HStack(spacing: 3) {
                         Circle()
                             .fill(bypassCircleColor)
-                            .frame(width: 3.5, height: 3.5)
-                        Text(isBypassed ? "BYP" : "EQ")
-                            .font(.custom("DotGothic16-Regular", size: 8.0))
+                            .frame(width: 4, height: 4)
+                        Text(isBypassed ? "EQ: BYPASS" : "EQ: ACTIVE")
+                            .font(.custom("DotGothic16-Regular", size: 8.5))
                             .foregroundColor(bypassTextColor)
                     }
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 1.5)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
                     .background(bypassBgColor)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
@@ -799,11 +858,11 @@ struct StemEQChannelStripView: View {
                             onReset?()
                         }
                     }) {
-                        Text("RST")
-                            .font(.custom("DotGothic16-Regular", size: 7.5))
+                        Text("RESET")
+                            .font(.custom("DotGothic16-Regular", size: 8.0))
                             .foregroundColor(.gray)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
                             .background(Color.white.opacity(0.05))
                             .clipShape(RoundedRectangle(cornerRadius: 2))
                     }
@@ -811,22 +870,17 @@ struct StemEQChannelStripView: View {
                     .help("Reset EQ to Flat 0.0 dB")
                 }
             }
-            .padding(.horizontal, 2)
+            .padding(.horizontal, 4)
             
             // 3 Rotary Knobs Row: LOW (100Hz), MID (1kHz), HIGH (10kHz)
-            HStack(spacing: 1) {
+            HStack(spacing: 4) {
                 RotaryEQKnobView(bandName: "LOW", freqLabel: "100Hz", gain: $low, isBypassed: isBypassed)
                 RotaryEQKnobView(bandName: "MID", freqLabel: "1kHz", gain: $mid, isBypassed: isBypassed)
                 RotaryEQKnobView(bandName: "HIGH", freqLabel: "10kHz", gain: $high, isBypassed: isBypassed)
             }
         }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 3)
-        .background(Color.white.opacity(0.025))
-        .overlay(
-            RoundedRectangle(cornerRadius: 2)
-                .stroke(isModified && !isBypassed ? Color.red.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 0.5)
-        )
+        .padding(.vertical, 4)
+        .padding(.horizontal, 2)
     }
 }
 
