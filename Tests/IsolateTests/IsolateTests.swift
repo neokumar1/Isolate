@@ -219,12 +219,15 @@ final class IsolateTests: XCTestCase {
         engine.setHUDMode(3)
         XCTAssertEqual(engine.activeHUDModeIndex, 3, "Mode 3 must be Telemetry")
         
-        // Out of bounds guard
         engine.setHUDMode(4)
-        XCTAssertEqual(engine.activeHUDModeIndex, 3, "Index >= 4 must be ignored")
+        XCTAssertEqual(engine.activeHUDModeIndex, 4, "Mode 4 must be Equalizer")
+        
+        // Out of bounds guard
+        engine.setHUDMode(5)
+        XCTAssertEqual(engine.activeHUDModeIndex, 4, "Index >= 5 must be ignored")
         
         engine.setHUDMode(-1)
-        XCTAssertEqual(engine.activeHUDModeIndex, 3, "Index < 0 must be ignored")
+        XCTAssertEqual(engine.activeHUDModeIndex, 4, "Index < 0 must be ignored")
     }
     
     // Test 8: Verify Stem Search Multi-Token Matching
@@ -294,6 +297,138 @@ final class IsolateTests: XCTestCase {
         
         toolbar.isVisible = true
         XCTAssertTrue(toolbar.isVisible, "Toolbar must restore visibility upon exiting full-screen")
+    }
+    
+    // Test 11: Verify 3-Band Equalizer DSP Nodes and Stem Gain / Bypass Controls
+    @MainActor
+    func testEqualizerDSPNodesAndBypassControls() {
+        let engine = AudioEngineManager()
+        
+        // Initial state should be unity (0.0 dB) and not bypassed
+        let initVocals = engine.getStemEQ(0)
+        XCTAssertEqual(initVocals.low, 0.0, accuracy: 1e-4)
+        XCTAssertEqual(initVocals.mid, 0.0, accuracy: 1e-4)
+        XCTAssertEqual(initVocals.high, 0.0, accuracy: 1e-4)
+        XCTAssertFalse(initVocals.isBypassed)
+        
+        // Apply gains to Vocals (index 0)
+        engine.setStemEQ(0, low: -3.0, mid: 2.5, high: 4.0)
+        let modifiedVocals = engine.getStemEQ(0)
+        XCTAssertEqual(modifiedVocals.low, -3.0, accuracy: 1e-4)
+        XCTAssertEqual(modifiedVocals.mid, 2.5, accuracy: 1e-4)
+        XCTAssertEqual(modifiedVocals.high, 4.0, accuracy: 1e-4)
+        
+        // Toggle stem bypass
+        engine.toggleStemEQBypass(0)
+        XCTAssertTrue(engine.getStemEQ(0).isBypassed)
+        engine.toggleStemEQBypass(0)
+        XCTAssertFalse(engine.getStemEQ(0).isBypassed)
+        
+        // Toggle global bypass
+        XCTAssertFalse(engine.isGlobalEQBypassed)
+        engine.toggleGlobalEQBypass()
+        XCTAssertTrue(engine.isGlobalEQBypassed)
+        engine.toggleGlobalEQBypass()
+        XCTAssertFalse(engine.isGlobalEQBypassed)
+        
+        // Reset single stem
+        engine.resetStemEQ(0)
+        let resetVocals = engine.getStemEQ(0)
+        XCTAssertEqual(resetVocals.low, 0.0, accuracy: 1e-4)
+        XCTAssertEqual(resetVocals.mid, 0.0, accuracy: 1e-4)
+        XCTAssertEqual(resetVocals.high, 0.0, accuracy: 1e-4)
+        
+        // Set all stems and reset all
+        for i in 0...4 {
+            engine.setStemEQ(i, low: 2.0, mid: 2.0, high: 2.0)
+            XCTAssertEqual(engine.getStemEQ(i).low, 2.0, accuracy: 1e-4)
+        }
+        engine.resetAllEQ()
+        for i in 0...4 {
+            XCTAssertEqual(engine.getStemEQ(i).low, 0.0, accuracy: 1e-4)
+            XCTAssertEqual(engine.getStemEQ(i).mid, 0.0, accuracy: 1e-4)
+            XCTAssertEqual(engine.getStemEQ(i).high, 0.0, accuracy: 1e-4)
+        }
+    }
+    
+    // Test 12: Verify Factory EQ Presets Definition and Application
+    @MainActor
+    func testFactoryEQPresets() {
+        let engine = AudioEngineManager()
+        let presets = AudioEngineManager.factoryPresets
+        XCTAssertGreaterThanOrEqual(presets.count, 6, "Must have at least 6 curated factory EQ presets")
+        
+        guard let vocalAirPreset = presets.first(where: { $0.id == "vocal_air" }) else {
+            XCTFail("VOCAL AIR preset must exist")
+            return
+        }
+        
+        engine.applyEQPreset(vocalAirPreset, to: 0)
+        let vocalEQ = engine.getStemEQ(0)
+        XCTAssertEqual(vocalEQ.low, vocalAirPreset.lowGain, accuracy: 1e-4)
+        XCTAssertEqual(vocalEQ.mid, vocalAirPreset.midGain, accuracy: 1e-4)
+        XCTAssertEqual(vocalEQ.high, vocalAirPreset.highGain, accuracy: 1e-4)
+    }
+    
+    // Test 13: Verify Offline Stem Audio EQ Rendering (renderStemToFile)
+    func testOfflineStemAudioEQRendering() throws {
+        let sampleRate: Double = 44100.0
+        let duration: Double = 0.5
+        let frameCount = AVAudioFrameCount(sampleRate * duration)
+        
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 2,
+            interleaved: false
+        )!
+        
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let pL = buffer.floatChannelData![0]
+        let pR = buffer.floatChannelData![1]
+        
+        for i in 0..<Int(frameCount) {
+            let t = Float(i) / Float(sampleRate)
+            let val = 0.4 * sinf(2.0 * .pi * 440.0 * t)
+            pL[i] = val
+            pR[i] = val
+        }
+        
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let sourceURL = tempDir.appendingPathComponent("source_stem.wav")
+        let destURL = tempDir.appendingPathComponent("rendered_eq_stem.wav")
+        
+        let diskSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        do {
+            let writer = try AVAudioFile(forWriting: sourceURL, settings: diskSettings)
+            try writer.write(from: buffer)
+        }
+        
+        // Render offline through AVAudioUnitEQ
+        try AudioEngineManager.renderStemToFile(
+            sourceURL: sourceURL,
+            destURL: destURL,
+            low: 3.0,
+            mid: -2.0,
+            high: 4.5
+        )
+        
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destURL.path), "Rendered audio file must exist on disk")
+        let renderedFile = try AVAudioFile(forReading: destURL)
+        XCTAssertEqual(renderedFile.processingFormat.sampleRate, sampleRate, "Sample rate must match")
+        XCTAssertGreaterThan(renderedFile.length, 0, "Rendered file must contain audio frames")
+        
+        try? FileManager.default.removeItem(at: tempDir)
     }
 }
 

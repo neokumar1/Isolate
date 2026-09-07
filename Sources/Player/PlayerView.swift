@@ -175,12 +175,17 @@ public struct PlayerView: View {
                 pan: $engine.vocalPan,
                 isMuted: $engine.vocalMuted,
                 isSoloed: $engine.vocalSolo,
+                lowGain: $engine.vocalEQLow,
+                midGain: $engine.vocalEQMid,
+                highGain: $engine.vocalEQHigh,
+                isEQBypassed: $engine.vocalEQBypassed,
                 eqMagnitudes: engine.vocalEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
                 onToggleMute: { toggleMute(0) },
-                onToggleSolo: { toggleSolo(0) }
+                onToggleSolo: { toggleSolo(0) },
+                onResetEQ: { engine.resetStemEQ(0) }
             )
             StemChannelView(
                 title: "DRUMS",
@@ -188,12 +193,17 @@ public struct PlayerView: View {
                 pan: $engine.drumPan,
                 isMuted: $engine.drumMuted,
                 isSoloed: $engine.drumSolo,
+                lowGain: $engine.drumEQLow,
+                midGain: $engine.drumEQMid,
+                highGain: $engine.drumEQHigh,
+                isEQBypassed: $engine.drumEQBypassed,
                 eqMagnitudes: engine.drumEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
                 onToggleMute: { toggleMute(1) },
-                onToggleSolo: { toggleSolo(1) }
+                onToggleSolo: { toggleSolo(1) },
+                onResetEQ: { engine.resetStemEQ(1) }
             )
             StemChannelView(
                 title: "BASS",
@@ -201,12 +211,17 @@ public struct PlayerView: View {
                 pan: $engine.bassPan,
                 isMuted: $engine.bassMuted,
                 isSoloed: $engine.bassSolo,
+                lowGain: $engine.bassEQLow,
+                midGain: $engine.bassEQMid,
+                highGain: $engine.bassEQHigh,
+                isEQBypassed: $engine.bassEQBypassed,
                 eqMagnitudes: engine.bassEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
                 onToggleMute: { toggleMute(2) },
-                onToggleSolo: { toggleSolo(2) }
+                onToggleSolo: { toggleSolo(2) },
+                onResetEQ: { engine.resetStemEQ(2) }
             )
             StemChannelView(
                 title: "OTHER",
@@ -214,12 +229,17 @@ public struct PlayerView: View {
                 pan: $engine.otherPan,
                 isMuted: $engine.otherMuted,
                 isSoloed: $engine.otherSolo,
+                lowGain: $engine.otherEQLow,
+                midGain: $engine.otherEQMid,
+                highGain: $engine.otherEQHigh,
+                isEQBypassed: $engine.otherEQBypassed,
                 eqMagnitudes: engine.otherEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
                 onToggleMute: { toggleMute(3) },
-                onToggleSolo: { toggleSolo(3) }
+                onToggleSolo: { toggleSolo(3) },
+                onResetEQ: { engine.resetStemEQ(3) }
             )
         }
         .padding(.horizontal, 24)
@@ -245,8 +265,9 @@ public struct PlayerView: View {
             Button("") { engineManager.applyAcapella() }.keyboardShortcut("a", modifiers: []).hidden()
             Button("") { engineManager.applyInstrumental() }.keyboardShortcut("i", modifiers: []).hidden()
             Button("") { engineManager.toggleLoop() }.keyboardShortcut("l", modifiers: []).hidden()
+            Button("") { engineManager.toggleGlobalEQBypass() }.keyboardShortcut("e", modifiers: [.command]).hidden()
             
-            // HUD Visualizer Mode Switching (⌘1 - ⌘4)
+            // HUD Visualizer Mode Switching (⌘1 - ⌘5)
             Button("") {
                 Haptics.playClick()
                 engineManager.setHUDMode(0)
@@ -266,6 +287,11 @@ public struct PlayerView: View {
                 Haptics.playClick()
                 engineManager.setHUDMode(3)
             }.keyboardShortcut("4", modifiers: [.command]).hidden()
+            
+            Button("") {
+                Haptics.playClick()
+                engineManager.setHUDMode(4)
+            }.keyboardShortcut("5", modifiers: [.command]).hidden()
             
             // On-The-Fly Loop Setters ([ and ])
             Button("") {
@@ -317,12 +343,17 @@ struct StemChannelView: View {
     @Binding var pan: Float
     @Binding var isMuted: Bool
     @Binding var isSoloed: Bool
+    @Binding var lowGain: Float
+    @Binding var midGain: Float
+    @Binding var highGain: Float
+    @Binding var isEQBypassed: Bool
     let eqMagnitudes: [Float]
     let isAnySoloed: Bool
     let isAnyMuted: Bool
     let isPlaying: Bool
     var onToggleMute: (() -> Void)? = nil
     var onToggleSolo: (() -> Void)? = nil
+    var onResetEQ: (() -> Void)? = nil
     
     @State private var isMutedHovered = false
     @State private var isSoloedHovered = false
@@ -363,9 +394,9 @@ struct StemChannelView: View {
     }
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Text(title)
-                .font(.custom("DotGothic16-Regular", size: 16))
+                .font(.custom("DotGothic16-Regular", size: 15))
                 .foregroundColor(.white)
             
             // Dynamic Island Symmetrical Dot-Matrix Waveform per stem
@@ -375,18 +406,27 @@ struct StemChannelView: View {
                 effectiveVolume: effectiveVolume,
                 isPlaying: isPlaying
             )
-            .frame(height: 26)
+            .frame(height: 24)
             
             // Rotary Stereo Panning Dial
             PanKnobView(pan: $pan)
             
+            // 3-Band Rotary EQ Section
+            StemEQChannelStripView(
+                low: $lowGain,
+                mid: $midGain,
+                high: $highGain,
+                isBypassed: $isEQBypassed,
+                onReset: onResetEQ
+            )
+            
             VStack(spacing: 1) {
                 Text("\(Int(volume * 100))%")
-                    .font(.custom("DotGothic16-Regular", size: 13.5))
+                    .font(.custom("DotGothic16-Regular", size: 13.0))
                     .foregroundColor(.white)
                 
                 Text(dbString)
-                    .font(.custom("DotGothic16-Regular", size: 9.5))
+                    .font(.custom("DotGothic16-Regular", size: 9.0))
                     .foregroundColor(abs(volume - 1.0) < 0.01 ? .red : .gray)
             }
             .contentShape(Rectangle())
@@ -398,15 +438,15 @@ struct StemChannelView: View {
             }
             
             CustomFader(value: $volume, label: title)
-                .frame(maxHeight: .infinity)
+                .frame(height: 190)
             
             HStack(spacing: 8) {
                 muteButton
                 soloButton
             }
         }
-        .padding(.vertical, 14)
-        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.opacity(0.5))
         .opacity(isDimmed ? 0.35 : 1.0)
@@ -554,6 +594,239 @@ struct PanKnobView: View {
                 .stroke(abs(pan) > 0.05 ? Color.red.opacity(0.6) : Color.white.opacity(0.1), lineWidth: 1)
         )
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Rotary 3-Band EQ Knob (-12dB to +12dB)
+struct RotaryEQKnobView: View {
+    let bandName: String
+    let freqLabel: String
+    @Binding var gain: Float // -12.0 ... +12.0
+    var isBypassed: Bool = false
+    
+    @State private var isHovered = false
+    @State private var dragStartGain: Float? = nil
+    
+    private var normalizedAngle: Double {
+        let clamped = Double(max(-12.0, min(12.0, gain)))
+        return (clamped / 12.0) * 135.0
+    }
+    
+    private var gainString: String {
+        if isBypassed { return "BYP" }
+        if abs(gain) < 0.15 { return "0.0" }
+        return String(format: "%+.1f", gain)
+    }
+    
+    private var accentColor: Color {
+        if isBypassed { return Color.gray.opacity(0.4) }
+        if abs(gain) < 0.15 { return Color.white.opacity(0.8) }
+        return gain > 0 ? Color.red : Color.white.opacity(0.5)
+    }
+    
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(bandName)
+                .font(.custom("DotGothic16-Regular", size: 8.5))
+                .foregroundColor(.gray)
+            
+            ZStack {
+                // Background Track (-135 to +135 deg)
+                Circle()
+                    .trim(from: 0.125, to: 0.875)
+                    .stroke(
+                        Color.white.opacity(0.10),
+                        style: StrokeStyle(lineWidth: 2.0, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(90))
+                    .frame(width: 24, height: 24)
+                
+                // Zero Detent Pip at 12 o'clock
+                Rectangle()
+                    .fill(Color.white.opacity(0.25))
+                    .frame(width: 1, height: 2.5)
+                    .offset(y: -12)
+                
+                // Active Gain Arc
+                if !isBypassed && abs(gain) >= 0.15 {
+                    if gain > 0 {
+                        Circle()
+                            .trim(from: 0.5, to: 0.5 + (Double(gain) / 24.0) * 0.75)
+                            .stroke(
+                                Color.red,
+                                style: StrokeStyle(lineWidth: 2.0, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(90))
+                            .frame(width: 24, height: 24)
+                    } else {
+                        Circle()
+                            .trim(from: 0.5 - (Double(abs(gain)) / 24.0) * 0.75, to: 0.5)
+                            .stroke(
+                                Color.white.opacity(0.55),
+                                style: StrokeStyle(lineWidth: 2.0, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(90))
+                            .frame(width: 24, height: 24)
+                    }
+                }
+                
+                // Pointer Needle
+                Rectangle()
+                    .fill(accentColor)
+                    .frame(width: 1.5, height: 6)
+                    .offset(y: -6)
+                    .rotationEffect(.degrees(normalizedAngle))
+                
+                // Center Knob Cap
+                Circle()
+                    .fill(Color.black)
+                    .frame(width: 14, height: 14)
+                    .overlay(
+                        Circle()
+                            .stroke(isHovered ? Color.red.opacity(0.8) : Color.white.opacity(0.18), lineWidth: 1)
+                    )
+            }
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { val in
+                        if dragStartGain == nil {
+                            dragStartGain = gain
+                        }
+                        let start = dragStartGain ?? gain
+                        let sensitivity: Float = NSEvent.modifierFlags.contains(.option) ? 0.05 : 0.20
+                        let delta = Float(-val.translation.height) * sensitivity
+                        var next = max(-12.0, min(12.0, start + delta))
+                        
+                        if abs(next) < 0.25 {
+                            if abs(gain) >= 0.25 {
+                                Haptics.playAlignment()
+                            }
+                            next = 0.0
+                        }
+                        gain = next
+                    }
+                    .onEnded { _ in
+                        dragStartGain = nil
+                    }
+            )
+            .onTapGesture(count: 2) {
+                Haptics.playAlignment()
+                withAnimation(.easeOut(duration: 0.12)) {
+                    gain = 0.0
+                }
+            }
+            
+            Text(gainString)
+                .font(.custom("DotGothic16-Regular", size: 8.0))
+                .foregroundColor(accentColor)
+        }
+        .frame(width: 32)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Stem 3-Band EQ Channel Strip Component
+struct StemEQChannelStripView: View {
+    @Binding var low: Float
+    @Binding var mid: Float
+    @Binding var high: Float
+    @Binding var isBypassed: Bool
+    var onReset: (() -> Void)? = nil
+    
+    private var isModified: Bool {
+        abs(low) >= 0.15 || abs(mid) >= 0.15 || abs(high) >= 0.15
+    }
+    
+    private var bypassCircleColor: Color {
+        if isBypassed { return Color.gray.opacity(0.5) }
+        return isModified ? Color.red : Color.white.opacity(0.8)
+    }
+    
+    private var bypassTextColor: Color {
+        if isBypassed { return Color.gray }
+        return isModified ? Color.red : Color.white.opacity(0.85)
+    }
+    
+    private var bypassBgColor: Color {
+        if isBypassed { return Color.white.opacity(0.04) }
+        return isModified ? Color.red.opacity(0.12) : Color.white.opacity(0.05)
+    }
+    
+    private var bypassBorderColor: Color {
+        if isBypassed { return Color.white.opacity(0.08) }
+        return isModified ? Color.red.opacity(0.4) : Color.white.opacity(0.12)
+    }
+    
+    var body: some View {
+        VStack(spacing: 3) {
+            // Header: [EQ] label + Bypass toggle + Quick reset
+            HStack(spacing: 3) {
+                Button(action: {
+                    Haptics.playClick()
+                    isBypassed.toggle()
+                }) {
+                    HStack(spacing: 2.5) {
+                        Circle()
+                            .fill(bypassCircleColor)
+                            .frame(width: 3.5, height: 3.5)
+                        Text(isBypassed ? "BYP" : "EQ")
+                            .font(.custom("DotGothic16-Regular", size: 8.0))
+                            .foregroundColor(bypassTextColor)
+                    }
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1.5)
+                    .background(bypassBgColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(bypassBorderColor, lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(isBypassed ? "Unbypass EQ" : "Bypass EQ")
+                
+                Spacer()
+                
+                if isModified {
+                    Button(action: {
+                        Haptics.playAlignment()
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            low = 0.0
+                            mid = 0.0
+                            high = 0.0
+                            onReset?()
+                        }
+                    }) {
+                        Text("RST")
+                            .font(.custom("DotGothic16-Regular", size: 7.5))
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.white.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reset EQ to Flat 0.0 dB")
+                }
+            }
+            .padding(.horizontal, 2)
+            
+            // 3 Rotary Knobs Row: LOW (100Hz), MID (1kHz), HIGH (10kHz)
+            HStack(spacing: 1) {
+                RotaryEQKnobView(bandName: "LOW", freqLabel: "100Hz", gain: $low, isBypassed: isBypassed)
+                RotaryEQKnobView(bandName: "MID", freqLabel: "1kHz", gain: $mid, isBypassed: isBypassed)
+                RotaryEQKnobView(bandName: "HIGH", freqLabel: "10kHz", gain: $high, isBypassed: isBypassed)
+            }
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 3)
+        .background(Color.white.opacity(0.025))
+        .overlay(
+            RoundedRectangle(cornerRadius: 2)
+                .stroke(isModified && !isBypassed ? Color.red.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 0.5)
+        )
     }
 }
 
@@ -1419,7 +1692,7 @@ struct HeaderCenterTelemetryModule: View {
     let isMedium: Bool
     let isWide: Bool
     
-    private let modes = ["32-BAND FFT", "STEM MACROS", "STEM BALANCE", "TELEMETRY"]
+    private let modes = ["32-BAND FFT", "STEM MACROS", "STEM BALANCE", "TELEMETRY", "EQUALIZER"]
     
     var body: some View {
         ZStack {
@@ -1524,6 +1797,10 @@ struct HeaderCenterTelemetryModule: View {
                         StudioTelemetryHUDView()
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
+                    case 4:
+                        HUDEqualizerCurveView()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
                     default:
                         Spectrum32BandView()
                             .padding(.horizontal, 10)
@@ -1950,6 +2227,390 @@ struct StudioTelemetryHUDView: View {
             RoundedRectangle(cornerRadius: 3)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - HUD Interactive Parametric Equalizer Curve Visualizer
+struct HUDEqualizerCurveView: View {
+    @Environment(AudioEngineManager.self) private var engineManager
+    
+    @State private var selectedStemIndex: Int = 0 // 0: VOCALS, 1: DRUMS, 2: BASS, 3: OTHER, 4: MASTER
+    @State private var draggingBand: Int? = nil
+    
+    private let stemNames = ["VOCALS", "DRUMS", "BASS", "OTHER", "MASTER"]
+    
+    private var currentLow: Float {
+        engineManager.getStemEQ(selectedStemIndex).low
+    }
+    
+    private var currentMid: Float {
+        engineManager.getStemEQ(selectedStemIndex).mid
+    }
+    
+    private var currentHigh: Float {
+        engineManager.getStemEQ(selectedStemIndex).high
+    }
+    
+    private var isCurrentBypassed: Bool {
+        engineManager.getStemEQ(selectedStemIndex).isBypassed || engineManager.isGlobalEQBypassed
+    }
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            // Top Toolbar: Stem Pills, Preset Quick Actions, Bypass & Reset
+            HStack(spacing: 6) {
+                // Stem Selectors
+                HStack(spacing: 2) {
+                    ForEach(0..<stemNames.count, id: \.self) { idx in
+                        Button(action: {
+                            Haptics.playClick()
+                            selectedStemIndex = idx
+                        }) {
+                            Text(stemNames[idx])
+                                .font(.custom("DotGothic16-Regular", size: 7.5))
+                                .fontWeight(selectedStemIndex == idx ? .bold : .regular)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(selectedStemIndex == idx ? Color.red : Color.white.opacity(0.04))
+                                .foregroundColor(selectedStemIndex == idx ? .black : Color.white.opacity(0.8))
+                                .clipShape(RoundedRectangle(cornerRadius: 2))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .stroke(selectedStemIndex == idx ? Color.red : Color.white.opacity(0.08), lineWidth: 0.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                Spacer()
+                
+                // Readout of currently selected stem's gains
+                HStack(spacing: 4) {
+                    Text("L: \(formatGain(currentLow))")
+                        .font(.custom("DotGothic16-Regular", size: 8))
+                        .foregroundColor(abs(currentLow) > 0.1 ? .red : .gray)
+                    Text("M: \(formatGain(currentMid))")
+                        .font(.custom("DotGothic16-Regular", size: 8))
+                        .foregroundColor(abs(currentMid) > 0.1 ? .red : .gray)
+                    Text("H: \(formatGain(currentHigh))")
+                        .font(.custom("DotGothic16-Regular", size: 8))
+                        .foregroundColor(abs(currentHigh) > 0.1 ? .red : .gray)
+                }
+                .padding(.horizontal, 4)
+                
+                // Presets Dropdown Menu
+                Menu {
+                    ForEach(AudioEngineManager.factoryPresets) { preset in
+                        Button(preset.name) {
+                            engineManager.applyEQPreset(preset, to: selectedStemIndex)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("PRESETS")
+                            .font(.custom("DotGothic16-Regular", size: 7.5))
+                        Text("▾")
+                            .font(.custom("DotGothic16-Regular", size: 7))
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Color.white.opacity(0.06))
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                
+                // Bypass Button
+                Button(action: {
+                    engineManager.toggleStemEQBypass(selectedStemIndex)
+                }) {
+                    HStack(spacing: 2.5) {
+                        Circle()
+                            .fill(isCurrentBypassed ? Color.gray.opacity(0.5) : Color.red)
+                            .frame(width: 4, height: 4)
+                        Text(isCurrentBypassed ? "BYP" : "ACTIVE")
+                            .font(.custom("DotGothic16-Regular", size: 7.5))
+                            .foregroundColor(isCurrentBypassed ? .gray : .white)
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(isCurrentBypassed ? Color.white.opacity(0.04) : Color.red.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(isCurrentBypassed ? Color.white.opacity(0.1) : Color.red.opacity(0.4), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                
+                // Reset Button
+                Button(action: {
+                    engineManager.resetStemEQ(selectedStemIndex)
+                }) {
+                    Text("RST")
+                        .font(.custom("DotGothic16-Regular", size: 7.5))
+                        .foregroundColor(.gray)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                }
+                .buttonStyle(.plain)
+                .help("Reset to 0.0 dB")
+            }
+            .frame(height: 16)
+            
+            // Curve Canvas
+            GeometryReader { geo in
+                let w = geo.size.width
+                let h = geo.size.height
+                let midY = h / 2.0
+                
+                // Frequencies at log coordinates:
+                // 20Hz -> 0, 20kHz -> w
+                // x(f) = w * log10(f / 20) / 3.0
+                let x100 = w * (log10(100.0 / 20.0) / 3.0)
+                let x1k = w * (log10(1000.0 / 20.0) / 3.0)
+                let x10k = w * (log10(10000.0 / 20.0) / 3.0)
+                
+                let yLow = midY - CGFloat(currentLow / 12.0) * (midY * 0.78)
+                let yMid = midY - CGFloat(currentMid / 12.0) * (midY * 0.78)
+                let yHigh = midY - CGFloat(currentHigh / 12.0) * (midY * 0.78)
+                
+                ZStack {
+                    // 1. Grid lines & labels
+                    gridLines(w: w, h: h, midY: midY, x100: x100, x1k: x1k, x10k: x10k)
+                    
+                    // 2. Real-time FFT Backdrop
+                    fftBackdrop(w: w, h: h)
+                    
+                    // 3. Mathematical Biquad Curve Path
+                    curvePath(w: w, h: h, midY: midY)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    isCurrentBypassed ? Color.gray.opacity(0.08) : Color.red.opacity(0.20),
+                                    Color.clear
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                    
+                    curvePath(w: w, h: h, midY: midY)
+                        .stroke(
+                            isCurrentBypassed ? Color.gray.opacity(0.4) : Color.red,
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+                        )
+                    
+                    // 4. Interactive Draggable Filter Nodes
+                    filterNode(
+                        bandIndex: 0,
+                        name: "LOW",
+                        freq: "100Hz",
+                        x: x100,
+                        y: yLow,
+                        gain: currentLow,
+                        h: h,
+                        midY: midY
+                    )
+                    
+                    filterNode(
+                        bandIndex: 1,
+                        name: "MID",
+                        freq: "1kHz",
+                        x: x1k,
+                        y: yMid,
+                        gain: currentMid,
+                        h: h,
+                        midY: midY
+                    )
+                    
+                    filterNode(
+                        bandIndex: 2,
+                        name: "HIGH",
+                        freq: "10kHz",
+                        x: x10k,
+                        y: yHigh,
+                        gain: currentHigh,
+                        h: h,
+                        midY: midY
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func formatGain(_ gain: Float) -> String {
+        if abs(gain) < 0.15 { return "0.0dB" }
+        return String(format: "%+.1fdB", gain)
+    }
+    
+    @ViewBuilder
+    private func gridLines(w: CGFloat, h: CGFloat, midY: CGFloat, x100: CGFloat, x1k: CGFloat, x10k: CGFloat) -> some View {
+        Path { p in
+            p.move(to: CGPoint(x: 0, y: midY))
+            p.addLine(to: CGPoint(x: w, y: midY))
+            
+            p.move(to: CGPoint(x: 0, y: midY - midY * 0.45))
+            p.addLine(to: CGPoint(x: w, y: midY - midY * 0.45))
+            p.move(to: CGPoint(x: 0, y: midY + midY * 0.45))
+            p.addLine(to: CGPoint(x: w, y: midY + midY * 0.45))
+            
+            p.move(to: CGPoint(x: x100, y: 0))
+            p.addLine(to: CGPoint(x: x100, y: h))
+            p.move(to: CGPoint(x: x1k, y: 0))
+            p.addLine(to: CGPoint(x: x1k, y: h))
+            p.move(to: CGPoint(x: x10k, y: 0))
+            p.addLine(to: CGPoint(x: x10k, y: h))
+        }
+        .stroke(Color.white.opacity(0.06), style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+        
+        Text("100Hz")
+            .font(.custom("DotGothic16-Regular", size: 6.5))
+            .foregroundColor(.gray.opacity(0.5))
+            .position(x: x100, y: h - 5)
+        Text("1kHz")
+            .font(.custom("DotGothic16-Regular", size: 6.5))
+            .foregroundColor(.gray.opacity(0.5))
+            .position(x: x1k, y: h - 5)
+        Text("10kHz")
+            .font(.custom("DotGothic16-Regular", size: 6.5))
+            .foregroundColor(.gray.opacity(0.5))
+            .position(x: x10k, y: h - 5)
+    }
+    
+    @ViewBuilder
+    private func fftBackdrop(w: CGFloat, h: CGFloat) -> some View {
+        let mags: [Float] = {
+            switch selectedStemIndex {
+            case 0: return engineManager.vocalEQMagnitudes
+            case 1: return engineManager.drumEQMagnitudes
+            case 2: return engineManager.bassEQMagnitudes
+            case 3: return engineManager.otherEQMagnitudes
+            default: return engineManager.masterEQMagnitudes
+            }
+        }()
+        
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<min(24, mags.count), id: \.self) { i in
+                let mag = CGFloat(mags[i])
+                let barH = max(2.0, min(h, mag * h * 1.5))
+                Rectangle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: barH)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .opacity(engineManager.isPlaying ? 1.0 : 0.0)
+    }
+    
+    private func curvePath(w: CGFloat, h: CGFloat, midY: CGFloat) -> Path {
+        let low = currentLow
+        let mid = currentMid
+        let high = currentHigh
+        let steps = 60
+        
+        var points: [CGPoint] = []
+        for i in 0...steps {
+            let frac = CGFloat(i) / CGFloat(steps)
+            let x = frac * w
+            let freq = 20.0 * pow(10.0, 3.0 * Double(frac))
+            
+            // Low Shelf @ 100Hz
+            let g0 = Double(low) / (1.0 + pow(freq / 100.0, 2.0))
+            // Peaking Parametric @ 1000Hz (Q ~ 1.2)
+            let logR = log10(freq / 1000.0)
+            let g1 = Double(mid) * exp(-pow(logR / 0.35, 2.0))
+            // High Shelf @ 10000Hz
+            let fSq = pow(freq / 10000.0, 2.0)
+            let g2 = Double(high) * (fSq / (1.0 + fSq))
+            
+            let totalGain = g0 + g1 + g2
+            let y = midY - CGFloat(totalGain / 12.0) * (midY * 0.78)
+            points.append(CGPoint(x: x, y: max(2, min(h - 2, y))))
+        }
+        
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        for pt in points.dropFirst() {
+            path.addLine(to: pt)
+        }
+        return path
+    }
+    
+    @ViewBuilder
+    private func filterNode(bandIndex: Int, name: String, freq: String, x: CGFloat, y: CGFloat, gain: Float, h: CGFloat, midY: CGFloat) -> some View {
+        let isDragging = (draggingBand == bandIndex)
+        let isModified = abs(gain) >= 0.15
+        
+        ZStack {
+            Circle()
+                .fill(Color.black)
+                .frame(width: 14, height: 14)
+                .overlay(
+                    Circle()
+                        .stroke(isDragging ? Color.white : (isModified ? Color.red : Color.white.opacity(0.6)), lineWidth: 1.5)
+                )
+            
+            Circle()
+                .fill(isModified ? Color.red : Color.white.opacity(0.8))
+                .frame(width: 6, height: 6)
+            
+            Text(isDragging ? String(format: "%+.1fdB", gain) : name)
+                .font(.custom("DotGothic16-Regular", size: 6.5))
+                .foregroundColor(isModified ? .red : .white.opacity(0.8))
+                .offset(y: y < midY ? 12 : -12)
+        }
+        .frame(width: 24, height: 24)
+        .contentShape(Rectangle())
+        .position(x: x, y: y)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { val in
+                    draggingBand = bandIndex
+                    let deltaY = -Float(val.translation.height) * 0.25
+                    let baseGain: Float = {
+                        switch bandIndex {
+                        case 0: return currentLow
+                        case 1: return currentMid
+                        case 2: return currentHigh
+                        default: return 0.0
+                        }
+                    }()
+                    var target = max(-12.0, min(12.0, baseGain + deltaY))
+                    if abs(target) < 0.25 {
+                        target = 0.0
+                        Haptics.playAlignment()
+                    }
+                    applyGainToBand(bandIndex, val: target)
+                }
+                .onEnded { _ in
+                    draggingBand = nil
+                }
+        )
+        .onTapGesture(count: 2) {
+            Haptics.playAlignment()
+            applyGainToBand(bandIndex, val: 0.0)
+        }
+    }
+    
+    private func applyGainToBand(_ band: Int, val: Float) {
+        let current = engineManager.getStemEQ(selectedStemIndex)
+        switch band {
+        case 0:
+            engineManager.setStemEQ(selectedStemIndex, low: val, mid: current.mid, high: current.high)
+        case 1:
+            engineManager.setStemEQ(selectedStemIndex, low: current.low, mid: val, high: current.high)
+        case 2:
+            engineManager.setStemEQ(selectedStemIndex, low: current.low, mid: current.mid, high: val)
+        default:
+            break
+        }
     }
 }
 

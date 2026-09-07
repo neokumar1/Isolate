@@ -22,6 +22,24 @@ public enum ExportState: Equatable, Sendable {
     case completed
 }
 
+public struct EQPreset: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let targetStemName: String // "VOCALS", "DRUMS", "BASS", "OTHER", "MASTER", "ALL"
+    public let lowGain: Float
+    public let midGain: Float
+    public let highGain: Float
+    
+    public init(id: String, name: String, targetStemName: String, lowGain: Float, midGain: Float, highGain: Float) {
+        self.id = id
+        self.name = name
+        self.targetStemName = targetStemName
+        self.lowGain = lowGain
+        self.midGain = midGain
+        self.highGain = highGain
+    }
+}
+
 @Observable
 public final class AudioEngineManager: @unchecked Sendable {
     // MARK: - Audio Engine Nodes
@@ -32,6 +50,12 @@ public final class AudioEngineManager: @unchecked Sendable {
     private let bassPlayer = AVAudioPlayerNode()
     private let otherPlayer = AVAudioPlayerNode()
     private let originalPlayer = AVAudioPlayerNode()
+    
+    private let vocalEQ = AVAudioUnitEQ(numberOfBands: 3)
+    private let drumEQ = AVAudioUnitEQ(numberOfBands: 3)
+    private let bassEQ = AVAudioUnitEQ(numberOfBands: 3)
+    private let otherEQ = AVAudioUnitEQ(numberOfBands: 3)
+    private let masterEQ = AVAudioUnitEQ(numberOfBands: 3)
     
     private let vocalMixer = AVAudioMixerNode()
     private let drumMixer = AVAudioMixerNode()
@@ -137,12 +161,12 @@ public final class AudioEngineManager: @unchecked Sendable {
         Haptics.playClick()
     }
     
-    // MARK: - HUD Visualizer Mode State (0: 32-BAND FFT, 1: STEM MACROS, 2: STEM BALANCE, 3: TELEMETRY)
+    // MARK: - HUD Visualizer Mode State (0: 32-BAND FFT, 1: STEM MACROS, 2: STEM BALANCE, 3: TELEMETRY, 4: EQUALIZER)
     public var activeHUDModeIndex: Int = 0
     
     @MainActor
     public func setHUDMode(_ index: Int) {
-        guard index >= 0 && index < 4 else { return }
+        guard index >= 0 && index < 5 else { return }
         activeHUDModeIndex = index
     }
     
@@ -191,6 +215,137 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var drumSolo = false { didSet { applyVolumes() } }
     public var bassSolo = false { didSet { applyVolumes() } }
     public var otherSolo = false { didSet { applyVolumes() } }
+    
+    // MARK: - 3-Band Semi-Parametric Equalizer State (Gains in dB: -12.0 to +12.0)
+    public var vocalEQLow: Float = 0.0 { didSet { updateEQNode(vocalEQ, low: vocalEQLow, mid: vocalEQMid, high: vocalEQHigh) } }
+    public var vocalEQMid: Float = 0.0 { didSet { updateEQNode(vocalEQ, low: vocalEQLow, mid: vocalEQMid, high: vocalEQHigh) } }
+    public var vocalEQHigh: Float = 0.0 { didSet { updateEQNode(vocalEQ, low: vocalEQLow, mid: vocalEQMid, high: vocalEQHigh) } }
+    public var vocalEQBypassed: Bool = false { didSet { updateEQBypass(vocalEQ, isBypassed: vocalEQBypassed || isGlobalEQBypassed) } }
+    
+    public var drumEQLow: Float = 0.0 { didSet { updateEQNode(drumEQ, low: drumEQLow, mid: drumEQMid, high: drumEQHigh) } }
+    public var drumEQMid: Float = 0.0 { didSet { updateEQNode(drumEQ, low: drumEQLow, mid: drumEQMid, high: drumEQHigh) } }
+    public var drumEQHigh: Float = 0.0 { didSet { updateEQNode(drumEQ, low: drumEQLow, mid: drumEQMid, high: drumEQHigh) } }
+    public var drumEQBypassed: Bool = false { didSet { updateEQBypass(drumEQ, isBypassed: drumEQBypassed || isGlobalEQBypassed) } }
+    
+    public var bassEQLow: Float = 0.0 { didSet { updateEQNode(bassEQ, low: bassEQLow, mid: bassEQMid, high: bassEQHigh) } }
+    public var bassEQMid: Float = 0.0 { didSet { updateEQNode(bassEQ, low: bassEQLow, mid: bassEQMid, high: bassEQHigh) } }
+    public var bassEQHigh: Float = 0.0 { didSet { updateEQNode(bassEQ, low: bassEQLow, mid: bassEQMid, high: bassEQHigh) } }
+    public var bassEQBypassed: Bool = false { didSet { updateEQBypass(bassEQ, isBypassed: bassEQBypassed || isGlobalEQBypassed) } }
+    
+    public var otherEQLow: Float = 0.0 { didSet { updateEQNode(otherEQ, low: otherEQLow, mid: otherEQMid, high: otherEQHigh) } }
+    public var otherEQMid: Float = 0.0 { didSet { updateEQNode(otherEQ, low: otherEQLow, mid: otherEQMid, high: otherEQHigh) } }
+    public var otherEQHigh: Float = 0.0 { didSet { updateEQNode(otherEQ, low: otherEQLow, mid: otherEQMid, high: otherEQHigh) } }
+    public var otherEQBypassed: Bool = false { didSet { updateEQBypass(otherEQ, isBypassed: otherEQBypassed || isGlobalEQBypassed) } }
+    
+    public var masterEQLow: Float = 0.0 { didSet { updateEQNode(masterEQ, low: masterEQLow, mid: masterEQMid, high: masterEQHigh) } }
+    public var masterEQMid: Float = 0.0 { didSet { updateEQNode(masterEQ, low: masterEQLow, mid: masterEQMid, high: masterEQHigh) } }
+    public var masterEQHigh: Float = 0.0 { didSet { updateEQNode(masterEQ, low: masterEQLow, mid: masterEQMid, high: masterEQHigh) } }
+    public var masterEQBypassed: Bool = false { didSet { updateEQBypass(masterEQ, isBypassed: masterEQBypassed || isGlobalEQBypassed) } }
+    
+    public var isGlobalEQBypassed: Bool = false {
+        didSet {
+            updateEQBypass(vocalEQ, isBypassed: vocalEQBypassed || isGlobalEQBypassed)
+            updateEQBypass(drumEQ, isBypassed: drumEQBypassed || isGlobalEQBypassed)
+            updateEQBypass(bassEQ, isBypassed: bassEQBypassed || isGlobalEQBypassed)
+            updateEQBypass(otherEQ, isBypassed: otherEQBypassed || isGlobalEQBypassed)
+            updateEQBypass(masterEQ, isBypassed: masterEQBypassed || isGlobalEQBypassed)
+        }
+    }
+    
+    public var shouldBakeEQOnExport: Bool = true
+    
+    private func updateEQNode(_ eq: AVAudioUnitEQ, low: Float, mid: Float, high: Float) {
+        guard eq.bands.count >= 3 else { return }
+        eq.bands[0].gain = low
+        eq.bands[1].gain = mid
+        eq.bands[2].gain = high
+    }
+    
+    private func updateEQBypass(_ eq: AVAudioUnitEQ, isBypassed: Bool) {
+        eq.bypass = isBypassed
+    }
+    
+    public func setStemEQ(_ index: Int, low: Float, mid: Float, high: Float) {
+        switch index {
+        case 0:
+            vocalEQLow = max(-12.0, min(12.0, low))
+            vocalEQMid = max(-12.0, min(12.0, mid))
+            vocalEQHigh = max(-12.0, min(12.0, high))
+        case 1:
+            drumEQLow = max(-12.0, min(12.0, low))
+            drumEQMid = max(-12.0, min(12.0, mid))
+            drumEQHigh = max(-12.0, min(12.0, high))
+        case 2:
+            bassEQLow = max(-12.0, min(12.0, low))
+            bassEQMid = max(-12.0, min(12.0, mid))
+            bassEQHigh = max(-12.0, min(12.0, high))
+        case 3:
+            otherEQLow = max(-12.0, min(12.0, low))
+            otherEQMid = max(-12.0, min(12.0, mid))
+            otherEQHigh = max(-12.0, min(12.0, high))
+        case 4:
+            masterEQLow = max(-12.0, min(12.0, low))
+            masterEQMid = max(-12.0, min(12.0, mid))
+            masterEQHigh = max(-12.0, min(12.0, high))
+        default:
+            break
+        }
+    }
+    
+    public func getStemEQ(_ index: Int) -> (low: Float, mid: Float, high: Float, isBypassed: Bool) {
+        switch index {
+        case 0: return (vocalEQLow, vocalEQMid, vocalEQHigh, vocalEQBypassed)
+        case 1: return (drumEQLow, drumEQMid, drumEQHigh, drumEQBypassed)
+        case 2: return (bassEQLow, bassEQMid, bassEQHigh, bassEQBypassed)
+        case 3: return (otherEQLow, otherEQMid, otherEQHigh, otherEQBypassed)
+        case 4: return (masterEQLow, masterEQMid, masterEQHigh, masterEQBypassed)
+        default: return (0, 0, 0, false)
+        }
+    }
+    
+    public func resetStemEQ(_ index: Int) {
+        Haptics.playClick()
+        setStemEQ(index, low: 0.0, mid: 0.0, high: 0.0)
+    }
+    
+    public func resetAllEQ() {
+        Haptics.playClick()
+        for i in 0...4 {
+            setStemEQ(i, low: 0.0, mid: 0.0, high: 0.0)
+        }
+    }
+    
+    public func toggleStemEQBypass(_ index: Int) {
+        Haptics.playClick()
+        switch index {
+        case 0: vocalEQBypassed.toggle()
+        case 1: drumEQBypassed.toggle()
+        case 2: bassEQBypassed.toggle()
+        case 3: otherEQBypassed.toggle()
+        case 4: masterEQBypassed.toggle()
+        default: break
+        }
+    }
+    
+    public func toggleGlobalEQBypass() {
+        Haptics.playClick()
+        isGlobalEQBypassed.toggle()
+    }
+    
+    public static let factoryPresets: [EQPreset] = [
+        EQPreset(id: "flat", name: "FLAT / RESET", targetStemName: "ALL", lowGain: 0.0, midGain: 0.0, highGain: 0.0),
+        EQPreset(id: "vocal_air", name: "VOCAL AIR & SHEEN", targetStemName: "VOCALS", lowGain: -2.5, midGain: 1.5, highGain: 4.0),
+        EQPreset(id: "vocal_demud", name: "DE-MUD VOCALS", targetStemName: "VOCALS", lowGain: -4.0, midGain: -3.0, highGain: 1.0),
+        EQPreset(id: "bass_thump", name: "SUB BASS THUMP", targetStemName: "BASS", lowGain: 3.5, midGain: -2.0, highGain: -4.0),
+        EQPreset(id: "drum_punch", name: "SNARE & KICK PUNCH", targetStemName: "DRUMS", lowGain: 2.5, midGain: -1.5, highGain: 3.0),
+        EQPreset(id: "inst_bright", name: "INSTRUMENTAL BRIGHT", targetStemName: "OTHER", lowGain: -1.5, midGain: 1.0, highGain: 3.5),
+        EQPreset(id: "master_warmth", name: "MASTER ANALOG WARMTH", targetStemName: "MASTER", lowGain: 1.5, midGain: -0.5, highGain: 1.0)
+    ]
+    
+    public func applyEQPreset(_ preset: EQPreset, to index: Int) {
+        Haptics.playClick()
+        setStemEQ(index, low: preset.lowGain, mid: preset.midGain, high: preset.highGain)
+    }
     
     // MARK: - Live Visualizers (Waveform & Per-Stem EQ)
     public var masterWaveformAmplitudes: [Float] = Array(repeating: 0.05, count: 30)
@@ -265,6 +420,18 @@ public final class AudioEngineManager: @unchecked Sendable {
         engine.attach(otherPlayer)
         engine.attach(originalPlayer)
         
+        engine.attach(vocalEQ)
+        engine.attach(drumEQ)
+        engine.attach(bassEQ)
+        engine.attach(otherEQ)
+        engine.attach(masterEQ)
+        
+        configureEQNode(vocalEQ)
+        configureEQNode(drumEQ)
+        configureEQNode(bassEQ)
+        configureEQNode(otherEQ)
+        configureEQNode(masterEQ)
+        
         engine.attach(vocalMixer)
         engine.attach(drumMixer)
         engine.attach(bassMixer)
@@ -272,11 +439,18 @@ public final class AudioEngineManager: @unchecked Sendable {
         engine.attach(stemsSumMixer)
         engine.attach(timePitchNode)
         
-        // Connect players to channel mixers
-        engine.connect(vocalPlayer, to: vocalMixer, format: nil)
-        engine.connect(drumPlayer, to: drumMixer, format: nil)
-        engine.connect(bassPlayer, to: bassMixer, format: nil)
-        engine.connect(otherPlayer, to: otherMixer, format: nil)
+        // Connect players through 3-Band EQs into channel mixers
+        engine.connect(vocalPlayer, to: vocalEQ, format: nil)
+        engine.connect(vocalEQ, to: vocalMixer, format: nil)
+        
+        engine.connect(drumPlayer, to: drumEQ, format: nil)
+        engine.connect(drumEQ, to: drumMixer, format: nil)
+        
+        engine.connect(bassPlayer, to: bassEQ, format: nil)
+        engine.connect(bassEQ, to: bassMixer, format: nil)
+        
+        engine.connect(otherPlayer, to: otherEQ, format: nil)
+        engine.connect(otherEQ, to: otherMixer, format: nil)
         
         // Connect channel mixers into the stems sum mixer
         engine.connect(vocalMixer, to: stemsSumMixer, format: nil)
@@ -284,9 +458,10 @@ public final class AudioEngineManager: @unchecked Sendable {
         engine.connect(bassMixer, to: stemsSumMixer, format: nil)
         engine.connect(otherMixer, to: stemsSumMixer, format: nil)
         
-        // Connect stemsSumMixer through timePitchNode to the main mixer
+        // Connect stemsSumMixer through timePitchNode to masterEQ to main mixer
         engine.connect(stemsSumMixer, to: timePitchNode, format: nil)
-        engine.connect(timePitchNode, to: engine.mainMixerNode, format: nil)
+        engine.connect(timePitchNode, to: masterEQ, format: nil)
+        engine.connect(masterEQ, to: engine.mainMixerNode, format: nil)
         engine.connect(originalPlayer, to: engine.mainMixerNode, format: nil)
         
         let format = engine.mainMixerNode.outputFormat(forBus: 0)
@@ -394,6 +569,31 @@ public final class AudioEngineManager: @unchecked Sendable {
         } catch {
             print("Failed to start audio engine: \(error)")
         }
+    }
+    
+    private func configureEQNode(_ eq: AVAudioUnitEQ) {
+        guard eq.bands.count >= 3 else { return }
+        
+        let low = eq.bands[0]
+        low.filterType = .lowShelf
+        low.frequency = 100.0
+        low.gain = 0.0
+        low.bypass = false
+        
+        let mid = eq.bands[1]
+        mid.filterType = .parametric
+        mid.frequency = 1000.0
+        mid.bandwidth = 1.2
+        mid.gain = 0.0
+        mid.bypass = false
+        
+        let high = eq.bands[2]
+        high.filterType = .highShelf
+        high.frequency = 10000.0
+        high.gain = 0.0
+        high.bypass = false
+        
+        eq.bypass = false
     }
     
     private func computeStemFFT(buffer: AVAudioPCMBuffer, stem: Int) {
@@ -1177,6 +1377,85 @@ public final class AudioEngineManager: @unchecked Sendable {
         }
     }
     
+    // MARK: - Offline Audio Rendering with EQ
+    public static func renderStemToFile(sourceURL: URL, destURL: URL, low: Float, mid: Float, high: Float) throws {
+        let sourceFile = try AVAudioFile(forReading: sourceURL)
+        let format = sourceFile.processingFormat
+        let totalFrames = AVAudioFrameCount(sourceFile.length)
+        guard totalFrames > 0 else {
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+            return
+        }
+        
+        let offlineEngine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let eq = AVAudioUnitEQ(numberOfBands: 3)
+        
+        guard eq.bands.count >= 3 else {
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+            return
+        }
+        
+        let b0 = eq.bands[0]
+        b0.filterType = .lowShelf
+        b0.frequency = 100.0
+        b0.gain = low
+        b0.bypass = false
+        
+        let b1 = eq.bands[1]
+        b1.filterType = .parametric
+        b1.frequency = 1000.0
+        b1.bandwidth = 1.2
+        b1.gain = mid
+        b1.bypass = false
+        
+        let b2 = eq.bands[2]
+        b2.filterType = .highShelf
+        b2.frequency = 10000.0
+        b2.gain = high
+        b2.bypass = false
+        
+        eq.bypass = false
+        
+        offlineEngine.attach(player)
+        offlineEngine.attach(eq)
+        offlineEngine.connect(player, to: eq, format: format)
+        offlineEngine.connect(eq, to: offlineEngine.mainMixerNode, format: format)
+        
+        try offlineEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try offlineEngine.start()
+        player.play()
+        player.scheduleFile(sourceFile, at: nil, completionHandler: nil)
+        
+        let outputFile = try AVAudioFile(forWriting: destURL, settings: sourceFile.fileFormat.settings)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: offlineEngine.manualRenderingFormat, frameCapacity: 4096) else {
+            offlineEngine.stop()
+            offlineEngine.disableManualRenderingMode()
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+            return
+        }
+        
+        while offlineEngine.manualRenderingSampleTime < totalFrames {
+            let framesToRender = min(4096, totalFrames - AVAudioFrameCount(offlineEngine.manualRenderingSampleTime))
+            let status = try offlineEngine.renderOffline(framesToRender, to: buffer)
+            switch status {
+            case .success:
+                try outputFile.write(from: buffer)
+            case .insufficientDataFromInputNode:
+                break
+            case .cannotDoInCurrentContext:
+                break
+            case .error:
+                throw NSError(domain: "IsolateAudioEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Render error"])
+            @unknown default:
+                break
+            }
+        }
+        player.stop()
+        offlineEngine.stop()
+        offlineEngine.disableManualRenderingMode()
+    }
+    
     // MARK: - Exporting Stems with Multi-Stage Progression and Completion
     
     @MainActor
@@ -1194,6 +1473,12 @@ public final class AudioEngineManager: @unchecked Sendable {
             let bassURL = fBass.url
             let otherURL = fOther.url
             
+            let bakeEQ = self.shouldBakeEQOnExport && !self.isGlobalEQBypassed
+            let vEQ = self.getStemEQ(0)
+            let dEQ = self.getStemEQ(1)
+            let bEQ = self.getStemEQ(2)
+            let oEQ = self.getStemEQ(3)
+            
             self.exportState = .exporting(stage: "PREPARING", percent: 0.05)
             self.exportProgress = 0.05
             
@@ -1206,28 +1491,62 @@ public final class AudioEngineManager: @unchecked Sendable {
                 let bDest = tempDir.appendingPathComponent("\(trackName)_Bass.wav")
                 let oDest = tempDir.appendingPathComponent("\(trackName)_Other.wav")
                 
-                // Stage 1: Copy Stems (5% to 30%)
-                try? FileManager.default.copyItem(at: vocalsURL, to: vDest)
+                // Stage 1: Copy or Render Stems (5% to 30%)
+                let stageName = bakeEQ ? "RENDERING EQ" : "COPYING"
+                
+                if bakeEQ && !vEQ.isBypassed && (vEQ.low != 0 || vEQ.mid != 0 || vEQ.high != 0) {
+                    do {
+                        try Self.renderStemToFile(sourceURL: vocalsURL, destURL: vDest, low: vEQ.low, mid: vEQ.mid, high: vEQ.high)
+                    } catch {
+                        try? FileManager.default.copyItem(at: vocalsURL, to: vDest)
+                    }
+                } else {
+                    try? FileManager.default.copyItem(at: vocalsURL, to: vDest)
+                }
                 await MainActor.run {
-                    self.exportState = .exporting(stage: "COPYING", percent: 0.12)
+                    self.exportState = .exporting(stage: stageName, percent: 0.12)
                     self.exportProgress = 0.12
                 }
                 
-                try? FileManager.default.copyItem(at: drumsURL, to: dDest)
+                if bakeEQ && !dEQ.isBypassed && (dEQ.low != 0 || dEQ.mid != 0 || dEQ.high != 0) {
+                    do {
+                        try Self.renderStemToFile(sourceURL: drumsURL, destURL: dDest, low: dEQ.low, mid: dEQ.mid, high: dEQ.high)
+                    } catch {
+                        try? FileManager.default.copyItem(at: drumsURL, to: dDest)
+                    }
+                } else {
+                    try? FileManager.default.copyItem(at: drumsURL, to: dDest)
+                }
                 await MainActor.run {
-                    self.exportState = .exporting(stage: "COPYING", percent: 0.18)
+                    self.exportState = .exporting(stage: stageName, percent: 0.18)
                     self.exportProgress = 0.18
                 }
                 
-                try? FileManager.default.copyItem(at: bassURL, to: bDest)
+                if bakeEQ && !bEQ.isBypassed && (bEQ.low != 0 || bEQ.mid != 0 || bEQ.high != 0) {
+                    do {
+                        try Self.renderStemToFile(sourceURL: bassURL, destURL: bDest, low: bEQ.low, mid: bEQ.mid, high: bEQ.high)
+                    } catch {
+                        try? FileManager.default.copyItem(at: bassURL, to: bDest)
+                    }
+                } else {
+                    try? FileManager.default.copyItem(at: bassURL, to: bDest)
+                }
                 await MainActor.run {
-                    self.exportState = .exporting(stage: "COPYING", percent: 0.24)
+                    self.exportState = .exporting(stage: stageName, percent: 0.24)
                     self.exportProgress = 0.24
                 }
                 
-                try? FileManager.default.copyItem(at: otherURL, to: oDest)
+                if bakeEQ && !oEQ.isBypassed && (oEQ.low != 0 || oEQ.mid != 0 || oEQ.high != 0) {
+                    do {
+                        try Self.renderStemToFile(sourceURL: otherURL, destURL: oDest, low: oEQ.low, mid: oEQ.mid, high: oEQ.high)
+                    } catch {
+                        try? FileManager.default.copyItem(at: otherURL, to: oDest)
+                    }
+                } else {
+                    try? FileManager.default.copyItem(at: otherURL, to: oDest)
+                }
                 await MainActor.run {
-                    self.exportState = .exporting(stage: "COPYING", percent: 0.30)
+                    self.exportState = .exporting(stage: stageName, percent: 0.30)
                     self.exportProgress = 0.30
                 }
                 
