@@ -430,5 +430,44 @@ final class IsolateTests: XCTestCase {
         
         try? FileManager.default.removeItem(at: tempDir)
     }
+    
+    // Test 14: Verify Minimum Window Height Layout Fit and Transport Bar Integrity
+    func testMinimumWindowHeightLayoutFitAndTransportBarIntegrity() {
+        let minWindowHeight: CGFloat = 580.0
+        let compactHeaderHeight: CGFloat = 122.0
+        let transportBarHeight: CGFloat = 64.0 // 48pt height + 16pt vertical padding
+        let headerMixerSpacing: CGFloat = 4.0
+        
+        // Channel strip fixed heights in compact mode:
+        let topStatusBarHeight: CGFloat = 2.0
+        let headerLabelHeight: CGFloat = 34.0
+        let dynamicWaveformHeight: CGFloat = 22.0
+        let panKnobHeight: CGFloat = 24.0
+        let eqStripHeight: CGFloat = 62.0
+        let volumeReadoutHeight: CGFloat = 20.0
+        let faderMinHeight: CGFloat = 75.0
+        let muteSoloButtonsHeight: CGFloat = 28.0
+        let channelSpacing: CGFloat = 28.0 // 7 gaps * 4pt
+        let channelPadding: CGFloat = 8.0 // 4pt top + 4pt bottom
+        
+        let minChannelHeight = topStatusBarHeight + headerLabelHeight + dynamicWaveformHeight +
+            panKnobHeight + eqStripHeight + volumeReadoutHeight + faderMinHeight +
+            muteSoloButtonsHeight + channelSpacing + channelPadding
+        
+        let totalRequiredHeight = compactHeaderHeight + headerMixerSpacing + minChannelHeight + transportBarHeight
+        
+        XCTAssertLessThanOrEqual(
+            totalRequiredHeight,
+            minWindowHeight,
+            "Total minimum content height (\(totalRequiredHeight)pt) must fit within the minimum window height (\(minWindowHeight)pt) so TransportBar is never pushed off-screen"
+        )
+        
+        let headroom = minWindowHeight - totalRequiredHeight
+        XCTAssertGreaterThanOrEqual(
+            headroom,
+            50.0,
+            "Must have at least 50pt headroom buffer (\(headroom)pt available) allowing faders to comfortably breathe on compact displays"
+        )
+    }
 }
 

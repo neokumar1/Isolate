@@ -69,7 +69,7 @@ struct IsolateApp: App {
                 return true
             }
             .preferredColorScheme(.dark)
-            .frame(minWidth: 960, minHeight: 600)
+            .frame(minWidth: 960, minHeight: 580)
             .background(WindowAccessor())
             .navigationTitle("")
             .environment(engineManager)

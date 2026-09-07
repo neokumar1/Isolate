@@ -115,33 +115,35 @@ struct CustomFader: View {
                 // 2. Calibrated Decibel Scale Graduation Marks (Left & Right Flanks)
                 ForEach(0..<ticks.count, id: \.self) { idx in
                     let tick = ticks[idx]
-                    let yPos = trackHeight * (1.0 - CGFloat(tick.normVal))
-                    
-                    // Left Ticks + Labels
-                    HStack(spacing: 3) {
-                        if let lbl = tick.label {
-                            Text(lbl)
-                                .font(.custom("DotGothic16-Regular", size: 7.5))
-                                .foregroundColor(tick.normVal == 1.0 ? Color.red.opacity(0.85) : Color.white.opacity(0.35))
-                                .frame(width: 18, alignment: .trailing)
-                        } else {
-                            Spacer()
-                                .frame(width: 18)
-                        }
+                    if tick.isMajor || trackHeight >= 140 {
+                        let yPos = trackHeight * (1.0 - CGFloat(tick.normVal))
                         
+                        // Left Ticks + Labels
+                        HStack(spacing: 3) {
+                            if let lbl = tick.label {
+                                Text(lbl)
+                                    .font(.custom("DotGothic16-Regular", size: 7.5))
+                                    .foregroundColor(tick.normVal == 1.0 ? Color.red.opacity(0.85) : Color.white.opacity(0.35))
+                                    .frame(width: 18, alignment: .trailing)
+                            } else {
+                                Spacer()
+                                    .frame(width: 18)
+                            }
+                            
+                            Rectangle()
+                                .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : Color.white.opacity(tick.isMajor ? 0.25 : 0.12))
+                                .frame(width: tick.isMajor ? 6 : 3, height: 1)
+                        }
+                        .position(x: centerX - 18, y: yPos)
+                        .allowsHitTesting(false)
+                        
+                        // Right Symmetrical Ticks
                         Rectangle()
                             .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : Color.white.opacity(tick.isMajor ? 0.25 : 0.12))
                             .frame(width: tick.isMajor ? 6 : 3, height: 1)
+                            .position(x: centerX + (tick.isMajor ? 11 : 9.5), y: yPos)
+                            .allowsHitTesting(false)
                     }
-                    .position(x: centerX - 18, y: yPos)
-                    .allowsHitTesting(false)
-                    
-                    // Right Symmetrical Ticks
-                    Rectangle()
-                        .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : Color.white.opacity(tick.isMajor ? 0.25 : 0.12))
-                        .frame(width: tick.isMajor ? 6 : 3, height: 1)
-                        .position(x: centerX + (tick.isMajor ? 11 : 9.5), y: yPos)
-                        .allowsHitTesting(false)
                 }
                 
                 // 3. Vertical Track Slot & Active Level Meter with Peak-Hold Clip LED
@@ -234,7 +236,7 @@ struct CustomFader: View {
                 .allowsHitTesting(false)
             }
         }
-        .frame(minHeight: 180, maxHeight: .infinity)
+        .frame(minHeight: 70, maxHeight: .infinity)
     }
     
     private func triggerClipHold() {
