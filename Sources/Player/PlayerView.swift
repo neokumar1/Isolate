@@ -99,10 +99,10 @@ public struct PlayerView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.top, 8)
+            .padding(.top, 50)
             .padding(.bottom, 2)
         }
-        .frame(height: 110)
+        .frame(height: 152)
     }
     
     private func sidebarToggleButton(isSidebarVisible: Binding<Bool>) -> some View {

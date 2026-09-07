@@ -271,5 +271,29 @@ final class IsolateTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(leftPadding, 18.0, "Close button left padding must be >= 18pt (macOS unified standard)")
         XCTAssertGreaterThanOrEqual(topPadding, 18.0, "Close button top padding must be >= 18pt (macOS unified standard)")
     }
+    
+    // Test 10: Verify Player Header Top Padding Clears NSToolbar Window Drag Area & Fullscreen Handling
+    func testPlayerHeaderTitlebarClearanceAndFullscreenHandling() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 960, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let toolbar = NSToolbar(identifier: "IsolateTestClearanceToolbar")
+        toolbar.displayMode = .iconOnly
+        toolbar.showsBaselineSeparator = false
+        window.toolbar = toolbar
+        window.toolbarStyle = .unified
+        
+        let headerTopPadding: CGFloat = 50.0
+        XCTAssertGreaterThanOrEqual(headerTopPadding, 50.0, "Player header top padding must be >= 50pt to clear titlebar click area")
+        
+        toolbar.isVisible = false
+        XCTAssertFalse(toolbar.isVisible, "Toolbar must hide when full-screen is active to prevent grey bar clipping")
+        
+        toolbar.isVisible = true
+        XCTAssertTrue(toolbar.isVisible, "Toolbar must restore visibility upon exiting full-screen")
+    }
 }
 

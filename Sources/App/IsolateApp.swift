@@ -1023,11 +1023,50 @@ struct DeleteModalCard: View {
 
 // MARK: - Window Accessor
 struct WindowAccessor: NSViewRepresentable {
+    final class Coordinator: NSObject {
+        weak var window: NSWindow?
+        
+        func attach(to window: NSWindow) {
+            guard self.window !== window else { return }
+            self.window = window
+            
+            NotificationCenter.default.removeObserver(self)
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidEnterFullScreen),
+                name: NSWindow.didEnterFullScreenNotification,
+                object: window
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidExitFullScreen),
+                name: NSWindow.didExitFullScreenNotification,
+                object: window
+            )
+        }
+        
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+        
+        @objc private func windowDidEnterFullScreen() {
+            window?.toolbar?.isVisible = false
+        }
+        
+        @objc private func windowDidExitFullScreen() {
+            window?.toolbar?.isVisible = true
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
             if let window = view.window {
-                applyWindowStyling(to: window)
+                applyWindowStyling(to: window, context: context)
             }
         }
         return view
@@ -1035,11 +1074,11 @@ struct WindowAccessor: NSViewRepresentable {
     
     func updateNSView(_ nsView: NSView, context: Context) {
         if let window = nsView.window {
-            applyWindowStyling(to: window)
+            applyWindowStyling(to: window, context: context)
         }
     }
     
-    private func applyWindowStyling(to window: NSWindow) {
+    private func applyWindowStyling(to window: NSWindow, context: Context) {
         window.title = ""
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -1053,8 +1092,15 @@ struct WindowAccessor: NSViewRepresentable {
         if window.toolbar == nil {
             let toolbar = NSToolbar(identifier: "IsolateMainWindowToolbar")
             toolbar.displayMode = .iconOnly
+            toolbar.showsBaselineSeparator = false
             window.toolbar = toolbar
             window.toolbarStyle = .unified
+        }
+        
+        context.coordinator.attach(to: window)
+        
+        if window.styleMask.contains(.fullScreen) {
+            window.toolbar?.isVisible = false
         }
     }
 }
