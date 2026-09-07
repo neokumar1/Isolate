@@ -385,7 +385,7 @@ struct StemChannelView: View {
         } else if isMuted {
             return Color.gray.opacity(0.2)
         } else {
-            return Color.white.opacity(0.25)
+            return Color.red.opacity(0.85)
         }
     }
     
@@ -402,16 +402,6 @@ struct StemChannelView: View {
         let db = 20.0 * log10(volume)
         if abs(db) < 0.2 { return "0.0 dB" }
         return String(format: "%.1f dB", db)
-    }
-    
-    private var hasFocusOutline: Bool {
-        if isAnySoloed {
-            return isSoloed
-        } else if isAnyMuted {
-            return !isMuted && volume > 0.001
-        } else {
-            return false
-        }
     }
     
     private var isDimmed: Bool {
@@ -437,21 +427,22 @@ struct StemChannelView: View {
             VStack(spacing: 2) {
                 HStack {
                     Text(channelTag)
-                        .font(.custom("DotGothic16-Regular", size: 9.5))
+                        .font(.custom("DotGothic16-Regular", size: 10))
                         .foregroundColor(.gray)
                     
                     Spacer()
                     
                     Text(shortcutHint)
-                        .font(.custom("DotGothic16-Regular", size: 8.5))
+                        .font(.custom("DotGothic16-Regular", size: 9))
                         .foregroundColor(Color.white.opacity(0.35))
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 6)
                 
                 Text(title)
-                    .font(.custom("DotGothic16-Regular", size: 16))
+                    .font(.custom("DotGothic16-Regular", size: 17))
                     .fontWeight(.bold)
                     .foregroundColor(.white)
+                    .tracking(1.0)
             }
             .padding(.top, 2)
             
@@ -462,12 +453,12 @@ struct StemChannelView: View {
                 effectiveVolume: effectiveVolume,
                 isPlaying: isPlaying
             )
-            .frame(height: 32)
+            .frame(height: 30)
             
-            // Rotary Stereo Panning Dial
+            // Bipolar Stereo Panning Control
             PanKnobView(pan: $pan)
             
-            // 3-Band Rotary EQ Section (Open hardware strip, no nested box)
+            // 3-Band Rotary EQ Section (Modular strip with hairlines)
             StemEQChannelStripView(
                 low: $lowGain,
                 mid: $midGain,
@@ -476,16 +467,25 @@ struct StemChannelView: View {
                 onReset: onResetEQ
             )
             
-            // Volume Readout (% and dB)
-            VStack(spacing: 1) {
+            // Precision Readout Box (% and dB)
+            HStack(spacing: 8) {
                 Text("\(Int(volume * 100))%")
-                    .font(.custom("DotGothic16-Regular", size: 13.0))
+                    .font(.custom("DotGothic16-Regular", size: 13.5))
+                    .fontWeight(.bold)
                     .foregroundColor(.white)
                 
                 Text(dbString)
-                    .font(.custom("DotGothic16-Regular", size: 9.0))
+                    .font(.custom("DotGothic16-Regular", size: 10.0))
                     .foregroundColor(abs(volume - 1.0) < 0.01 ? .red : .gray)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.white.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+            )
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
                 Haptics.playClick()
@@ -493,14 +493,15 @@ struct StemChannelView: View {
                     volume = 1.0
                 }
             }
+            .help("Double-click to reset to 0.0 dB (100%)")
             .padding(.top, 2)
             
-            // Hardware Fader - Expands dynamically to fill available window height
+            // Hardware Fader with Decibel Scale & Machined Thumb
             CustomFader(value: $volume, label: title)
                 .frame(minHeight: 180, maxHeight: .infinity)
             
             // Mute & Solo Hardware Switches
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 muteButton
                 soloButton
             }
@@ -509,15 +510,15 @@ struct StemChannelView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white.opacity(0.018))
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .background(Color.white.opacity(0.015))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
         .opacity(isDimmed ? 0.35 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isDimmed)
     }
     
     private var muteButton: some View {
         let bg: Color = isMuted ? .red : (isMutedHovered ? Color.white.opacity(0.08) : .clear)
-        let strokeColor: Color = isMuted ? .red : (isMutedHovered ? Color.red.opacity(0.6) : Color.gray.opacity(0.5))
+        let strokeColor: Color = isMuted ? .red : (isMutedHovered ? Color.red.opacity(0.7) : Color.white.opacity(0.18))
         let fg: Color = isMuted ? .black : .white
         
         return Button(action: {
@@ -532,7 +533,7 @@ struct StemChannelView: View {
             Text("M")
                 .font(.custom("DotGothic16-Regular", size: 13))
                 .fontWeight(.bold)
-                .frame(width: 38, height: 30)
+                .frame(width: 44, height: 32)
                 .background(bg)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -543,11 +544,12 @@ struct StemChannelView: View {
         }
         .buttonStyle(.plain)
         .onHover { isMutedHovered = $0 }
+        .help("Mute channel (\(channelIndex == 0 ? "V" : channelIndex == 1 ? "D" : channelIndex == 2 ? "B" : "O"))")
     }
     
     private var soloButton: some View {
         let bg: Color = isSoloed ? .red : (isSoloedHovered ? Color.white.opacity(0.08) : .clear)
-        let strokeColor: Color = isSoloed ? .red : (isSoloedHovered ? Color.red.opacity(0.6) : Color.gray.opacity(0.5))
+        let strokeColor: Color = isSoloed ? .red : (isSoloedHovered ? Color.red.opacity(0.7) : Color.white.opacity(0.18))
         let fg: Color = isSoloed ? .black : .white
         
         return Button(action: {
@@ -562,7 +564,7 @@ struct StemChannelView: View {
             Text("S")
                 .font(.custom("DotGothic16-Regular", size: 13))
                 .fontWeight(.bold)
-                .frame(width: 38, height: 30)
+                .frame(width: 44, height: 32)
                 .background(bg)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -573,81 +575,118 @@ struct StemChannelView: View {
         }
         .buttonStyle(.plain)
         .onHover { isSoloedHovered = $0 }
+        .help("Solo channel (\(channelIndex + 1))")
     }
 }
 
-// MARK: - Rotary Pan Dial with Notched Center Detent
+// MARK: - Nothing Bipolar Stereo Pan Control
 struct PanKnobView: View {
     @Binding var pan: Float // -1.0 to +1.0
     @State private var isHovered = false
+    @State private var isDragging = false
     
     private var panLabel: String {
-        if abs(pan) < 0.05 {
-            return "C"
+        if abs(pan) < 0.04 {
+            return "CENTER"
         } else if pan < 0 {
-            return "L\(Int(abs(pan) * 100))"
+            return "L \(Int(abs(pan) * 100))"
         } else {
-            return "R\(Int(pan * 100))"
+            return "R \(Int(pan * 100))"
         }
     }
     
+    private var isCenter: Bool {
+        abs(pan) < 0.04
+    }
+    
     var body: some View {
-        HStack(spacing: 3) {
-            Button(action: {
-                let prev = pan
-                var next = max(-1.0, pan - 0.1)
-                if prev > 0 && next <= 0.05 {
-                    next = 0.0
-                    Haptics.playAlignment()
-                } else {
-                    Haptics.playClick()
-                }
-                pan = next
-            }) {
-                Text("‹")
-                    .font(.custom("DotGothic16-Regular", size: 11))
+        VStack(spacing: 3) {
+            // Header: PAN label + Value Readout
+            HStack {
+                Text("PAN")
+                    .font(.custom("DotGothic16-Regular", size: 8.5))
                     .foregroundColor(.gray)
-                    .frame(width: 14, height: 18)
+                Spacer()
+                Text(panLabel)
+                    .font(.custom("DotGothic16-Regular", size: 8.5))
+                    .fontWeight(.bold)
+                    .foregroundColor(isCenter ? .white : .red)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 4)
             
-            Text(panLabel)
-                .font(.custom("DotGothic16-Regular", size: 10.5))
-                .fontWeight(.bold)
-                .foregroundColor(abs(pan) < 0.05 ? .white : .red)
-                .frame(width: 38)
+            // Interactive Bipolar Stereo Bar
+            GeometryReader { geo in
+                let width = geo.size.width
+                let height = geo.size.height
+                let centerX = width / 2.0
+                let normalizedPan = CGFloat(pan) // -1.0 to +1.0
+                let thumbX = centerX + (normalizedPan * (centerX - 6))
+                
+                ZStack(alignment: .leading) {
+                    // Track Groove
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(white: 0.08))
+                        .frame(width: width, height: 6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                        )
+                        .position(x: centerX, y: height / 2.0)
+                    
+                    // Center Zero Detent Pip
+                    Rectangle()
+                        .fill(Color.white.opacity(0.35))
+                        .frame(width: 1.5, height: 10)
+                        .position(x: centerX, y: height / 2.0)
+                    
+                    // Active Bipolar Fill from Center to Thumb
+                    if !isCenter {
+                        let fillWidth = abs(thumbX - centerX)
+                        let fillOriginX = min(thumbX, centerX) + (fillWidth / 2.0)
+                        
+                        Rectangle()
+                            .fill(Color.red)
+                            .frame(width: max(1, fillWidth), height: 3)
+                            .position(x: fillOriginX, y: height / 2.0)
+                    }
+                    
+                    // Thumb Needle / Pip
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(isCenter ? Color.white : Color.red)
+                        .frame(width: 3.5, height: 12)
+                        .shadow(color: (isHovered || isDragging) ? Color.red.opacity(0.6) : Color.clear, radius: 3)
+                        .position(x: thumbX, y: height / 2.0)
+                }
                 .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { drag in
+                            isDragging = true
+                            let touchX = drag.location.x
+                            let ratio = (touchX - centerX) / (centerX - 6)
+                            var newPan = Float(min(1.0, max(-1.0, ratio)))
+                            if abs(newPan) < 0.06 {
+                                if abs(pan) >= 0.06 { Haptics.playAlignment() }
+                                newPan = 0.0
+                            }
+                            pan = newPan
+                        }
+                        .onEnded { _ in
+                            isDragging = false
+                        }
+                )
                 .onTapGesture(count: 2) {
                     Haptics.playAlignment()
-                    pan = 0.0
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        pan = 0.0
+                    }
                 }
-            
-            Button(action: {
-                let prev = pan
-                var next = min(1.0, pan + 0.1)
-                if prev < 0 && next >= -0.05 {
-                    next = 0.0
-                    Haptics.playAlignment()
-                } else {
-                    Haptics.playClick()
-                }
-                pan = next
-            }) {
-                Text("›")
-                    .font(.custom("DotGothic16-Regular", size: 11))
-                    .foregroundColor(.gray)
-                    .frame(width: 14, height: 18)
             }
-            .buttonStyle(.plain)
+            .frame(height: 16)
+            .onHover { isHovered = $0 }
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
-        .background(isHovered ? Color.white.opacity(0.06) : Color.white.opacity(0.02))
-        .overlay(
-            RoundedRectangle(cornerRadius: 3)
-                .stroke(abs(pan) > 0.05 ? Color.red.opacity(0.6) : Color.white.opacity(0.08), lineWidth: 0.5)
-        )
-        .onHover { isHovered = $0 }
     }
 }
 
@@ -668,24 +707,29 @@ struct RotaryEQKnobView: View {
     
     private var gainString: String {
         if isBypassed { return "BYP" }
-        if abs(gain) < 0.15 { return "0.0" }
-        return String(format: "%+.1f", gain)
+        if abs(gain) < 0.15 { return "0.0 dB" }
+        return String(format: "%+.1f dB", gain)
     }
     
     private var accentColor: Color {
         if isBypassed { return Color.gray.opacity(0.4) }
-        if abs(gain) < 0.15 { return Color.white.opacity(0.8) }
-        return gain > 0 ? Color.red : Color.white.opacity(0.5)
+        if abs(gain) < 0.15 { return Color.white.opacity(0.85) }
+        return gain > 0 ? Color.red : Color.white.opacity(0.6)
     }
     
     var body: some View {
         VStack(spacing: 3) {
             Text(bandName)
-                .font(.custom("DotGothic16-Regular", size: 9.0))
-                .foregroundColor(.gray)
+                .font(.custom("DotGothic16-Regular", size: 9.5))
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+            
+            Text(freqLabel)
+                .font(.custom("DotGothic16-Regular", size: 7.5))
+                .foregroundColor(Color.white.opacity(0.40))
             
             ZStack {
-                // Background Track (-135 to +135 deg)
+                // Outer Dial Track (-135 to +135 deg)
                 Circle()
                     .trim(from: 0.125, to: 0.875)
                     .stroke(
@@ -693,13 +737,26 @@ struct RotaryEQKnobView: View {
                         style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(90))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 32, height: 32)
                 
                 // Zero Detent Pip at 12 o'clock
                 Rectangle()
-                    .fill(Color.white.opacity(0.35))
-                    .frame(width: 1, height: 3)
-                    .offset(y: -14)
+                    .fill(Color.white.opacity(0.45))
+                    .frame(width: 1.5, height: 3.5)
+                    .offset(y: -16)
+                
+                // Quarter-turn Tick marks at -6dB and +6dB
+                Rectangle()
+                    .fill(Color.white.opacity(0.18))
+                    .frame(width: 1, height: 2.5)
+                    .offset(y: -16)
+                    .rotationEffect(.degrees(-67.5))
+                
+                Rectangle()
+                    .fill(Color.white.opacity(0.18))
+                    .frame(width: 1, height: 2.5)
+                    .offset(y: -16)
+                    .rotationEffect(.degrees(67.5))
                 
                 // Active Gain Arc
                 if !isBypassed && abs(gain) >= 0.15 {
@@ -711,7 +768,7 @@ struct RotaryEQKnobView: View {
                                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                             )
                             .rotationEffect(.degrees(90))
-                            .frame(width: 28, height: 28)
+                            .frame(width: 32, height: 32)
                     } else {
                         Circle()
                             .trim(from: 0.5 - (Double(abs(gain)) / 24.0) * 0.75, to: 0.5)
@@ -720,27 +777,30 @@ struct RotaryEQKnobView: View {
                                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                             )
                             .rotationEffect(.degrees(90))
-                            .frame(width: 28, height: 28)
+                            .frame(width: 32, height: 32)
                     }
                 }
+                
+                // Machined Knob Cap
+                Circle()
+                    .fill(Color(white: 0.08))
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                isHovered ? Color.red.opacity(0.85) : Color.white.opacity(0.18),
+                                lineWidth: 1
+                            )
+                    )
                 
                 // Pointer Needle
                 Rectangle()
                     .fill(accentColor)
-                    .frame(width: 1.5, height: 7)
-                    .offset(y: -7)
+                    .frame(width: 1.5, height: 8)
+                    .offset(y: -8)
                     .rotationEffect(.degrees(normalizedAngle))
-                
-                // Center Knob Cap
-                Circle()
-                    .fill(Color(white: 0.08))
-                    .frame(width: 16, height: 16)
-                    .overlay(
-                        Circle()
-                            .stroke(isHovered ? Color.red.opacity(0.85) : Color.white.opacity(0.2), lineWidth: 1)
-                    )
             }
-            .frame(width: 32, height: 32)
+            .frame(width: 36, height: 36)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -775,10 +835,6 @@ struct RotaryEQKnobView: View {
             Text(gainString)
                 .font(.custom("DotGothic16-Regular", size: 8.5))
                 .foregroundColor(accentColor)
-            
-            Text(freqLabel)
-                .font(.custom("DotGothic16-Regular", size: 7.5))
-                .foregroundColor(Color.white.opacity(0.35))
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
@@ -798,53 +854,42 @@ struct StemEQChannelStripView: View {
         abs(low) >= 0.15 || abs(mid) >= 0.15 || abs(high) >= 0.15
     }
     
-    private var bypassCircleColor: Color {
-        if isBypassed { return Color.gray.opacity(0.5) }
-        return isModified ? Color.red : Color.white.opacity(0.8)
-    }
-    
-    private var bypassTextColor: Color {
-        if isBypassed { return Color.gray }
-        return isModified ? Color.red : Color.white.opacity(0.85)
-    }
-    
-    private var bypassBgColor: Color {
-        if isBypassed { return Color.white.opacity(0.04) }
-        return isModified ? Color.red.opacity(0.12) : Color.white.opacity(0.05)
-    }
-    
-    private var bypassBorderColor: Color {
-        if isBypassed { return Color.white.opacity(0.08) }
-        return isModified ? Color.red.opacity(0.4) : Color.white.opacity(0.12)
-    }
-    
     var body: some View {
-        VStack(spacing: 4) {
-            // Header: [EQ] label + Bypass toggle + Quick reset
+        VStack(spacing: 5) {
+            // Hairline Boundary Top
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+                .padding(.horizontal, 4)
+            
+            // Header Bar
             HStack {
                 Button(action: {
                     Haptics.playClick()
                     isBypassed.toggle()
                 }) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Circle()
-                            .fill(bypassCircleColor)
+                            .fill(isBypassed ? Color.gray.opacity(0.5) : (isModified ? Color.red : Color.white))
                             .frame(width: 4, height: 4)
-                        Text(isBypassed ? "EQ: BYPASS" : "EQ: ACTIVE")
+                        Text(isBypassed ? "EQ: BYPASS" : "3-BAND EQ")
                             .font(.custom("DotGothic16-Regular", size: 8.5))
-                            .foregroundColor(bypassTextColor)
+                            .foregroundColor(isBypassed ? .gray : .white)
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(bypassBgColor)
+                    .background(Color.white.opacity(0.04))
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
-                            .stroke(bypassBorderColor, lineWidth: 0.5)
+                            .stroke(
+                                isModified && !isBypassed ? Color.red.opacity(0.5) : Color.white.opacity(0.10),
+                                lineWidth: 0.5
+                            )
                     )
                 }
                 .buttonStyle(.plain)
-                .help(isBypassed ? "Unbypass EQ" : "Bypass EQ")
+                .help(isBypassed ? "Unbypass EQ (⌘E)" : "Bypass EQ (⌘E)")
                 
                 Spacer()
                 
@@ -858,12 +903,12 @@ struct StemEQChannelStripView: View {
                             onReset?()
                         }
                     }) {
-                        Text("RESET")
+                        Text("[RESET]")
                             .font(.custom("DotGothic16-Regular", size: 8.0))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.red)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
-                            .background(Color.white.opacity(0.05))
+                            .background(Color.red.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 2))
                     }
                     .buttonStyle(.plain)
@@ -873,14 +918,19 @@ struct StemEQChannelStripView: View {
             .padding(.horizontal, 4)
             
             // 3 Rotary Knobs Row: LOW (100Hz), MID (1kHz), HIGH (10kHz)
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 RotaryEQKnobView(bandName: "LOW", freqLabel: "100Hz", gain: $low, isBypassed: isBypassed)
-                RotaryEQKnobView(bandName: "MID", freqLabel: "1kHz", gain: $mid, isBypassed: isBypassed)
+                RotaryEQKnobView(bandName: "MID", freqLabel: "1.0kHz", gain: $mid, isBypassed: isBypassed)
                 RotaryEQKnobView(bandName: "HIGH", freqLabel: "10kHz", gain: $high, isBypassed: isBypassed)
             }
+            
+            // Hairline Boundary Bottom
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+                .padding(.horizontal, 4)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
     }
 }
 
@@ -944,25 +994,31 @@ struct StemDynamicWaveformView: View {
                 let hasSignal = isActive && amp > 0.012
                 let spread = hasSignal ? min(3, Int(ceil(amp * 3.0))) : 0
                 
-                VStack(spacing: 1.8) {
+                VStack(spacing: 2.0) {
                     ForEach(0..<blockCount, id: \.self) { blockIndex in
                         let distance = abs(centerIndex - blockIndex)
                         let isLit = hasSignal && (distance <= spread)
                         let isRestingCenter = !hasSignal && (blockIndex == centerIndex)
                         
+                        let dotColor: Color = {
+                            if isLit {
+                                return distance == spread && distance > 1 ? Color.red : Color.white
+                            } else if isRestingCenter {
+                                return effectiveVolume <= 0.001 ? Color.white.opacity(0.08) : Color.red.opacity(0.35)
+                            } else {
+                                return Color.white.opacity(0.05) // Faint unlit physical LED dot
+                            }
+                        }()
+                        
                         RoundedRectangle(cornerRadius: 0.6)
-                            .fill(
-                                isLit
-                                    ? Color.red
-                                    : (isRestingCenter ? (effectiveVolume <= 0.001 ? Color.white.opacity(0.08) : Color.red.opacity(0.20)) : Color.clear)
-                            )
-                            .frame(width: 4.8, height: 2.3)
+                            .fill(dotColor)
+                            .frame(width: 5.0, height: 2.5)
                     }
                 }
                 .animation(.spring(response: 0.08, dampingFraction: 0.7, blendDuration: 0.01), value: amp)
             }
         }
-        .frame(height: 26)
+        .frame(height: 30)
     }
 }
 
