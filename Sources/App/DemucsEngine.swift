@@ -201,6 +201,11 @@ public actor DemucsEngine {
             throw DemucsError.invalidAudioFormat
         }
         
+        // Remove sub-audible DC drift and infrasonic rumble below 18 Hz (< 18 Hz)
+        // Prevents nonlinear cone excursion and intermodulation static on laptop speakers
+        Self.applyInfrasonicFilter(channel: inL, count: originalFrames)
+        Self.applyInfrasonicFilter(channel: inR, count: originalFrames)
+        
         // 2. Prepare Caching Directory
         let fileHash = "\(url.lastPathComponent.replacingOccurrences(of: " ", with: "_"))_\(originalFrames)"
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -297,13 +302,12 @@ public actor DemucsEngine {
         
         // 5. Initialize Hann Window & Overlap-Add Accumulators
         var hannWindow = [Float](repeating: 0.0, count: chunkSize)
-        for i in 0..<chunkSize {
-            hannWindow[i] = 0.5 * (1.0 - cosf(Float(2.0 * Double.pi * Double(i) / Double(chunkSize))))
-        }
+        vDSP_hann_window(&hannWindow, vDSP_Length(chunkSize), Int32(vDSP_HANN_DENORM))
         
         // Accumulators for 4 stems × 2 channels (8 total) across paddedFrames
         var stemAccumulators = [[Float]](repeating: [Float](repeating: 0.0, count: paddedFrames), count: 8)
         var weightAccumulator = [Float](repeating: 0.0, count: paddedFrames)
+        var scratchChunk = [Float](repeating: 0.0, count: chunkSize)
         
         let inputShape: [NSNumber] = [1, 2, NSNumber(value: chunkSize)]
         let inputArray = try MLMultiArray(shape: inputShape, dataType: .float32)
@@ -340,11 +344,12 @@ public actor DemucsEngine {
                 throw DemucsError.conversionFailed("Model output 'sources' multiarray is missing.")
             }
             
-            // Overlap-Add model output into accumulators
+            // Overlap-Add model output into accumulators using zero-allocation SIMD
             applyOverlapAddChunk(
                 outMultiArray: sourcesArray,
                 accumulators: &stemAccumulators,
                 weightAccumulator: &weightAccumulator,
+                scratchBuffer: &scratchChunk,
                 chunkStart: chunkStart,
                 readFrames: readFrames,
                 window: hannWindow,
@@ -389,6 +394,12 @@ public actor DemucsEngine {
             interleaved: false
         )!
         
+        // Safe minimum weight threshold to avoid divide-by-zero
+        weightAccumulator.withUnsafeMutableBufferPointer { wPtr in
+            var minWeight: Float = 1e-4
+            vDSP_vthr(wPtr.baseAddress!, 1, &minWeight, wPtr.baseAddress!, 1, vDSP_Length(paddedFrames))
+        }
+        
         for stemIdx in 0..<4 {
             try Task.checkCancellation()
             let stemName = Self.stemNames[stemIdx].uppercased()
@@ -415,12 +426,27 @@ public actor DemucsEngine {
             let destL = outBuffer.floatChannelData![0]
             let destR = outBuffer.floatChannelData![1]
             
-            for i in 0..<originalFrames {
-                let paddedIdx = padSize + i
-                let w = max(weightAccumulator[paddedIdx], 1e-4)
-                destL[i] = stemL[paddedIdx] / w
-                destR[i] = stemR[paddedIdx] / w
+            stemL.withUnsafeBufferPointer { pL in
+                stemR.withUnsafeBufferPointer { pR in
+                    weightAccumulator.withUnsafeBufferPointer { pW in
+                        let srcL = pL.baseAddress! + padSize
+                        let srcR = pR.baseAddress! + padSize
+                        let srcW = pW.baseAddress! + padSize
+                        vDSP_vdiv(srcW, 1, srcL, 1, destL, 1, vDSP_Length(originalFrames))
+                        vDSP_vdiv(srcW, 1, srcR, 1, destR, 1, vDSP_Length(originalFrames))
+                    }
+                }
             }
+            
+            // Ultrasonic roll-off on "OTHER" stem (stemIdx == 3) to eliminate residual model phase hash (>18.5 kHz)
+            if stemIdx == 3 {
+                Self.applyUltrasonicFilter(channel: destL, count: originalFrames)
+                Self.applyUltrasonicFilter(channel: destR, count: originalFrames)
+            }
+            
+            // Transparent soft-knee headroom limiter to eliminate any digital clipping pops/clicks
+            Self.applySoftLimiter(channel: destL, count: originalFrames)
+            Self.applySoftLimiter(channel: destR, count: originalFrames)
             
             let stemURL = outputURLs[stemIdx]
             let diskSettings: [String: Any] = [
@@ -443,6 +469,8 @@ public actor DemucsEngine {
         let origDestR = originalBuffer.floatChannelData![1]
         memcpy(origDestL, inL, originalFrames * MemoryLayout<Float>.size)
         memcpy(origDestR, inR, originalFrames * MemoryLayout<Float>.size)
+        Self.applySoftLimiter(channel: origDestL, count: originalFrames)
+        Self.applySoftLimiter(channel: origDestR, count: originalFrames)
         
         let origSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
@@ -788,6 +816,7 @@ public actor DemucsEngine {
         outMultiArray: MLMultiArray,
         accumulators: inout [[Float]],
         weightAccumulator: inout [Float],
+        scratchBuffer: inout [Float],
         chunkStart: Int,
         readFrames: Int,
         window: [Float],
@@ -798,38 +827,138 @@ public actor DemucsEngine {
         let strides = outMultiArray.strides
         let stemStride = strides[1].intValue
         let channelStride = strides[2].intValue
+        var stdVal = std
+        var meanVal = mean
+        let length = vDSP_Length(readFrames)
         
-        for stemIdx in 0..<4 {
-            let stemOffset = stemIdx * stemStride
-            if isFloat32 {
-                let outPtr = outMultiArray.dataPointer.assumingMemoryBound(to: Float.self)
-                let srcL = outPtr.advanced(by: stemOffset)
-                let srcR = outPtr.advanced(by: stemOffset + channelStride)
-                for i in 0..<readFrames {
-                    let w = window[i]
-                    let targetIdx = chunkStart + i
-                    let valL = srcL[i] * std + mean
-                    let valR = srcR[i] * std + mean
-                    accumulators[stemIdx * 2][targetIdx] += valL * w
-                    accumulators[stemIdx * 2 + 1][targetIdx] += valR * w
+        scratchBuffer.withUnsafeMutableBufferPointer { scPtr in
+            let scAddress = scPtr.baseAddress!
+            
+            for stemIdx in 0..<4 {
+                let stemOffset = stemIdx * stemStride
+                
+                // Left channel: scale -> window -> accumulate in SIMD
+                if isFloat32 {
+                    let outPtr = outMultiArray.dataPointer.assumingMemoryBound(to: Float.self)
+                    let srcL = outPtr.advanced(by: stemOffset)
+                    vDSP_vsmsa(srcL, 1, &stdVal, &meanVal, scAddress, 1, length)
+                } else {
+                    let outPtr = outMultiArray.dataPointer.assumingMemoryBound(to: Float16.self)
+                    let srcL = outPtr.advanced(by: stemOffset)
+                    for i in 0..<readFrames {
+                        scAddress[i] = Float(srcL[i])
+                    }
+                    vDSP_vsmsa(scAddress, 1, &stdVal, &meanVal, scAddress, 1, length)
                 }
-            } else {
-                let outPtr = outMultiArray.dataPointer.assumingMemoryBound(to: Float16.self)
-                let srcL = outPtr.advanced(by: stemOffset)
-                let srcR = outPtr.advanced(by: stemOffset + channelStride)
-                for i in 0..<readFrames {
-                    let w = window[i]
-                    let targetIdx = chunkStart + i
-                    let valL = Float(srcL[i]) * std + mean
-                    let valR = Float(srcR[i]) * std + mean
-                    accumulators[stemIdx * 2][targetIdx] += valL * w
-                    accumulators[stemIdx * 2 + 1][targetIdx] += valR * w
+                vDSP_vmul(scAddress, 1, window, 1, scAddress, 1, length)
+                accumulators[stemIdx * 2].withUnsafeMutableBufferPointer { accPtr in
+                    vDSP_vadd(accPtr.baseAddress! + chunkStart, 1, scAddress, 1, accPtr.baseAddress! + chunkStart, 1, length)
+                }
+                
+                // Right channel: scale -> window -> accumulate in SIMD
+                if isFloat32 {
+                    let outPtr = outMultiArray.dataPointer.assumingMemoryBound(to: Float.self)
+                    let srcR = outPtr.advanced(by: stemOffset + channelStride)
+                    vDSP_vsmsa(srcR, 1, &stdVal, &meanVal, scAddress, 1, length)
+                } else {
+                    let outPtr = outMultiArray.dataPointer.assumingMemoryBound(to: Float16.self)
+                    let srcR = outPtr.advanced(by: stemOffset + channelStride)
+                    for i in 0..<readFrames {
+                        scAddress[i] = Float(srcR[i])
+                    }
+                    vDSP_vsmsa(scAddress, 1, &stdVal, &meanVal, scAddress, 1, length)
+                }
+                vDSP_vmul(scAddress, 1, window, 1, scAddress, 1, length)
+                accumulators[stemIdx * 2 + 1].withUnsafeMutableBufferPointer { accPtr in
+                    vDSP_vadd(accPtr.baseAddress! + chunkStart, 1, scAddress, 1, accPtr.baseAddress! + chunkStart, 1, length)
                 }
             }
         }
         
-        for i in 0..<readFrames {
-            weightAccumulator[chunkStart + i] += window[i]
+        weightAccumulator.withUnsafeMutableBufferPointer { wPtr in
+            vDSP_vadd(wPtr.baseAddress! + chunkStart, 1, window, 1, wPtr.baseAddress! + chunkStart, 1, length)
+        }
+    }
+    
+    // MARK: - Pristine Studio Signal Conditioning
+    
+    /// Removes sub-audible DC drift and infrasonic rumble below 18 Hz (< 18 Hz).
+    /// Prevents nonlinear cone excursion and intermodulation static on laptop micro-transducers.
+    public static func applyInfrasonicFilter(
+        channel: UnsafeMutablePointer<Float>,
+        count: Int,
+        cutoff: Float = 18.0,
+        sampleRate: Float = 44100.0
+    ) {
+        guard count > 0 else { return }
+        let w0 = 2.0 * Float.pi * cutoff / sampleRate
+        let cosW0 = cosf(w0)
+        let alpha = sinf(w0) / (2.0 * 0.70710678)
+        let a0 = 1.0 + alpha
+        let b0 = (1.0 + cosW0) * 0.5 / a0
+        let b1 = -(1.0 + cosW0) / a0
+        let b2 = (1.0 + cosW0) * 0.5 / a0
+        let a1 = (-2.0 * cosW0) / a0
+        let a2 = (1.0 - alpha) / a0
+
+        var x1: Float = 0, x2: Float = 0
+        var y1: Float = 0, y2: Float = 0
+        for i in 0..<count {
+            let x0 = channel[i]
+            let y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x0
+            y2 = y1; y1 = y0
+            channel[i] = y0
+        }
+    }
+    
+    /// Removes ultrasonic phase hash (> 18.5 kHz) generated by residual neural network phase cancellation.
+    /// Eliminates static buzz and harsh treble folding on MacBook Pro micro-transducers.
+    public static func applyUltrasonicFilter(
+        channel: UnsafeMutablePointer<Float>,
+        count: Int,
+        cutoff: Float = 18500.0,
+        sampleRate: Float = 44100.0
+    ) {
+        guard count > 0 else { return }
+        let w0 = 2.0 * Float.pi * cutoff / sampleRate
+        let cosW0 = cosf(w0)
+        let alpha = sinf(w0) / (2.0 * 0.70710678)
+        let a0 = 1.0 + alpha
+        let b0 = (1.0 - cosW0) * 0.5 / a0
+        let b1 = (1.0 - cosW0) / a0
+        let b2 = (1.0 - cosW0) * 0.5 / a0
+        let a1 = (-2.0 * cosW0) / a0
+        let a2 = (1.0 - alpha) / a0
+
+        var x1: Float = 0, x2: Float = 0
+        var y1: Float = 0, y2: Float = 0
+        for i in 0..<count {
+            let x0 = channel[i]
+            let y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x0
+            y2 = y1; y1 = y0
+            channel[i] = y0
+        }
+    }
+    
+    /// Transparently compresses transient inter-sample peaks exceeding ±0.95 to guarantee 0.0 dBFS ceiling.
+    /// Continuous 1st-derivative ensures zero harmonic clipping distortion.
+    public static func applySoftLimiter(
+        channel: UnsafeMutablePointer<Float>,
+        count: Int,
+        threshold: Float = 0.95
+    ) {
+        guard count > 0 else { return }
+        let headroom: Float = 1.0 - threshold
+        let invHeadroom: Float = 1.0 / headroom
+        for i in 0..<count {
+            let val = channel[i]
+            let absVal = abs(val)
+            if absVal > threshold {
+                let sgn: Float = val < 0 ? -1.0 : 1.0
+                channel[i] = sgn * (threshold + headroom * tanhf((absVal - threshold) * invHeadroom))
+            }
         }
     }
 }

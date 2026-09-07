@@ -51,18 +51,28 @@ public final class AudioEngineManager: @unchecked Sendable {
     private let otherPlayer = AVAudioPlayerNode()
     private let originalPlayer = AVAudioPlayerNode()
     
-    private let vocalEQ = AVAudioUnitEQ(numberOfBands: 3)
-    private let drumEQ = AVAudioUnitEQ(numberOfBands: 3)
-    private let bassEQ = AVAudioUnitEQ(numberOfBands: 3)
-    private let otherEQ = AVAudioUnitEQ(numberOfBands: 3)
-    private let masterEQ = AVAudioUnitEQ(numberOfBands: 3)
+    internal let vocalEQ = AVAudioUnitEQ(numberOfBands: 3)
+    internal let drumEQ = AVAudioUnitEQ(numberOfBands: 3)
+    internal let bassEQ = AVAudioUnitEQ(numberOfBands: 3)
+    internal let otherEQ = AVAudioUnitEQ(numberOfBands: 3)
+    internal let masterEQ = AVAudioUnitEQ(numberOfBands: 3)
     
     private let vocalMixer = AVAudioMixerNode()
     private let drumMixer = AVAudioMixerNode()
     private let bassMixer = AVAudioMixerNode()
     private let otherMixer = AVAudioMixerNode()
     private let stemsSumMixer = AVAudioMixerNode()
-    private let timePitchNode = AVAudioUnitTimePitch()
+    internal let timePitchNode = AVAudioUnitTimePitch()
+    internal let masterLimiter: AVAudioUnitEffect = {
+        let desc = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        return AVAudioUnitEffect(audioComponentDescription: desc)
+    }()
     
     // MARK: - Playback State
     public var isPlaying = false
@@ -124,12 +134,19 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var pitchShiftSemitones: Double = 0.0 {
         didSet {
             timePitchNode.pitch = Float(pitchShiftSemitones * 100.0) // 100 cents per semitone
+            updateTimePitchBypass()
         }
     }
     public var playbackRate: Double = 1.0 {
         didSet {
             timePitchNode.rate = Float(playbackRate)
+            updateTimePitchBypass()
         }
+    }
+    
+    private func updateTimePitchBypass() {
+        let isDefault = abs(pitchShiftSemitones) < 0.001 && abs(playbackRate - 1.0) < 0.001
+        timePitchNode.bypass = isDefault
     }
     
     // MARK: - A-B Loop Controls
@@ -244,11 +261,11 @@ public final class AudioEngineManager: @unchecked Sendable {
     
     public var isGlobalEQBypassed: Bool = false {
         didSet {
-            updateEQBypass(vocalEQ, isBypassed: vocalEQBypassed || isGlobalEQBypassed)
-            updateEQBypass(drumEQ, isBypassed: drumEQBypassed || isGlobalEQBypassed)
-            updateEQBypass(bassEQ, isBypassed: bassEQBypassed || isGlobalEQBypassed)
-            updateEQBypass(otherEQ, isBypassed: otherEQBypassed || isGlobalEQBypassed)
-            updateEQBypass(masterEQ, isBypassed: masterEQBypassed || isGlobalEQBypassed)
+            refreshEQBypass(vocalEQ)
+            refreshEQBypass(drumEQ)
+            refreshEQBypass(bassEQ)
+            refreshEQBypass(otherEQ)
+            refreshEQBypass(masterEQ)
         }
     }
     
@@ -259,10 +276,38 @@ public final class AudioEngineManager: @unchecked Sendable {
         eq.bands[0].gain = low
         eq.bands[1].gain = mid
         eq.bands[2].gain = high
+        refreshEQBypass(eq)
     }
     
     private func updateEQBypass(_ eq: AVAudioUnitEQ, isBypassed: Bool) {
-        eq.bypass = isBypassed
+        refreshEQBypass(eq)
+    }
+    
+    private func refreshEQBypass(_ eq: AVAudioUnitEQ) {
+        let isUserBypassed: Bool
+        let isFlat: Bool
+        
+        if eq === vocalEQ {
+            isUserBypassed = vocalEQBypassed
+            isFlat = abs(vocalEQLow) < 0.01 && abs(vocalEQMid) < 0.01 && abs(vocalEQHigh) < 0.01
+        } else if eq === drumEQ {
+            isUserBypassed = drumEQBypassed
+            isFlat = abs(drumEQLow) < 0.01 && abs(drumEQMid) < 0.01 && abs(drumEQHigh) < 0.01
+        } else if eq === bassEQ {
+            isUserBypassed = bassEQBypassed
+            isFlat = abs(bassEQLow) < 0.01 && abs(bassEQMid) < 0.01 && abs(bassEQHigh) < 0.01
+        } else if eq === otherEQ {
+            isUserBypassed = otherEQBypassed
+            isFlat = abs(otherEQLow) < 0.01 && abs(otherEQMid) < 0.01 && abs(otherEQHigh) < 0.01
+        } else if eq === masterEQ {
+            isUserBypassed = masterEQBypassed
+            isFlat = abs(masterEQLow) < 0.01 && abs(masterEQMid) < 0.01 && abs(masterEQHigh) < 0.01
+        } else {
+            isUserBypassed = false
+            isFlat = true
+        }
+        
+        eq.bypass = isUserBypassed || isGlobalEQBypassed || isFlat
     }
     
     public func setStemEQ(_ index: Int, low: Float, mid: Float, high: Float) {
@@ -358,7 +403,12 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var bassEQMagnitudes: [Float] = Array(repeating: 0, count: 7)
     public var otherEQMagnitudes: [Float] = Array(repeating: 0, count: 7)
     
-    private let fftAnalyzer = FFTAnalyzer(fftSize: 1024)
+    private let masterFFTAnalyzer = FFTAnalyzer(fftSize: 1024)
+    private var masterFFTMagnitudes = [Float](repeating: 0, count: 512)
+    private let vocalMeterAnalyzer = StemMeterAnalyzer()
+    private let drumMeterAnalyzer = StemMeterAnalyzer()
+    private let bassMeterAnalyzer = StemMeterAnalyzer()
+    private let otherMeterAnalyzer = StemMeterAnalyzer()
     
     // Throttling timers for smooth 60fps visualizer animations per stem
     private var lastMasterUIUpdateTime: TimeInterval = 0
@@ -438,6 +488,11 @@ public final class AudioEngineManager: @unchecked Sendable {
         engine.attach(otherMixer)
         engine.attach(stemsSumMixer)
         engine.attach(timePitchNode)
+        engine.attach(masterLimiter)
+        
+        // Studio-grade time-pitch node configuration (bit-transparent bypass by default)
+        timePitchNode.overlap = 32.0 // Apple's maximum 32x studio oversampling
+        timePitchNode.bypass = true  // Bit-transparent bypass when at root pitch and 1.0x rate
         
         // Connect players through 3-Band EQs into channel mixers
         engine.connect(vocalPlayer, to: vocalEQ, format: nil)
@@ -458,20 +513,22 @@ public final class AudioEngineManager: @unchecked Sendable {
         engine.connect(bassMixer, to: stemsSumMixer, format: nil)
         engine.connect(otherMixer, to: stemsSumMixer, format: nil)
         
-        // Connect stemsSumMixer through timePitchNode to masterEQ to main mixer
+        // Connect stemsSumMixer through timePitchNode to masterEQ to masterLimiter to main mixer
         engine.connect(stemsSumMixer, to: timePitchNode, format: nil)
         engine.connect(timePitchNode, to: masterEQ, format: nil)
-        engine.connect(masterEQ, to: engine.mainMixerNode, format: nil)
-        engine.connect(originalPlayer, to: engine.mainMixerNode, format: nil)
+        engine.connect(masterEQ, to: masterLimiter, format: nil)
+        engine.connect(masterLimiter, to: engine.mainMixerNode, format: nil)
+        engine.connect(originalPlayer, to: masterLimiter, format: nil)
         
         let format = engine.mainMixerNode.outputFormat(forBus: 0)
         
-        // Master Output Tap: Waveform and Master 32-Band FFT
+        // Master Output Tap: Waveform and Master 32-Band FFT (Zero-Allocation on Audio Thread)
         engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, time in
         guard let self = self, self.isPlaying else { return }
         guard let channelData = buffer.floatChannelData?[0] else { return }
         
-        let magnitudes = self.fftAnalyzer.computeFFT(buffer: channelData)
+        self.masterFFTAnalyzer.computeFFT(buffer: channelData, outMagnitudes: &self.masterFFTMagnitudes)
+        let magnitudes = self.masterFFTMagnitudes
         var bands = [Float](repeating: 0, count: 32)
         
         // Logarithmic 32-band distribution across 25Hz - 20,000Hz
@@ -593,69 +650,10 @@ public final class AudioEngineManager: @unchecked Sendable {
         high.gain = 0.0
         high.bypass = false
         
-        eq.bypass = false
+        eq.bypass = true // Bit-transparent bypass until user turns EQ knobs
     }
     
     private func computeStemFFT(buffer: AVAudioPCMBuffer, stem: Int) {
-        guard let channelData = buffer.floatChannelData?[0] else { return }
-        let magnitudes = self.fftAnalyzer.computeFFT(buffer: channelData)
-        guard !magnitudes.isEmpty else { return }
-        
-        var bands = [Float](repeating: 0, count: 7)
-        
-        // Helper to compute average magnitude in an FFT bin range [start, end]
-        func getBandEnergy(start: Int, end: Int) -> Float {
-            let clampedStart = max(0, min(start, magnitudes.count - 1))
-            let clampedEnd = max(clampedStart, min(end, magnitudes.count - 1))
-            var sum: Float = 0
-            var count = 0
-            for idx in clampedStart...clampedEnd {
-                sum += magnitudes[idx]
-                count += 1
-            }
-            return count > 0 ? (sum / Float(count)) : 0
-        }
-        
-        switch stem {
-        case 0: // VOCALS: Tuned to human vocal formants (150 Hz - 9 kHz)
-            bands[0] = getBandEnergy(start: 3, end: 7)     // 130 - 300 Hz (vocal warmth & chest resonance)
-            bands[1] = getBandEnergy(start: 7, end: 14)    // 300 - 600 Hz (vocal fundamental)
-            bands[2] = getBandEnergy(start: 14, end: 28)   // 600 - 1.2 kHz (first formant / body)
-            bands[3] = getBandEnergy(start: 28, end: 52)   // 1.2 - 2.2 kHz (second formant / vowel clarity)
-            bands[4] = getBandEnergy(start: 52, end: 85)   // 2.2 - 3.6 kHz (presence & speech projection)
-            bands[5] = getBandEnergy(start: 85, end: 135)  // 3.6 - 5.8 kHz (consonants / articulation)
-            bands[6] = getBandEnergy(start: 135, end: 220) // 5.8 - 9.5 kHz (air / breath)
-            
-        case 1: // DRUMS: Transient-optimized (Kick, Snare, Hi-hats, Cymbals)
-            bands[0] = getBandEnergy(start: 1, end: 2)     // 40 - 80 Hz (sub kick weight)
-            bands[1] = getBandEnergy(start: 2, end: 4)     // 80 - 160 Hz (kick punch)
-            bands[2] = getBandEnergy(start: 4, end: 9)     // 160 - 380 Hz (snare body / toms)
-            bands[3] = getBandEnergy(start: 9, end: 24)    // 380 - 1.0 kHz (boxiness / snare ring)
-            bands[4] = getBandEnergy(start: 24, end: 70)   // 1.0 - 3.0 kHz (snare snap & crack)
-            bands[5] = getBandEnergy(start: 70, end: 175)  // 3.0 - 7.5 kHz (hi-hat attack & ride)
-            bands[6] = getBandEnergy(start: 175, end: 350) // 7.5 - 15 kHz (cymbal sizzle & open hats)
-            
-        case 2: // BASS: Low-frequency weighted (808s, Sub, Bass guitar)
-            bands[0] = getBandEnergy(start: 1, end: 1)     // 30 - 55 Hz (deep sub-bass rumble)
-            bands[1] = getBandEnergy(start: 2, end: 2)     // 55 - 90 Hz (808 core)
-            bands[2] = getBandEnergy(start: 3, end: 4)     // 90 - 170 Hz (bass guitar fundamental)
-            bands[3] = getBandEnergy(start: 4, end: 6)     // 170 - 260 Hz (1st octave harmonic)
-            bands[4] = getBandEnergy(start: 6, end: 10)    // 260 - 430 Hz (warmth & body)
-            bands[5] = getBandEnergy(start: 10, end: 18)   // 430 - 770 Hz (growl & bite)
-            bands[6] = getBandEnergy(start: 18, end: 40)   // 770 - 1.7 kHz (fret noise & pick attack)
-            
-        case 3: // OTHER: Full musical range (Pianos, Guitars, Synths, FX)
-            bands[0] = getBandEnergy(start: 3, end: 6)     // 130 - 260 Hz (acoustic guitar / piano low)
-            bands[1] = getBandEnergy(start: 6, end: 14)    // 260 - 600 Hz (chord fundamentals)
-            bands[2] = getBandEnergy(start: 14, end: 30)   // 600 - 1.3 kHz (melody & synth leads)
-            bands[3] = getBandEnergy(start: 30, end: 60)   // 1.3 - 2.6 kHz (guitar bite & brass)
-            bands[4] = getBandEnergy(start: 60, end: 115)  // 2.6 - 5.0 kHz (bright synths & sparkle)
-            bands[5] = getBandEnergy(start: 115, end: 210) // 5.0 - 9.0 kHz (shimmer & bells)
-            bands[6] = getBandEnergy(start: 210, end: 370) // 9.0 - 16 kHz (reverb air & ambient space)
-            
-        default: break
-        }
-        
         let anySolo = vocalSolo || drumSolo || bassSolo || otherSolo
         let stemGain: Float
         switch stem {
@@ -667,13 +665,30 @@ public final class AudioEngineManager: @unchecked Sendable {
         }
         
         if stemGain <= 0.001 {
-            bands = Array(repeating: 0, count: 7)
-        } else {
-            for i in 0..<7 {
-                bands[i] = bands[i] * stemGain
-            }
+            updateStemUIMagnitudes(stem: stem, bands: Array(repeating: 0, count: 7))
+            return
         }
         
+        guard let channelData = buffer.floatChannelData?[0] else { return }
+        
+        let analyzer: StemMeterAnalyzer
+        switch stem {
+        case 0: analyzer = vocalMeterAnalyzer
+        case 1: analyzer = drumMeterAnalyzer
+        case 2: analyzer = bassMeterAnalyzer
+        case 3: analyzer = otherMeterAnalyzer
+        default: analyzer = vocalMeterAnalyzer
+        }
+        
+        var computedBands = analyzer.computeBands(buffer: channelData, stem: stem)
+        for i in 0..<7 {
+            computedBands[i] = computedBands[i] * stemGain
+        }
+        
+        updateStemUIMagnitudes(stem: stem, bands: computedBands)
+    }
+    
+    private func updateStemUIMagnitudes(stem: Int, bands: [Float]) {
         let now = CACurrentMediaTime()
         switch stem {
         case 0:

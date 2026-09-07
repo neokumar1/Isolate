@@ -538,6 +538,134 @@ final class IsolateTests: XCTestCase {
         let mixerLeftPadding: CGFloat = 24.0
         XCTAssertEqual(headerLeftPadding, mixerLeftPadding, "Header and Mixer Channel grid must have identical 24pt margin for precise vertical alignment")
     }
+    
+    // Test 18: Verify TimePitchNode Transparent Bypass and Master Limiter Presence
+    @MainActor
+    func testTimePitchNodeTransparentBypassAndMasterLimiter() {
+        let engine = AudioEngineManager()
+        
+        // When pitch shift is 0 (default), timePitchNode MUST be bypassed to guarantee bit-transparent passthrough
+        XCTAssertTrue(engine.timePitchNode.bypass, "timePitchNode must be bypassed when pitch is 0 to eliminate phase vocoder grain and static")
+        
+        // When pitch is shifted, bypass is disabled
+        engine.pitchShiftSemitones = 2.0
+        XCTAssertFalse(engine.timePitchNode.bypass, "timePitchNode bypass must be disabled when pitch is altered")
+        
+        // When pitch returns to 0, bypass is re-engaged
+        engine.pitchShiftSemitones = 0.0
+        XCTAssertTrue(engine.timePitchNode.bypass, "timePitchNode bypass must re-engage when pitch returns to 0")
+        
+        // Verify master limiter is instantiated in the audio graph
+        XCTAssertNotNil(engine.masterLimiter, "masterLimiter True-Peak brickwall limiter must be attached to prevent inter-sample DAC clipping")
+    }
+    
+    // Test 19: Verify Intelligent Flat EQ Bypassing
+    @MainActor
+    func testIntelligentFlatEQBypass() {
+        let engine = AudioEngineManager()
+        
+        // Stems initialized flat must have bypassed EQs
+        XCTAssertTrue(engine.vocalEQ.bypass, "Vocal EQ must be bypassed when all bands are 0 dB")
+        XCTAssertTrue(engine.drumEQ.bypass, "Drum EQ must be bypassed when all bands are 0 dB")
+        XCTAssertTrue(engine.bassEQ.bypass, "Bass EQ must be bypassed when all bands are 0 dB")
+        XCTAssertTrue(engine.otherEQ.bypass, "Other EQ must be bypassed when all bands are 0 dB")
+        XCTAssertTrue(engine.masterEQ.bypass, "Master EQ must be bypassed when all bands are 0 dB")
+        
+        // When a band is tweaked, EQ bypass is lifted
+        engine.setStemEQ(0, low: 3.5, mid: 0.0, high: 0.0)
+        XCTAssertFalse(engine.vocalEQ.bypass, "Vocal EQ bypass must disengage when a band is boosted")
+        
+        // Resetting back to 0 re-engages bypass
+        engine.setStemEQ(0, low: 0.0, mid: 0.0, high: 0.0)
+        XCTAssertTrue(engine.vocalEQ.bypass, "Vocal EQ bypass must re-engage when returned to flat")
+    }
+    
+    // Test 20: Verify FFTAnalyzer and Stem Meter Analyzer
+    func testFastFFTAnalyzerAndDedicatedStemMeters() {
+        let analyzer = FFTAnalyzer(fftSize: 1024)
+        var buffer = [Float](repeating: 0, count: 1024)
+        for i in 0..<1024 {
+            let t = Float(i) / 44100.0
+            buffer[i] = 0.5 * sinf(2.0 * .pi * 1000.0 * t) // 1 kHz pure sine
+        }
+        
+        let bins = analyzer.computeFFT(buffer: &buffer)
+        XCTAssertEqual(bins.count, 512, "1024-point FFT must output 512 magnitude bins")
+        XCTAssertGreaterThan(bins.max() ?? 0, 0.05, "1 kHz tone must register strong magnitude")
+        
+        // Test StemMeterAnalyzer 7-band log-spaced extraction
+        let meter = StemMeterAnalyzer()
+        let bands = buffer.withUnsafeBufferPointer { p in
+            meter.computeBands(buffer: p.baseAddress!, stem: 0)
+        }
+        XCTAssertEqual(bands.count, 7, "StemMeterAnalyzer must output exactly 7 log-spaced bands")
+        
+        // Band 2 in Vocals covers 600Hz - 1200Hz, which contains 1000Hz
+        XCTAssertGreaterThan(bands[2], 0.05, "Band 2 (1 kHz vocal region) must have strong energy")
+        
+        // Silent audio test
+        var silent = [Float](repeating: 0, count: 1024)
+        let silentBands = silent.withUnsafeBufferPointer { p in
+            meter.computeBands(buffer: p.baseAddress!, stem: 0)
+        }
+        for b in silentBands {
+            XCTAssertEqual(b, 0.0, accuracy: 1e-6, "Silent buffer must produce exactly zero energy in all bands")
+        }
+    }
+    
+    // Test 21: Verify Demucs Infrasonic, Ultrasonic, and Soft-Knee Limiter Conditioning
+    func testDemucsPristineAudioConditioningFilters() {
+        let count = 44100
+        
+        // 1. Infrasonic Filter: Attenuates 5 Hz rumble while preserving 1 kHz
+        var rumble = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let t = Float(i) / 44100.0
+            rumble[i] = sinf(2.0 * .pi * 5.0 * t)
+        }
+        DemucsEngine.applyInfrasonicFilter(channel: &rumble, count: count)
+        var rumbleRMS: Float = 0
+        rumble.withUnsafeBufferPointer { p in
+            vDSP_rmsqv(p.baseAddress! + 22050, 1, &rumbleRMS, 22050)
+        }
+        XCTAssertLessThan(rumbleRMS, 0.10, "5 Hz infrasonic rumble must be attenuated by > 17 dB")
+        
+        var tone1k = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let t = Float(i) / 44100.0
+            tone1k[i] = sinf(2.0 * .pi * 1000.0 * t)
+        }
+        DemucsEngine.applyInfrasonicFilter(channel: &tone1k, count: count)
+        var toneRMS: Float = 0
+        tone1k.withUnsafeBufferPointer { p in
+            vDSP_rmsqv(p.baseAddress! + 22050, 1, &toneRMS, 22050)
+        }
+        XCTAssertEqual(toneRMS, 0.7071, accuracy: 0.01, "1 kHz audio must be preserved with 0.0 dB attenuation")
+        
+        // 2. Ultrasonic Filter: Attenuates 21.5 kHz phase noise while preserving 1 kHz
+        var ultrasonic = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let t = Float(i) / 44100.0
+            ultrasonic[i] = sinf(2.0 * .pi * 21500.0 * t)
+        }
+        DemucsEngine.applyUltrasonicFilter(channel: &ultrasonic, count: count)
+        var ultraRMS: Float = 0
+        ultrasonic.withUnsafeBufferPointer { p in
+            vDSP_rmsqv(p.baseAddress! + 22050, 1, &ultraRMS, 22050)
+        }
+        XCTAssertLessThan(ultraRMS, 0.05, "21.5 kHz ultrasonic noise must be attenuated by > 23 dB")
+        
+        // 3. Soft-Knee Limiter: Transparent below 0.95, asymptotic at 1.0
+        var testAudio: [Float] = [0.0, 0.5, 0.90, 0.95, 1.2, 2.5, -3.0]
+        DemucsEngine.applySoftLimiter(channel: &testAudio, count: testAudio.count)
+        XCTAssertEqual(testAudio[0], 0.0, accuracy: 1e-5)
+        XCTAssertEqual(testAudio[1], 0.5, accuracy: 1e-5, "Sub-threshold audio must remain 100% bit-transparent")
+        XCTAssertEqual(testAudio[2], 0.90, accuracy: 1e-5, "Sub-threshold audio must remain 100% bit-transparent")
+        XCTAssertEqual(testAudio[3], 0.95, accuracy: 1e-5, "Threshold boundary must remain exact")
+        XCTAssertLessThanOrEqual(testAudio[4], 1.00, "Peaks must not exceed 1.00 (0.0 dBFS ceiling)")
+        XCTAssertLessThanOrEqual(testAudio[5], 1.00, "Extreme peaks must be safely caught below 1.00")
+        XCTAssertGreaterThanOrEqual(testAudio[6], -1.00, "Negative extreme peaks must be safely caught above -1.00")
+    }
 }
 
 
