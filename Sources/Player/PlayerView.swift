@@ -1144,86 +1144,22 @@ public final class DotMatrixImageProcessor {
     }
 }
 
-// MARK: - Album Art View with Full-Color Nothing Dot-Matrix LED Screen
+// MARK: - Album Art View (High-Fidelity Artwork with Nothing Hardware Framing)
 struct AlbumArtView: View {
     let image: NSImage?
     var size: CGFloat = 100
-    @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
-    @State private var dotMatrix: [[DotMatrixCell]]? = nil
-    @State private var isHovered = false
     
     var body: some View {
         ZStack {
             theme.surface
             
-            if let _ = image {
-                ZStack {
-                    // 1. Real-Time 50x50 Full-Color RGB Dot-Matrix LED Canvas (100% Brightness Matched)
-                    if let matrix = dotMatrix {
-                        Canvas { context, sz in
-                            let gridSize = 50
-                            let cellWidth = sz.width / CGFloat(gridSize)
-                            let cellHeight = sz.height / CGFloat(gridSize)
-                            let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterWaveformAmplitudes.reduce(0, +) / Float(max(1, engineManager.masterWaveformAmplitudes.count))) : 0.0
-                            let pulse = 1.0 + (audioEnergy * 0.08)
-                            let maxDotRadius = cellWidth * 0.46 // Micro-aperture 0.2px boundary
-                            
-                            for y in 0..<gridSize {
-                                for x in 0..<gridSize {
-                                    let cell = matrix[y][x]
-                                    let lum = cell.luminance
-                                    
-                                    // Scale dot radius smoothly for full luminous coverage
-                                    let normalizedScale = CGFloat(0.55 + 0.45 * sqrt(lum))
-                                    let baseRadius = maxDotRadius * normalizedScale * CGFloat(pulse)
-                                    let clampedRadius = min(maxDotRadius, max(0.40, baseRadius))
-                                    
-                                    let centerX = CGFloat(x) * cellWidth + (cellWidth * 0.5)
-                                    let centerY = CGFloat(y) * cellHeight + (cellHeight * 0.5)
-                                    let dotRect = CGRect(
-                                        x: centerX - clampedRadius,
-                                        y: centerY - clampedRadius,
-                                        width: clampedRadius * 2,
-                                        height: clampedRadius * 2
-                                    )
-                                    
-                                    let dotColor = Color(
-                                        red: Double(cell.r),
-                                        green: Double(cell.g),
-                                        blue: Double(cell.b)
-                                    )
-                                    context.fill(Path(ellipseIn: dotRect), with: .color(dotColor))
-                                }
-                            }
-                        }
-                        .frame(width: size, height: size)
-                    }
-                    
-                    // 2. Subtle Micro-Bloom Glow on Hover
-                    if isHovered, let matrix = dotMatrix {
-                        Canvas { context, sz in
-                            let gridSize = 50
-                            let cellWidth = sz.width / CGFloat(gridSize)
-                            let cellHeight = sz.height / CGFloat(gridSize)
-                            for y in 0..<gridSize {
-                                for x in 0..<gridSize {
-                                    let cell = matrix[y][x]
-                                    guard cell.luminance > 0.10 else { continue }
-                                    let centerX = CGFloat(x) * cellWidth + (cellWidth * 0.5)
-                                    let centerY = CGFloat(y) * cellHeight + (cellHeight * 0.5)
-                                    let bloomRect = CGRect(x: centerX - cellWidth * 0.55, y: centerY - cellHeight * 0.55, width: cellWidth * 1.1, height: cellHeight * 1.1)
-                                    let dotColor = Color(red: Double(cell.r), green: Double(cell.g), blue: Double(cell.b)).opacity(0.35)
-                                    context.fill(Path(ellipseIn: bloomRect), with: .color(dotColor))
-                                }
-                            }
-                        }
-                        .frame(width: size, height: size)
-                        .blur(radius: 1.2)
-                        .blendMode(.plusLighter)
-                        .transition(.opacity)
-                    }
-                }
+            if let img = image {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipped()
             } else {
                 // Standby diagnostic crosslines
                 ZStack {
@@ -1257,32 +1193,9 @@ struct AlbumArtView: View {
         .frame(width: size, height: size)
         .clipped()
         .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isHovered = hovering
-            }
-        }
-        .onChange(of: image) { _, newImage in
-            updateMatrix(for: newImage)
-        }
-        .onAppear {
-            updateMatrix(for: image)
-        }
-    }
-    
-    private func updateMatrix(for img: NSImage?) {
-        guard let img = img else {
-            dotMatrix = nil
-            return
-        }
-        Task.detached(priority: .userInitiated) {
-            let matrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50)
-            await MainActor.run {
-                self.dotMatrix = matrix
-            }
-        }
     }
 }
+
 
 struct CornerBrackets: View {
     var body: some View {

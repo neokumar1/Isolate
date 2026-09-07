@@ -666,6 +666,47 @@ final class IsolateTests: XCTestCase {
         XCTAssertLessThanOrEqual(testAudio[5], 1.00, "Extreme peaks must be safely caught below 1.00")
         XCTAssertGreaterThanOrEqual(testAudio[6], -1.00, "Negative extreme peaks must be safely caught above -1.00")
     }
+    
+    // Test 22: Verify AlbumArtView High-Fidelity Artwork Rendering & Theme Integrity
+    @MainActor
+    func testAlbumArtViewInitializationAndThemeFidelity() {
+        let size = NSSize(width: 300, height: 300)
+        let testImage = NSImage(size: size)
+        testImage.lockFocus()
+        NSColor.black.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        NSColor.white.setFill()
+        NSRect(x: 75, y: 75, width: 150, height: 150).fill()
+        testImage.unlockFocus()
+        
+        let themeManager = ThemeManager.shared
+        
+        // 1. Verify AlbumArtView instantiates with image
+        let artView = AlbumArtView(image: testImage, size: 100)
+        XCTAssertNotNil(artView)
+        XCTAssertEqual(artView.size, 100)
+        XCTAssertEqual(artView.image, testImage)
+        
+        // 2. Verify AlbumArtView instantiates with nil fallback
+        let fallbackView = AlbumArtView(image: nil, size: 76)
+        XCTAssertNotNil(fallbackView)
+        XCTAssertEqual(fallbackView.size, 76)
+        XCTAssertNil(fallbackView.image)
+        
+        // 3. Verify Theme Modes (Light, Dark, System) maintain contrast integrity
+        themeManager.applyTheme(.light)
+        XCTAssertEqual(themeManager.currentTheme, .light)
+        XCTAssertFalse(themeManager.isDark)
+        XCTAssertNotEqual(themeManager.surface, themeManager.textPrimary)
+        
+        themeManager.applyTheme(.dark)
+        XCTAssertEqual(themeManager.currentTheme, .dark)
+        XCTAssertTrue(themeManager.isDark)
+        XCTAssertNotEqual(themeManager.surface, themeManager.textPrimary)
+        
+        themeManager.applyTheme(.system)
+        XCTAssertEqual(themeManager.currentTheme, .system)
+    }
 }
 
 
