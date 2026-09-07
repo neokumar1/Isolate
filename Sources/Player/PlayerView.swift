@@ -1,9 +1,11 @@
 import SwiftUI
 
 struct GridBackground: View {
+    @State private var theme = ThemeManager.shared
+    
     var body: some View {
         ZStack {
-            Color(white: 0.05).ignoresSafeArea()
+            theme.background.ignoresSafeArea()
             GeometryReader { geometry in
                 Path { path in
                     let step: CGFloat = 20
@@ -16,7 +18,7 @@ struct GridBackground: View {
                         path.addLine(to: CGPoint(x: geometry.size.width, y: y))
                     }
                 }
-                .stroke(Color.white.opacity(0.04), lineWidth: 1)
+                .stroke(theme.hairline.opacity(0.4), lineWidth: 1)
             }
         }
         .ignoresSafeArea()
@@ -25,6 +27,7 @@ struct GridBackground: View {
 
 public struct PlayerView: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     var isSidebarVisible: Binding<Bool>?
 
     @State private var isShowingShortcutCard = false
@@ -54,7 +57,7 @@ public struct PlayerView: View {
                 
                 // HUD Shortcut Cheat Sheet Modal
                 if isShowingShortcutCard {
-                    Color.black.opacity(0.75)
+                    theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
                             withAnimation(.easeOut(duration: 0.15)) {
@@ -123,19 +126,19 @@ public struct PlayerView: View {
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(isSidebarVisible.wrappedValue ? Color.red : Color.gray.opacity(0.6), lineWidth: 1)
+                    .stroke(isSidebarVisible.wrappedValue ? Color.red : theme.textSecondary, lineWidth: 1)
                     .frame(width: 18, height: 14)
                 
                 HStack(spacing: 2) {
                     Rectangle()
-                        .fill(isSidebarVisible.wrappedValue ? Color.red : Color.gray.opacity(0.6))
+                        .fill(isSidebarVisible.wrappedValue ? Color.red : theme.textSecondary)
                         .frame(width: 4, height: 10)
                     Spacer()
                 }
                 .frame(width: 14, height: 10)
             }
             .frame(width: 28, height: 28)
-            .background(Color.white.opacity(0.06))
+            .background(theme.surfaceSecondary)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
         }
@@ -151,14 +154,14 @@ public struct PlayerView: View {
             if !engineManager.trackArtist.isEmpty && engineManager.trackArtist != "Isolate" {
                 Text("\(engineManager.trackArtist.uppercased()) • \(engineManager.trackAlbum.uppercased())")
                     .font(.custom("DotGothic16-Regular", size: 10.0))
-                    .foregroundColor(.white.opacity(0.75))
+                    .foregroundColor(theme.textSecondary)
                     .lineLimit(1)
             }
             
             HStack(spacing: 10) {
                 Text(engineManager.isBypassed ? "SOURCE: ORIGINAL MASTER" : "SOURCE: 4-STEM ISOLATION")
                     .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 10 : 11))
-                    .foregroundColor(engineManager.isBypassed ? .yellow : .gray)
+                    .foregroundColor(engineManager.isBypassed ? .yellow : theme.textSecondary)
                 
                 HStack(spacing: 5) {
                     Circle()
@@ -167,7 +170,7 @@ public struct PlayerView: View {
                     
                     Text(engineManager.isPlaying ? "ACTIVE" : "STANDBY")
                         .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.5 : 10.5))
-                        .foregroundColor(engineManager.isPlaying ? .red : .gray)
+                        .foregroundColor(engineManager.isPlaying ? .red : theme.textSecondary)
                 }
             }
         }
@@ -375,6 +378,7 @@ struct StemChannelView: View {
     var onToggleSolo: (() -> Void)? = nil
     var onResetEQ: (() -> Void)? = nil
     
+    @State private var theme = ThemeManager.shared
     @State private var isMutedHovered = false
     @State private var isSoloedHovered = false
     
@@ -443,20 +447,20 @@ struct StemChannelView: View {
                 HStack {
                     Text(channelTag)
                         .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9 : 10))
-                        .foregroundColor(.gray)
+                        .foregroundColor(theme.textSecondary)
                     
                     Spacer()
                     
                     Text(shortcutHint)
                         .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.5 : 9))
-                        .foregroundColor(Color.white.opacity(0.35))
+                        .foregroundColor(theme.textMuted)
                 }
                 .padding(.horizontal, 6)
                 
                 Text(title)
                     .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 15 : 17))
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .tracking(1.0)
             }
             .padding(.top, isCompactHeight ? 1 : 2)
@@ -488,19 +492,19 @@ struct StemChannelView: View {
                 Text("\(Int(volume * 100))%")
                     .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 12 : 13.5))
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                 
                 Text(dbString)
                     .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9.0 : 10.0))
-                    .foregroundColor(abs(volume - 1.0) < 0.01 ? .red : .gray)
+                    .foregroundColor(abs(volume - 1.0) < 0.01 ? .red : theme.textSecondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, isCompactHeight ? 2 : 3)
-            .background(Color.white.opacity(0.03))
+            .background(theme.surfaceSecondary)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                    .stroke(theme.hairline, lineWidth: 0.5)
             )
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
@@ -526,16 +530,16 @@ struct StemChannelView: View {
         .padding(.horizontal, isCompactHeight ? 6 : 8)
         .padding(.vertical, isCompactHeight ? 4 : 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white.opacity(0.015))
+        .background(theme.surfaceSecondary.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .opacity(isDimmed ? 0.35 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isDimmed)
     }
     
     private var muteButton: some View {
-        let bg: Color = isMuted ? .red : (isMutedHovered ? Color.white.opacity(0.08) : .clear)
-        let strokeColor: Color = isMuted ? .red : (isMutedHovered ? Color.red.opacity(0.7) : Color.white.opacity(0.18))
-        let fg: Color = isMuted ? .black : .white
+        let bg: Color = isMuted ? .red : (isMutedHovered ? theme.surfaceHover : .clear)
+        let strokeColor: Color = isMuted ? .red : (isMutedHovered ? Color.red.opacity(0.7) : theme.cardBorder)
+        let fg: Color = isMuted ? .black : theme.textPrimary
         
         return Button(action: {
             if let onToggleMute = onToggleMute {
@@ -564,9 +568,9 @@ struct StemChannelView: View {
     }
     
     private var soloButton: some View {
-        let bg: Color = isSoloed ? .red : (isSoloedHovered ? Color.white.opacity(0.08) : .clear)
-        let strokeColor: Color = isSoloed ? .red : (isSoloedHovered ? Color.red.opacity(0.7) : Color.white.opacity(0.18))
-        let fg: Color = isSoloed ? .black : .white
+        let bg: Color = isSoloed ? .red : (isSoloedHovered ? theme.surfaceHover : .clear)
+        let strokeColor: Color = isSoloed ? .red : (isSoloedHovered ? Color.red.opacity(0.7) : theme.cardBorder)
+        let fg: Color = isSoloed ? .black : theme.textPrimary
         
         return Button(action: {
             if let onToggleSolo = onToggleSolo {
@@ -599,6 +603,7 @@ struct StemChannelView: View {
 struct PanKnobView: View {
     @Binding var pan: Float // -1.0 to +1.0
     var isCompactHeight: Bool = false
+    @State private var theme = ThemeManager.shared
     @State private var isHovered = false
     @State private var isDragging = false
     
@@ -622,12 +627,12 @@ struct PanKnobView: View {
             HStack {
                 Text("PAN")
                     .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.0 : 8.5))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                 Spacer()
                 Text(panLabel)
                     .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.0 : 8.5))
                     .fontWeight(.bold)
-                    .foregroundColor(isCenter ? .white : .red)
+                    .foregroundColor(isCenter ? theme.textPrimary : .red)
             }
             .padding(.horizontal, 4)
             
@@ -642,17 +647,17 @@ struct PanKnobView: View {
                 ZStack(alignment: .leading) {
                     // Track Groove
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(white: 0.08))
+                        .fill(theme.faderTrack)
                         .frame(width: width, height: isCompactHeight ? 5 : 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 2)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                                .stroke(theme.hairline, lineWidth: 0.5)
                         )
                         .position(x: centerX, y: height / 2.0)
                     
                     // Center Zero Detent Pip
                     Rectangle()
-                        .fill(Color.white.opacity(0.35))
+                        .fill(theme.textSecondary)
                         .frame(width: 1.5, height: isCompactHeight ? 8 : 10)
                         .position(x: centerX, y: height / 2.0)
                     
@@ -669,7 +674,7 @@ struct PanKnobView: View {
                     
                     // Thumb Needle / Pip
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(isCenter ? Color.white : Color.red)
+                        .fill(isCenter ? theme.faderThumb : Color.red)
                         .frame(width: 3.5, height: isCompactHeight ? 10 : 12)
                         .shadow(color: (isHovered || isDragging) ? Color.red.opacity(0.6) : Color.clear, radius: 3)
                         .position(x: thumbX, y: height / 2.0)
@@ -715,6 +720,7 @@ struct RotaryEQKnobView: View {
     var isBypassed: Bool = false
     var isCompactHeight: Bool = false
     
+    @State private var theme = ThemeManager.shared
     @State private var isHovered = false
     @State private var dragStartGain: Float? = nil
     
@@ -730,9 +736,9 @@ struct RotaryEQKnobView: View {
     }
     
     private var accentColor: Color {
-        if isBypassed { return Color.gray.opacity(0.4) }
-        if abs(gain) < 0.15 { return Color.white.opacity(0.85) }
-        return gain > 0 ? Color.red : Color.white.opacity(0.6)
+        if isBypassed { return theme.textMuted }
+        if abs(gain) < 0.15 { return theme.textPrimary }
+        return gain > 0 ? Color.red : theme.textSecondary
     }
     
     var body: some View {
@@ -747,18 +753,18 @@ struct RotaryEQKnobView: View {
             Text(bandName)
                 .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.5 : 9.5))
                 .fontWeight(.bold)
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
             
             Text(freqLabel)
                 .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 6.5 : 7.5))
-                .foregroundColor(Color.white.opacity(0.40))
+                .foregroundColor(theme.textSecondary)
             
             ZStack {
                 // Outer Dial Track (-135 to +135 deg)
                 Circle()
                     .trim(from: 0.125, to: 0.875)
                     .stroke(
-                        Color.white.opacity(0.12),
+                        theme.knobArcTrack,
                         style: StrokeStyle(lineWidth: isCompactHeight ? 2.0 : 2.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(90))
@@ -766,19 +772,19 @@ struct RotaryEQKnobView: View {
                 
                 // Zero Detent Pip at 12 o'clock
                 Rectangle()
-                    .fill(Color.white.opacity(0.45))
+                    .fill(theme.textSecondary)
                     .frame(width: 1.5, height: isCompactHeight ? 2.5 : 3.5)
                     .offset(y: dialOffset)
                 
                 // Quarter-turn Tick marks at -6dB and +6dB
                 Rectangle()
-                    .fill(Color.white.opacity(0.18))
+                    .fill(theme.hairline)
                     .frame(width: 1, height: isCompactHeight ? 2.0 : 2.5)
                     .offset(y: dialOffset)
                     .rotationEffect(.degrees(-67.5))
                 
                 Rectangle()
-                    .fill(Color.white.opacity(0.18))
+                    .fill(theme.hairline)
                     .frame(width: 1, height: isCompactHeight ? 2.0 : 2.5)
                     .offset(y: dialOffset)
                     .rotationEffect(.degrees(67.5))
@@ -798,7 +804,7 @@ struct RotaryEQKnobView: View {
                         Circle()
                             .trim(from: 0.5 - (Double(abs(gain)) / 24.0) * 0.75, to: 0.5)
                             .stroke(
-                                Color.white.opacity(0.65),
+                                theme.spectrumBarDefault.opacity(0.65),
                                 style: StrokeStyle(lineWidth: isCompactHeight ? 2.0 : 2.5, lineCap: .round)
                             )
                             .rotationEffect(.degrees(90))
@@ -808,12 +814,12 @@ struct RotaryEQKnobView: View {
                 
                 // Machined Knob Cap
                 Circle()
-                    .fill(Color(white: 0.08))
+                    .fill(theme.knobFace)
                     .frame(width: capDiameter, height: capDiameter)
                     .overlay(
                         Circle()
                             .stroke(
-                                isHovered ? Color.red.opacity(0.85) : Color.white.opacity(0.18),
+                                isHovered ? Color.red.opacity(0.85) : theme.cardBorder,
                                 lineWidth: 1
                             )
                     )
@@ -875,6 +881,7 @@ struct StemEQChannelStripView: View {
     @Binding var isBypassed: Bool
     var isCompactHeight: Bool = false
     var onReset: (() -> Void)? = nil
+    @State private var theme = ThemeManager.shared
     
     private var isModified: Bool {
         abs(low) >= 0.15 || abs(mid) >= 0.15 || abs(high) >= 0.15
@@ -884,7 +891,7 @@ struct StemEQChannelStripView: View {
         VStack(spacing: isCompactHeight ? 3 : 5) {
             // Hairline Boundary Top
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(theme.hairline)
                 .frame(height: 1)
                 .padding(.horizontal, 4)
             
@@ -896,20 +903,20 @@ struct StemEQChannelStripView: View {
                 }) {
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(isBypassed ? Color.gray.opacity(0.5) : (isModified ? Color.red : Color.white))
+                            .fill(isBypassed ? theme.textMuted : (isModified ? Color.red : theme.textPrimary))
                             .frame(width: 4, height: 4)
                         Text(isBypassed ? "EQ: BYP" : "3-BAND EQ")
                             .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.0 : 8.5))
-                            .foregroundColor(isBypassed ? .gray : .white)
+                            .foregroundColor(isBypassed ? theme.textMuted : theme.textPrimary)
                     }
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.04))
+                    .background(theme.surfaceSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
                             .stroke(
-                                isModified && !isBypassed ? Color.red.opacity(0.5) : Color.white.opacity(0.10),
+                                isModified && !isBypassed ? Color.red.opacity(0.5) : theme.hairline,
                                 lineWidth: 0.5
                             )
                     )
@@ -952,7 +959,7 @@ struct StemEQChannelStripView: View {
             
             // Hairline Boundary Bottom
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(theme.hairline)
                 .frame(height: 1)
                 .padding(.horizontal, 4)
         }
@@ -966,6 +973,7 @@ struct StemDynamicWaveformView: View {
     let magnitudes: [Float]
     let effectiveVolume: Double
     let isPlaying: Bool
+    @State private var theme = ThemeManager.shared
     
     // Per-stem 7 calibrated acoustic frequency gains
     private var bandGains: [Float] {
@@ -1028,11 +1036,11 @@ struct StemDynamicWaveformView: View {
                         
                         let dotColor: Color = {
                             if isLit {
-                                return distance == spread && distance > 1 ? Color.red : Color.white
+                                return distance == spread && distance > 1 ? Color.red : theme.textPrimary
                             } else if isRestingCenter {
-                                return effectiveVolume <= 0.001 ? Color.white.opacity(0.08) : Color.red.opacity(0.35)
+                                return effectiveVolume <= 0.001 ? theme.knobArcTrack : Color.red.opacity(0.35)
                             } else {
-                                return Color.white.opacity(0.05) // Faint unlit physical LED dot
+                                return theme.knobArcTrack // Faint unlit physical LED dot
                             }
                         }()
                         
@@ -1111,12 +1119,13 @@ struct AlbumArtView: View {
     let image: NSImage?
     var size: CGFloat = 100
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     @State private var dotMatrix: [[DotMatrixCell]]? = nil
     @State private var isHovered = false
     
     var body: some View {
         ZStack {
-            Color.black
+            theme.surface
             
             if let _ = image {
                 ZStack {
@@ -1188,9 +1197,9 @@ struct AlbumArtView: View {
             } else {
                 // Standby diagnostic crosslines
                 ZStack {
-                    Color.black
+                    theme.surface
                     Rectangle()
-                        .stroke(Color.white.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .stroke(theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     
                     Path { path in
                         path.move(to: CGPoint(x: 0, y: 0))
@@ -1204,13 +1213,13 @@ struct AlbumArtView: View {
                         .font(.custom("DotGothic16-Regular", size: size < 85 ? 8.5 : 10))
                         .foregroundColor(.red.opacity(0.85))
                         .padding(3)
-                        .background(Color.black)
+                        .background(theme.surface)
                 }
             }
             
             // Outer Hardware Border
             Rectangle()
-                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                .stroke(theme.cardBorder, lineWidth: 1)
             
             // Red Corner Accents (Nothing Hardware Style)
             CornerBrackets()
@@ -1283,6 +1292,7 @@ struct DynamicIslandDotWaveformView: View {
     let magnitudes: [Float]
     let amplitudes: [Float]
     let isPlaying: Bool
+    @State private var theme = ThemeManager.shared
     
     // 7 Pure Isolated Perceptual Frequency Bands (Sub-Bass -> Bass -> Low-Mid -> Vocals -> High-Mid -> Treble -> Air)
     private var barAmplitudes: [CGFloat] {
@@ -1346,7 +1356,7 @@ struct DynamicIslandDotWaveformView: View {
                         let isLit = hasSignal && (distance <= spread)
                         
                         RoundedRectangle(cornerRadius: 0.6)
-                            .fill(isLit ? Color.red : Color.white.opacity(0.04))
+                            .fill(isLit ? Color.red : theme.knobArcTrack)
                             .frame(width: 4.5, height: 2.5)
                     }
                 }
@@ -1366,6 +1376,7 @@ struct DotMatrixProgressBar: View {
     let loopEnd: Double
     let onSeek: (Double) -> Void
     let onSeekingChanged: (Bool) -> Void
+    @State private var theme = ThemeManager.shared
     
     var body: some View {
         GeometryReader { geo in
@@ -1386,7 +1397,7 @@ struct DotMatrixProgressBar: View {
                         
                         let fill: Color = isPassed
                             ? (inLoop ? Color.red : Color(red: 1.0, green: 0.35, blue: 0.35))
-                            : (inLoop ? Color.red.opacity(0.35) : Color.white.opacity(0.12))
+                            : (inLoop ? Color.red.opacity(0.35) : theme.knobArcTrack)
                         
                         Rectangle()
                             .fill(fill)
@@ -1434,6 +1445,7 @@ struct DotMatrixProgressBar: View {
 
 struct TransportBar: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     @State private var wasPlayingBeforeDrag = false
     @State private var isBypassHovered = false
     @State private var isExportHovered = false
@@ -1470,8 +1482,8 @@ struct TransportBar: View {
         .frame(height: 48)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color.black)
-        .border(Color.white.opacity(0.1), width: 1)
+        .background(theme.surface)
+        .border(theme.hairline, width: 1)
     }
     
     private func timeLabel(isCompact: Bool) -> some View {
@@ -1517,12 +1529,12 @@ struct TransportBar: View {
                 .font(.custom("DotGothic16-Regular", size: isCompact ? 10.5 : 11.5))
                 .fontWeight(.bold)
                 .frame(width: isCompact ? 64 : 80, height: 32)
-                .background(engineManager.isLooping ? Color.red : (isLoopHovered ? Color.white.opacity(0.08) : Color.clear))
+                .background(engineManager.isLooping ? Color.red : (isLoopHovered ? theme.surfaceHover : Color.clear))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(engineManager.isLooping ? Color.red : (isLoopHovered ? Color.white.opacity(0.7) : Color.gray.opacity(0.5)), lineWidth: 1)
+                        .stroke(engineManager.isLooping ? Color.red : (isLoopHovered ? theme.textPrimary : theme.border), lineWidth: 1)
                 )
-                .foregroundColor(engineManager.isLooping ? .black : (isLoopHovered ? .white : .gray))
+                .foregroundColor(engineManager.isLooping ? .black : (isLoopHovered ? theme.textPrimary : theme.textSecondary))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1537,7 +1549,7 @@ struct TransportBar: View {
             }) {
                 Text("-")
                     .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .frame(width: 14, height: 28)
             }
             .buttonStyle(.plain)
@@ -1555,7 +1567,7 @@ struct TransportBar: View {
             Text(displayText)
                 .font(.custom("DotGothic16-Regular", size: isCompact ? 9.5 : 10))
                 .fontWeight(.bold)
-                .foregroundColor(st == 0 ? .gray : .red)
+                .foregroundColor(st == 0 ? theme.textMuted : .red)
                 .frame(width: isCompact ? 54 : 78)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
@@ -1569,17 +1581,17 @@ struct TransportBar: View {
             }) {
                 Text("+")
                     .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .frame(width: 14, height: 28)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 3)
         .frame(height: 32)
-        .background(isPitchHovered ? Color.white.opacity(0.06) : Color.white.opacity(0.02))
+        .background(isPitchHovered ? theme.surfaceHover : theme.surfaceSecondary)
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(engineManager.pitchShiftSemitones != 0 ? Color.red.opacity(0.6) : Color.white.opacity(0.1), lineWidth: 1)
+                .stroke(engineManager.pitchShiftSemitones != 0 ? Color.red.opacity(0.6) : theme.hairline, lineWidth: 1)
         )
         .onHover { isPitchHovered = $0 }
     }
@@ -1597,7 +1609,7 @@ struct TransportBar: View {
             }) {
                 Text("‹")
                     .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .frame(width: 12, height: 28)
             }
             .buttonStyle(.plain)
@@ -1605,7 +1617,7 @@ struct TransportBar: View {
             Text(String(format: "%.2fx", engineManager.playbackRate))
                 .font(.custom("DotGothic16-Regular", size: isCompact ? 10 : 11))
                 .fontWeight(.bold)
-                .foregroundColor(engineManager.playbackRate == 1.0 ? .gray : .red)
+                .foregroundColor(engineManager.playbackRate == 1.0 ? theme.textMuted : .red)
                 .frame(width: isCompact ? 38 : 44)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
@@ -1624,17 +1636,17 @@ struct TransportBar: View {
             }) {
                 Text("›")
                     .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .frame(width: 12, height: 28)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 3)
         .frame(height: 32)
-        .background(isSpeedHovered ? Color.white.opacity(0.06) : Color.white.opacity(0.02))
+        .background(isSpeedHovered ? theme.surfaceHover : theme.surfaceSecondary)
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(engineManager.playbackRate != 1.0 ? Color.red.opacity(0.6) : Color.white.opacity(0.1), lineWidth: 1)
+                .stroke(engineManager.playbackRate != 1.0 ? Color.red.opacity(0.6) : theme.hairline, lineWidth: 1)
         )
         .onHover { isSpeedHovered = $0 }
     }
@@ -1668,14 +1680,14 @@ struct TransportBar: View {
                 .background(
                     engineManager.isBypassed
                         ? Color.red
-                        : (isBypassHovered ? Color.white.opacity(0.08) : Color.clear)
+                        : (isBypassHovered ? theme.surfaceHover : Color.clear)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(
                             engineManager.isBypassed
                                 ? Color.red
-                                : (isBypassHovered ? Color.white.opacity(0.8) : Color.red.opacity(0.8)),
+                                : (isBypassHovered ? theme.textPrimary : Color.red.opacity(0.8)),
                             lineWidth: 1
                         )
                 )
@@ -1709,7 +1721,7 @@ struct TransportBar: View {
                         Text(isCompact ? "DONE" : "COMPLETED")
                     }
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.isDark ? .black : .white)
                 }
             }
             .font(.custom("DotGothic16-Regular", size: isCompact ? 11.5 : 13))
@@ -1719,14 +1731,14 @@ struct TransportBar: View {
                     ? Color.red
                     : (engineManager.isExporting
                         ? Color.red.opacity(0.25)
-                        : (isExportHovered ? Color.white.opacity(0.08) : Color.clear))
+                        : (isExportHovered ? theme.surfaceHover : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(
                         engineManager.exportState == .completed
-                            ? Color.white
-                            : (isExportHovered ? Color.white.opacity(0.8) : Color.red),
+                            ? theme.textPrimary
+                            : (isExportHovered ? theme.textPrimary : Color.red),
                         lineWidth: 1
                     )
             )
@@ -1826,6 +1838,7 @@ struct MarqueeText: View {
 // MARK: - Header Center Telemetry & Visualizer Console Module
 struct HeaderCenterTelemetryModule: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     let isMedium: Bool
     let isWide: Bool
     var isCompactHeight: Bool = false
@@ -1834,11 +1847,11 @@ struct HeaderCenterTelemetryModule: View {
     
     var body: some View {
         ZStack {
-            Color.black.opacity(0.70)
+            theme.surface
             
             // Outer hardware frame
             Rectangle()
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(theme.border, lineWidth: 1)
             
             // Red corner brackets (Nothing aesthetic)
             CornerBrackets()
@@ -1849,26 +1862,26 @@ struct HeaderCenterTelemetryModule: View {
                     HStack(spacing: 4) {
                         Text("[")
                             .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9 : 10))
-                            .foregroundColor(.gray)
+                            .foregroundColor(theme.textMuted)
                         Text("STUDIO HUD")
                             .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9 : 10))
                             .foregroundColor(.red)
                         Text("]")
                             .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 9 : 10))
-                            .foregroundColor(.gray)
+                            .foregroundColor(theme.textMuted)
                     }
                     
                     if isWide || isMedium {
                         HStack(spacing: 8) {
                             Text("• \(engineManager.effectiveBPM)")
                                 .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.5 : 10))
-                                .foregroundColor(.white)
+                                .foregroundColor(theme.textPrimary)
                             Text("• \(engineManager.effectiveMusicalKey)")
                                 .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.5 : 10))
                                 .foregroundColor(.red)
                             Text("• \(engineManager.trackSampleRate)")
                                 .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.0 : 9.5))
-                                .foregroundColor(.gray)
+                                .foregroundColor(theme.textMuted)
                         }
                     }
                     
@@ -1886,12 +1899,12 @@ struct HeaderCenterTelemetryModule: View {
                                     .fontWeight(engineManager.activeHUDModeIndex == idx ? .bold : .regular)
                                     .padding(.horizontal, isCompactHeight ? 4 : 6)
                                     .padding(.vertical, isCompactHeight ? 2 : 3)
-                                    .background(engineManager.activeHUDModeIndex == idx ? Color.red : Color.white.opacity(0.05))
-                                    .foregroundColor(engineManager.activeHUDModeIndex == idx ? .black : Color.white.opacity(0.85))
+                                    .background(engineManager.activeHUDModeIndex == idx ? Color.red : theme.surfaceSecondary)
+                                    .foregroundColor(engineManager.activeHUDModeIndex == idx ? .black : theme.textPrimary)
                                     .clipShape(RoundedRectangle(cornerRadius: 2))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 2)
-                                            .stroke(engineManager.activeHUDModeIndex == idx ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
+                                            .stroke(engineManager.activeHUDModeIndex == idx ? Color.red : theme.hairline, lineWidth: 1)
                                     )
                                     .contentShape(Rectangle())
                             }
@@ -1902,19 +1915,19 @@ struct HeaderCenterTelemetryModule: View {
                     // Neural Engine Activity LED
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(engineManager.isPlaying ? Color.red : Color.gray.opacity(0.5))
+                            .fill(engineManager.isPlaying ? Color.red : theme.textMuted.opacity(0.5))
                             .frame(width: 5, height: 5)
                             .shadow(color: engineManager.isPlaying ? Color.red.opacity(0.8) : Color.clear, radius: 3)
                         Text("ANE")
                             .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8 : 9))
-                            .foregroundColor(engineManager.isPlaying ? .red : .gray)
+                            .foregroundColor(engineManager.isPlaying ? .red : theme.textMuted)
                     }
                 }
                 .padding(.horizontal, 10)
                 .frame(height: isCompactHeight ? 24 : 28)
                 
                 Divider()
-                    .background(Color.white.opacity(0.10))
+                    .background(theme.hairline)
                 
                 // Display Body
                 ZStack {
@@ -1981,6 +1994,7 @@ struct Spectrum32BandView: View {
 }
 
 struct FFT32BarColumn: View {
+    @State private var theme = ThemeManager.shared
     let magnitude: CGFloat
     let height: CGFloat
     let width: CGFloat
@@ -2016,14 +2030,14 @@ struct FFT32BarColumn: View {
                     if isTopTwoBlocks {
                         return Color.red
                     } else if isUpperMidBlock {
-                        return Color.white
+                        return theme.spectrumBarDefault
                     } else {
-                        return Color.white.opacity(0.92)
+                        return theme.spectrumBarDefault.opacity(0.88)
                     }
                 }()
                 
                 RoundedRectangle(cornerRadius: 0.5)
-                    .fill(activeColor.opacity(fillFraction > 0 ? max(0.2, fillFraction) : 0.05))
+                    .fill(activeColor.opacity(fillFraction > 0 ? max(0.2, fillFraction) : (theme.isDark ? 0.05 : 0.08)))
                     .frame(width: width, height: blockHeight)
             }
         }
@@ -2034,6 +2048,7 @@ struct FFT32BarColumn: View {
 // MARK: - Stem Macro Quick Presets
 struct StemMacroPresetsView: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     
     private var isAcapellaActive: Bool {
         engineManager.vocalSolo && !engineManager.vocalMuted && !engineManager.drumSolo && !engineManager.bassSolo && !engineManager.otherSolo
@@ -2085,7 +2100,7 @@ struct StemMacroPresetsView: View {
                     .frame(width: 4, height: 4)
                 Text(activePresetDescription)
                     .font(.custom("DotGothic16-Regular", size: 9))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .lineLimit(1)
                 Spacer()
             }
@@ -2124,12 +2139,12 @@ struct StemMacroPresetsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             .padding(.horizontal, 4)
-            .background(isActive ? Color.red : Color.white.opacity(0.04))
-            .foregroundColor(isActive ? .black : .white)
+            .background(isActive ? Color.red : theme.surfaceSecondary)
+            .foregroundColor(isActive ? .black : theme.textPrimary)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(isActive ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(isActive ? Color.red : theme.hairline, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -2140,6 +2155,7 @@ struct StemMacroPresetsView: View {
 // MARK: - Stem Balance HUD View with Live VU Meters & Direct Quick Actions
 struct StemBalanceHUDView: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     
     var body: some View {
         HStack(spacing: 8) {
@@ -2151,7 +2167,7 @@ struct StemBalanceHUDView: View {
                 isMuted: engineManager.vocalMuted,
                 isSolo: engineManager.vocalSolo,
                 magnitudes: engineManager.vocalEQMagnitudes,
-                accentColor: .white
+                accentColor: theme.textPrimary
             )
             StemChannelCardView(
                 index: 1,
@@ -2181,7 +2197,7 @@ struct StemBalanceHUDView: View {
                 isMuted: engineManager.otherMuted,
                 isSolo: engineManager.otherSolo,
                 magnitudes: engineManager.otherEQMagnitudes,
-                accentColor: .white
+                accentColor: theme.textPrimary
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2191,6 +2207,7 @@ struct StemBalanceHUDView: View {
 // MARK: - Stem Channel Card Subview
 struct StemChannelCardView: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     let index: Int
     let name: String
     let vol: Double
@@ -2221,11 +2238,11 @@ struct StemChannelCardView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.03))
+        .background(theme.surfaceSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(isSolo ? Color.red : Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(isSolo ? Color.red : theme.hairline, lineWidth: 1)
         )
     }
     
@@ -2238,7 +2255,7 @@ struct StemChannelCardView: View {
             Spacer()
             Text(isMuted ? "MUTED" : (isSolo ? "SOLO" : "\(Int(vol * 100))%"))
                 .font(.custom("DotGothic16-Regular", size: 8.0))
-                .foregroundColor(isMuted ? .red : (isSolo ? .red : .gray))
+                .foregroundColor(isMuted ? .red : (isSolo ? .red : theme.textMuted))
         }
     }
     
@@ -2248,10 +2265,10 @@ struct StemChannelCardView: View {
                 let segThreshold = CGFloat(seg + 1) / 10.0
                 let isLit = clampedEnergy >= segThreshold
                 let isPeak = seg >= 8
-                let segColor: Color = isPeak ? Color.red : (accentColor == .red ? Color.red.opacity(0.9) : Color.white.opacity(0.9))
+                let segColor: Color = isPeak ? Color.red : (accentColor == .red ? Color.red.opacity(0.9) : theme.spectrumBarDefault)
                 
                 Rectangle()
-                    .fill(isLit ? segColor : Color.white.opacity(0.06))
+                    .fill(isLit ? segColor : theme.knobArcTrack)
                     .frame(height: 5)
             }
         }
@@ -2269,12 +2286,12 @@ struct StemChannelCardView: View {
                     .fontWeight(.bold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 2)
-                    .background(isMuted ? Color.red : Color.white.opacity(0.06))
-                    .foregroundColor(isMuted ? .black : Color.gray)
+                    .background(isMuted ? Color.red : theme.surfaceHover)
+                    .foregroundColor(isMuted ? .black : theme.textSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
-                            .stroke(isMuted ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                            .stroke(isMuted ? Color.red : theme.hairline, lineWidth: 1)
                     )
                     .contentShape(Rectangle())
             }
@@ -2289,12 +2306,12 @@ struct StemChannelCardView: View {
                     .fontWeight(.bold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 2)
-                    .background(isSolo ? Color.red : Color.white.opacity(0.06))
-                    .foregroundColor(isSolo ? .black : Color.gray)
+                    .background(isSolo ? Color.red : theme.surfaceHover)
+                    .foregroundColor(isSolo ? .black : theme.textSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
-                            .stroke(isSolo ? Color.red : Color.white.opacity(0.1), lineWidth: 1)
+                            .stroke(isSolo ? Color.red : theme.hairline, lineWidth: 1)
                     )
                     .contentShape(Rectangle())
             }
@@ -2306,6 +2323,7 @@ struct StemChannelCardView: View {
 // MARK: - Studio Telemetry HUD Diagnostics View
 struct StudioTelemetryHUDView: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     
     var body: some View {
         HStack(spacing: 6) {
@@ -2349,21 +2367,21 @@ struct StudioTelemetryHUDView: View {
             }
             Text(line1)
                 .font(.custom("DotGothic16-Regular", size: 9.0))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
                 .lineLimit(1)
             Text(line2)
                 .font(.custom("DotGothic16-Regular", size: 8.0))
-                .foregroundColor(.gray)
+                .foregroundColor(theme.textMuted)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.03))
+        .background(theme.surfaceSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(theme.hairline, lineWidth: 1)
         )
     }
 }
@@ -2371,6 +2389,7 @@ struct StudioTelemetryHUDView: View {
 // MARK: - HUD Interactive Parametric Equalizer Curve Visualizer
 struct HUDEqualizerCurveView: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     
     @State private var selectedStemIndex: Int = 0 // 0: VOCALS, 1: DRUMS, 2: BASS, 3: OTHER, 4: MASTER
     @State private var draggingBand: Int? = nil
@@ -2409,12 +2428,12 @@ struct HUDEqualizerCurveView: View {
                                 .fontWeight(selectedStemIndex == idx ? .bold : .regular)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
-                                .background(selectedStemIndex == idx ? Color.red : Color.white.opacity(0.04))
-                                .foregroundColor(selectedStemIndex == idx ? .black : Color.white.opacity(0.8))
+                                .background(selectedStemIndex == idx ? Color.red : theme.surfaceSecondary)
+                                .foregroundColor(selectedStemIndex == idx ? .black : theme.textPrimary)
                                 .clipShape(RoundedRectangle(cornerRadius: 2))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 2)
-                                        .stroke(selectedStemIndex == idx ? Color.red : Color.white.opacity(0.08), lineWidth: 0.5)
+                                        .stroke(selectedStemIndex == idx ? Color.red : theme.hairline, lineWidth: 0.5)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -2427,13 +2446,13 @@ struct HUDEqualizerCurveView: View {
                 HStack(spacing: 4) {
                     Text("L: \(formatGain(currentLow))")
                         .font(.custom("DotGothic16-Regular", size: 8))
-                        .foregroundColor(abs(currentLow) > 0.1 ? .red : .gray)
+                        .foregroundColor(abs(currentLow) > 0.1 ? .red : theme.textMuted)
                     Text("M: \(formatGain(currentMid))")
                         .font(.custom("DotGothic16-Regular", size: 8))
-                        .foregroundColor(abs(currentMid) > 0.1 ? .red : .gray)
+                        .foregroundColor(abs(currentMid) > 0.1 ? .red : theme.textMuted)
                     Text("H: \(formatGain(currentHigh))")
                         .font(.custom("DotGothic16-Regular", size: 8))
-                        .foregroundColor(abs(currentHigh) > 0.1 ? .red : .gray)
+                        .foregroundColor(abs(currentHigh) > 0.1 ? .red : theme.textMuted)
                 }
                 .padding(.horizontal, 4)
                 
@@ -2453,8 +2472,8 @@ struct HUDEqualizerCurveView: View {
                     }
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.06))
-                    .foregroundColor(.white)
+                    .background(theme.surfaceSecondary)
+                    .foregroundColor(theme.textPrimary)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                 }
                 .menuStyle(.borderlessButton)
@@ -2466,19 +2485,19 @@ struct HUDEqualizerCurveView: View {
                 }) {
                     HStack(spacing: 2.5) {
                         Circle()
-                            .fill(isCurrentBypassed ? Color.gray.opacity(0.5) : Color.red)
+                            .fill(isCurrentBypassed ? theme.textMuted.opacity(0.5) : Color.red)
                             .frame(width: 4, height: 4)
                         Text(isCurrentBypassed ? "BYP" : "ACTIVE")
                             .font(.custom("DotGothic16-Regular", size: 7.5))
-                            .foregroundColor(isCurrentBypassed ? .gray : .white)
+                            .foregroundColor(isCurrentBypassed ? theme.textMuted : theme.textPrimary)
                     }
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(isCurrentBypassed ? Color.white.opacity(0.04) : Color.red.opacity(0.12))
+                    .background(isCurrentBypassed ? theme.surfaceSecondary : Color.red.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
-                            .stroke(isCurrentBypassed ? Color.white.opacity(0.1) : Color.red.opacity(0.4), lineWidth: 0.5)
+                            .stroke(isCurrentBypassed ? theme.hairline : Color.red.opacity(0.4), lineWidth: 0.5)
                     )
                 }
                 .buttonStyle(.plain)
@@ -2489,10 +2508,10 @@ struct HUDEqualizerCurveView: View {
                 }) {
                     Text("RST")
                         .font(.custom("DotGothic16-Regular", size: 7.5))
-                        .foregroundColor(.gray)
+                        .foregroundColor(theme.textMuted)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.05))
+                        .background(theme.surfaceSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 2))
                 }
                 .buttonStyle(.plain)
@@ -2605,19 +2624,19 @@ struct HUDEqualizerCurveView: View {
             p.move(to: CGPoint(x: x10k, y: 0))
             p.addLine(to: CGPoint(x: x10k, y: h))
         }
-        .stroke(Color.white.opacity(0.06), style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+        .stroke(theme.hairline, style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
         
         Text("100Hz")
             .font(.custom("DotGothic16-Regular", size: 6.5))
-            .foregroundColor(.gray.opacity(0.5))
+            .foregroundColor(theme.textMuted.opacity(0.7))
             .position(x: x100, y: h - 5)
         Text("1kHz")
             .font(.custom("DotGothic16-Regular", size: 6.5))
-            .foregroundColor(.gray.opacity(0.5))
+            .foregroundColor(theme.textMuted.opacity(0.7))
             .position(x: x1k, y: h - 5)
         Text("10kHz")
             .font(.custom("DotGothic16-Regular", size: 6.5))
-            .foregroundColor(.gray.opacity(0.5))
+            .foregroundColor(theme.textMuted.opacity(0.7))
             .position(x: x10k, y: h - 5)
     }
     
@@ -2638,7 +2657,7 @@ struct HUDEqualizerCurveView: View {
                 let mag = CGFloat(mags[i])
                 let barH = max(2.0, min(h, mag * h * 1.5))
                 Rectangle()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(theme.spectrumBarDefault.opacity(0.10))
                     .frame(height: barH)
             }
         }
@@ -2688,20 +2707,20 @@ struct HUDEqualizerCurveView: View {
         
         ZStack {
             Circle()
-                .fill(Color.black)
+                .fill(theme.background)
                 .frame(width: 14, height: 14)
                 .overlay(
                     Circle()
-                        .stroke(isDragging ? Color.white : (isModified ? Color.red : Color.white.opacity(0.6)), lineWidth: 1.5)
+                        .stroke(isDragging ? theme.textPrimary : (isModified ? Color.red : theme.textSecondary), lineWidth: 1.5)
                 )
             
             Circle()
-                .fill(isModified ? Color.red : Color.white.opacity(0.8))
+                .fill(isModified ? Color.red : theme.textPrimary)
                 .frame(width: 6, height: 6)
             
             Text(isDragging ? String(format: "%+.1fdB", gain) : name)
                 .font(.custom("DotGothic16-Regular", size: 6.5))
-                .foregroundColor(isModified ? .red : .white.opacity(0.8))
+                .foregroundColor(isModified ? .red : theme.textPrimary)
                 .offset(y: y < midY ? 12 : -12)
         }
         .frame(width: 24, height: 24)
@@ -2755,6 +2774,7 @@ struct HUDEqualizerCurveView: View {
 // MARK: - Nothing OS HUD Shortcut Cheat Sheet Modal
 struct ShortcutsHUDModal: View {
     let onClose: () -> Void
+    @State private var theme = ThemeManager.shared
     @State private var isCloseHovered = false
     
     var body: some View {
@@ -2767,7 +2787,7 @@ struct ShortcutsHUDModal: View {
                     Text("ISOLATE // QUICK SHORTCUTS")
                         .font(.custom("DotGothic16-Regular", size: 16))
                         .fontWeight(.bold)
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                 }
                 
                 Spacer()
@@ -2778,10 +2798,10 @@ struct ShortcutsHUDModal: View {
                 }) {
                     Text("ESC / CLOSE")
                         .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(isCloseHovered ? .white : .gray)
+                        .foregroundColor(isCloseHovered ? theme.textPrimary : theme.textMuted)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(isCloseHovered ? Color.white.opacity(0.12) : Color.white.opacity(0.04))
+                        .background(isCloseHovered ? theme.surfaceHover : theme.surfaceSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)
@@ -2789,7 +2809,7 @@ struct ShortcutsHUDModal: View {
             }
             
             Divider()
-                .background(Color.white.opacity(0.15))
+                .background(theme.hairline)
             
             VStack(alignment: .leading, spacing: 8) {
                 hudRow(keys: ["1", "2", "3", "4"], action: "Exclusive Solo Vocals, Drums, Bass, Other")
@@ -2807,10 +2827,10 @@ struct ShortcutsHUDModal: View {
         }
         .padding(22)
         .frame(width: 500)
-        .background(Color.black)
-        .border(Color.white.opacity(0.2), width: 1)
+        .background(theme.modalBackground)
+        .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.black, radius: 30, x: 0, y: 10)
+        .shadow(color: theme.isDark ? Color.black : Color.black.opacity(0.15), radius: 30, x: 0, y: 10)
     }
     
     private func hudRow(keys: [String], action: String) -> some View {
@@ -2835,7 +2855,7 @@ struct ShortcutsHUDModal: View {
             
             Text(action)
                 .font(.custom("DotGothic16-Regular", size: 12))
-                .foregroundColor(.white.opacity(0.9))
+                .foregroundColor(theme.textPrimary)
             
             Spacer()
         }

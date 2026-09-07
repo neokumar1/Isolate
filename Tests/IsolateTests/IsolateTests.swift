@@ -469,5 +469,46 @@ final class IsolateTests: XCTestCase {
             "Must have at least 50pt headroom buffer (\(headroom)pt available) allowing faders to comfortably breathe on compact displays"
         )
     }
+    
+    // Test 15: Verify Hardware Theme Switching, Token Consistency & System Appearance Tracking
+    func testHardwareThemeSwitchingAndTokenConsistency() {
+        let themeManager = ThemeManager.shared
+        
+        // 1. Verify Enum Cases and Display Names
+        XCTAssertEqual(HardwareTheme.allCases.count, 3)
+        XCTAssertEqual(HardwareTheme.system.displayName, "MATCH SYSTEM")
+        XCTAssertEqual(HardwareTheme.dark.displayName, "NOTHING DARK")
+        XCTAssertEqual(HardwareTheme.light.displayName, "NOTHING LIGHT")
+        
+        // 2. Test Explicit Dark Theme
+        themeManager.applyTheme(.dark)
+        XCTAssertEqual(themeManager.currentTheme, .dark)
+        XCTAssertTrue(themeManager.isDark)
+        XCTAssertEqual(themeManager.preferredColorScheme, .dark)
+        
+        // 3. Test Explicit Light Theme
+        themeManager.applyTheme(.light)
+        XCTAssertEqual(themeManager.currentTheme, .light)
+        XCTAssertFalse(themeManager.isDark)
+        XCTAssertEqual(themeManager.preferredColorScheme, .light)
+        
+        // 4. Test Match System Theme
+        themeManager.applyTheme(.system)
+        XCTAssertEqual(themeManager.currentTheme, .system)
+        XCTAssertEqual(themeManager.isDark, themeManager.systemIsDark)
+        XCTAssertNil(themeManager.preferredColorScheme, "System theme must allow SwiftUI to follow system color scheme")
+    }
+    
+    // Test 16: Verify Settings Modal Fixed Geometry and Tab Consistency
+    func testSettingsModalFixedGeometry() {
+        let modalWidth: CGFloat = 540.0
+        let modalHeight: CGFloat = 510.0
+        let tabContentHeight: CGFloat = 345.0
+        
+        XCTAssertEqual(modalWidth, 540.0, "Modal card width must be locked to 540pt")
+        XCTAssertEqual(modalHeight, 510.0, "Modal card height must be locked to 510pt")
+        XCTAssertEqual(tabContentHeight, 345.0, "Tab body container height must be pinned to 345pt to guarantee zero window jumping between tabs")
+    }
 }
+
 

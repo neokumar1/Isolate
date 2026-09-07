@@ -17,6 +17,7 @@ public final class AppSettings {
         didSet {
             UserDefaults.standard.set(hardwareTheme, forKey: "hardwareTheme")
             UserDefaults.standard.synchronize()
+            ThemeManager.shared.applyTheme(HardwareTheme(rawValue: hardwareTheme) ?? .system)
             Haptics.playClick()
         }
     }
@@ -25,6 +26,10 @@ public final class AppSettings {
         didSet {
             UserDefaults.standard.set(!isMenuBarMiniPlayerEnabled, forKey: "isMenuBarDisabled")
             UserDefaults.standard.synchronize()
+            let enabled = isMenuBarMiniPlayerEnabled
+            Task { @MainActor in
+                MenuBarManager.shared.setEnabled(enabled)
+            }
             if isMenuBarMiniPlayerEnabled {
                 Haptics.playClick()
             }
@@ -57,7 +62,7 @@ public final class AppSettings {
     
     private init() {
         self.defaultExportFormat = UserDefaults.standard.string(forKey: "defaultExportFormat") ?? "WAV"
-        self.hardwareTheme = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "dark"
+        self.hardwareTheme = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "system"
         self.isMenuBarMiniPlayerEnabled = !UserDefaults.standard.bool(forKey: "isMenuBarDisabled")
         self.isHapticsEnabled = !UserDefaults.standard.bool(forKey: "isHapticsDisabled")
         self.isAutoPlayOnSelect = !UserDefaults.standard.bool(forKey: "isAutoPlayDisabled")
@@ -67,7 +72,7 @@ public final class AppSettings {
     
     public func reloadFromStorage() {
         self.defaultExportFormat = UserDefaults.standard.string(forKey: "defaultExportFormat") ?? "WAV"
-        self.hardwareTheme = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "dark"
+        self.hardwareTheme = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "system"
         self.isMenuBarMiniPlayerEnabled = !UserDefaults.standard.bool(forKey: "isMenuBarDisabled")
         self.isHapticsEnabled = !UserDefaults.standard.bool(forKey: "isHapticsDisabled")
         self.isAutoPlayOnSelect = !UserDefaults.standard.bool(forKey: "isAutoPlayDisabled")
@@ -77,11 +82,15 @@ public final class AppSettings {
     
     public func resetToDefaults() {
         defaultExportFormat = "WAV"
-        hardwareTheme = "dark"
+        hardwareTheme = "system"
         isMenuBarMiniPlayerEnabled = true
         isHapticsEnabled = true
         isAutoPlayOnSelect = true
         waveformSensitivity = 1.0
+        Task { @MainActor in
+            MenuBarManager.shared.setEnabled(true)
+        }
+        ThemeManager.shared.applyTheme(.system)
         Haptics.playClick()
     }
 }
@@ -92,6 +101,7 @@ struct SettingsModalCard: View {
     
     @State private var selectedTab: Int = 0 // 0 = Settings, 1 = Shortcuts
     @Bindable private var settings = AppSettings.shared
+    @Bindable private var theme = ThemeManager.shared
     @State private var isCloseHovered = false
     @State private var isResetHovered = false
     
@@ -106,7 +116,7 @@ struct SettingsModalCard: View {
                     Text("SYSTEM PREFERENCES")
                         .font(.custom("DotGothic16-Regular", size: 18))
                         .fontWeight(.bold)
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                 }
                 
                 Spacer()
@@ -120,10 +130,10 @@ struct SettingsModalCard: View {
                         Text("SETTINGS")
                             .font(.custom("DotGothic16-Regular", size: 12))
                             .fontWeight(.bold)
-                            .foregroundColor(selectedTab == 0 ? .black : .gray)
+                            .foregroundColor(selectedTab == 0 ? (theme.isDark ? .black : .white) : theme.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(selectedTab == 0 ? Color.white : Color.clear)
+                            .background(selectedTab == 0 ? (theme.isDark ? Color.white : Color.black) : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
@@ -135,33 +145,37 @@ struct SettingsModalCard: View {
                         Text("SHORTCUTS")
                             .font(.custom("DotGothic16-Regular", size: 12))
                             .fontWeight(.bold)
-                            .foregroundColor(selectedTab == 1 ? .black : .gray)
+                            .foregroundColor(selectedTab == 1 ? (theme.isDark ? .black : .white) : theme.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(selectedTab == 1 ? Color.white : Color.clear)
+                            .background(selectedTab == 1 ? (theme.isDark ? Color.white : Color.black) : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
                 }
                 .padding(3)
-                .background(Color.white.opacity(0.08))
+                .background(theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             }
             
             Divider()
-                .background(Color.white.opacity(0.12))
+                .background(theme.hairline)
             
-            // Content Area based on Tab
-            if selectedTab == 0 {
-                settingsTabContent
-            } else {
-                shortcutsTabContent
+            // Content Area based on Tab — Pinned to exact height of 345pt for rock-solid consistency
+            Group {
+                if selectedTab == 0 {
+                    settingsTabContent
+                } else {
+                    shortcutsTabContent
+                }
             }
+            .frame(height: 345)
+            .clipped()
             
             Divider()
-                .background(Color.white.opacity(0.12))
+                .background(theme.hairline)
             
-            // Footer: Reset & Close Buttons
+            // Footer: Reset & Close Buttons — Pinned height of 32pt
             HStack {
                 if selectedTab == 0 {
                     Button(action: {
@@ -173,13 +187,13 @@ struct SettingsModalCard: View {
                             Text("RESET DEFAULTS")
                                 .font(.custom("DotGothic16-Regular", size: 12))
                         }
-                        .foregroundColor(isResetHovered ? .white : .gray)
+                        .foregroundColor(isResetHovered ? theme.textPrimary : theme.textSecondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(isResetHovered ? Color.white.opacity(0.1) : Color.clear)
+                        .background(isResetHovered ? theme.surfaceHover : Color.clear)
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
-                                .stroke(isResetHovered ? Color.white : Color.gray.opacity(0.4), lineWidth: 1)
+                                .stroke(isResetHovered ? theme.border : theme.hairline, lineWidth: 1)
                         )
                         .contentShape(Rectangle())
                     }
@@ -188,6 +202,8 @@ struct SettingsModalCard: View {
                         if hovering && !isResetHovered { Haptics.playClick() }
                         isResetHovered = hovering
                     }
+                } else {
+                    Spacer().frame(width: 1)
                 }
                 
                 Spacer()
@@ -199,9 +215,9 @@ struct SettingsModalCard: View {
                     Text("CLOSE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(.white)
                         .frame(width: 100, height: 32)
-                        .background(isCloseHovered ? Color.white : Color.red)
+                        .background(isCloseHovered ? Color.red.opacity(0.85) : Color.red)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle())
                 }
@@ -211,25 +227,27 @@ struct SettingsModalCard: View {
                     isCloseHovered = hovering
                 }
             }
+            .frame(height: 32)
         }
         .padding(24)
-        .frame(width: 520)
-        .background(Color.black)
+        .frame(width: 540, height: 510) // Constant width and height for complete visual consistency
+        .background(theme.modalBackground)
         .compositingGroup()
-        .border(Color.white.opacity(0.2), width: 1)
+        .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.black, radius: 24, x: 0, y: 8)
+        .shadow(color: theme.isDark ? Color.black : Color.black.opacity(0.25), radius: 24, x: 0, y: 8)
     }
     
     // MARK: - Settings Tab Content
     private var settingsTabContent: some View {
         VStack(spacing: 14) {
-            // Setting 1: Hardware Finish (Nothing Dark vs Nothing Light)
+            // Setting 1: Hardware Finish (Match System, Nothing Dark, Nothing Light)
             settingRow(
                 title: "HARDWARE FINISH",
                 subtitle: "Industrial design theme aesthetic"
             ) {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
+                    themeButton("system", label: "MATCH SYSTEM")
                     themeButton("dark", label: "NOTHING DARK")
                     themeButton("light", label: "NOTHING LIGHT")
                 }
@@ -253,7 +271,13 @@ struct SettingsModalCard: View {
                 title: "MENU BAR MINI CONTROLLER",
                 subtitle: "Discreet macOS status bar item with quick stem controls"
             ) {
-                toggleSwitch(isOn: $settings.isMenuBarMiniPlayerEnabled)
+                toggleSwitch(isOn: Binding(
+                    get: { settings.isMenuBarMiniPlayerEnabled },
+                    set: { newVal in
+                        settings.isMenuBarMiniPlayerEnabled = newVal
+                        MenuBarManager.shared.setEnabled(newVal)
+                    }
+                ))
             }
             
             // Setting 4: Haptic Feedback
@@ -289,7 +313,7 @@ struct SettingsModalCard: View {
     
     // MARK: - Shortcuts Tab Content
     private var shortcutsTabContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             shortcutRow(keys: ["1", "2", "3", "4"], description: "Solo Vocals, Drums, Bass, Other (Exclusive)")
             shortcutRow(keys: ["V", "D", "B", "O"], description: "Toggle Mute for individual channels")
             shortcutRow(keys: ["A"], description: "Engage Acapella Preset (Solo Vocals)")
@@ -312,10 +336,10 @@ struct SettingsModalCard: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.custom("DotGothic16-Regular", size: 13))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                 Text(subtitle)
                     .font(.custom("DotGothic16-Regular", size: 10))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
             }
             
             Spacer()
@@ -331,38 +355,39 @@ struct SettingsModalCard: View {
             settings.defaultExportFormat = format
         }) {
             Text(label)
-                .font(.custom("DotGothic16-Regular", size: 11))
+                .font(.custom("DotGothic16-Regular", size: 10.5))
                 .fontWeight(.bold)
-                .foregroundColor(isSelected ? .white : .gray)
-                .padding(.horizontal, 8)
+                .foregroundColor(isSelected ? .white : theme.textSecondary)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(isSelected ? Color.red : Color.white.opacity(0.06))
+                .background(isSelected ? Color.red : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
+                        .stroke(isSelected ? Color.red : theme.hairline, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
     }
     
-    private func themeButton(_ theme: String, label: String) -> some View {
-        let isSelected = settings.hardwareTheme == theme
+    private func themeButton(_ themeName: String, label: String) -> some View {
+        let isSelected = settings.hardwareTheme == themeName
         return Button(action: {
             Haptics.playClick()
-            settings.hardwareTheme = theme
+            settings.hardwareTheme = themeName
+            ThemeManager.shared.currentTheme = HardwareTheme(rawValue: themeName) ?? .system
         }) {
             Text(label)
-                .font(.custom("DotGothic16-Regular", size: 10.5))
+                .font(.custom("DotGothic16-Regular", size: 10))
                 .fontWeight(.bold)
-                .foregroundColor(isSelected ? .white : .gray)
-                .padding(.horizontal, 8)
+                .foregroundColor(isSelected ? .white : theme.textSecondary)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(isSelected ? Color.red : Color.white.opacity(0.06))
+                .background(isSelected ? Color.red : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
+                        .stroke(isSelected ? Color.red : theme.hairline, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -377,14 +402,14 @@ struct SettingsModalCard: View {
             Text(label)
                 .font(.custom("DotGothic16-Regular", size: 10))
                 .fontWeight(.bold)
-                .foregroundColor(isSelected ? .white : .gray)
+                .foregroundColor(isSelected ? .white : theme.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(isSelected ? Color.red : Color.white.opacity(0.06))
+                .background(isSelected ? Color.red : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.red : Color.white.opacity(0.12), lineWidth: 1)
+                        .stroke(isSelected ? Color.red : theme.hairline, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -399,7 +424,7 @@ struct SettingsModalCard: View {
                 Text("ON")
                     .font(.custom("DotGothic16-Regular", size: 10))
                     .fontWeight(.bold)
-                    .foregroundColor(isOn.wrappedValue ? .white : .gray.opacity(0.5))
+                    .foregroundColor(isOn.wrappedValue ? .white : theme.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(isOn.wrappedValue ? Color.red : Color.clear)
@@ -407,15 +432,15 @@ struct SettingsModalCard: View {
                 Text("OFF")
                     .font(.custom("DotGothic16-Regular", size: 10))
                     .fontWeight(.bold)
-                    .foregroundColor(!isOn.wrappedValue ? .white : .gray.opacity(0.5))
+                    .foregroundColor(!isOn.wrappedValue ? theme.textPrimary : theme.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(!isOn.wrappedValue ? Color.white.opacity(0.2) : Color.clear)
+                    .background(!isOn.wrappedValue ? theme.surfaceSecondary : Color.clear)
             }
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    .stroke(theme.hairline, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -428,7 +453,7 @@ struct SettingsModalCard: View {
                     if key == "+" {
                         Text("+")
                             .font(.custom("DotGothic16-Regular", size: 11))
-                            .foregroundColor(.gray)
+                            .foregroundColor(theme.textSecondary)
                     } else {
                         Text(key)
                             .font(.custom("DotGothic16-Regular", size: 11))
@@ -449,7 +474,7 @@ struct SettingsModalCard: View {
             
             Text(description)
                 .font(.custom("DotGothic16-Regular", size: 12))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(theme.textPrimary.opacity(0.88))
             
             Spacer()
         }

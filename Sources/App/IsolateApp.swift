@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @main
 struct IsolateApp: App {
     @State private var engineManager = AudioEngineManager()
+    @State private var theme = ThemeManager.shared
     @State private var isTargeted = false
     @State private var isShowingAboutModal = false
     @State private var isShowingSettingsModal = false
@@ -31,7 +32,7 @@ struct IsolateApp: App {
                 } else if isTargeted {
                     // Drag & Drop Target Overlay
                     ZStack {
-                        Color.black.opacity(0.85)
+                        theme.modalBackdrop
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(Color.red, style: StrokeStyle(lineWidth: 4, dash: [10]))
                             .padding(24)
@@ -68,7 +69,7 @@ struct IsolateApp: App {
                 }
                 return true
             }
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(theme.preferredColorScheme)
             .frame(minWidth: 960, minHeight: 580)
             .background(WindowAccessor())
             .navigationTitle("")
@@ -147,6 +148,7 @@ struct IsolateApp: App {
 // MARK: - Splitting Progress Modal with Cancel Import Action
 struct SplittingProgressModal: View {
     @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
     @State private var isCancelHovered = false
     @State private var currentHeadlineIndex = 0
     @State private var currentFooterIndex = 0
@@ -199,13 +201,13 @@ struct SplittingProgressModal: View {
     
     var body: some View {
         ZStack {
-            Color.black.opacity(0.92)
+            theme.modalBackdrop
             
             VStack(spacing: 24) {
                 // Header Status: Rotating Nothing-Themed Quirky Headlines (0ms Snap)
                 Text(dynamicHeadline)
                     .font(.custom("DotGothic16-Regular", size: 22))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, minHeight: 32)
@@ -219,7 +221,7 @@ struct SplittingProgressModal: View {
                     VStack(alignment: .center, spacing: 4) {
                         Text("PROGRESS")
                             .font(.custom("DotGothic16-Regular", size: 12))
-                            .foregroundColor(.gray)
+                            .foregroundColor(theme.textSecondary)
                         Text("\(Int(engineManager.splitProgress * 100))%")
                             .font(.custom("DotGothic16-Regular", size: 22))
                             .foregroundColor(.red)
@@ -229,20 +231,20 @@ struct SplittingProgressModal: View {
                         VStack(alignment: .center, spacing: 4) {
                             Text("CHUNKS")
                                 .font(.custom("DotGothic16-Regular", size: 12))
-                                .foregroundColor(.gray)
+                                .foregroundColor(theme.textSecondary)
                             Text("\(engineManager.currentChunkNumber)/\(engineManager.totalChunkCount)")
                                 .font(.custom("DotGothic16-Regular", size: 22))
-                                .foregroundColor(.white)
+                                .foregroundColor(theme.textPrimary)
                         }
                     }
                     
                     VStack(alignment: .center, spacing: 4) {
                         Text("ESTIMATED TIME")
                             .font(.custom("DotGothic16-Regular", size: 12))
-                            .foregroundColor(.gray)
+                            .foregroundColor(theme.textSecondary)
                         Text(engineManager.etaRemainingString)
                             .font(.custom("DotGothic16-Regular", size: 22))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.textPrimary)
                     }
                 }
                 
@@ -255,7 +257,7 @@ struct SplittingProgressModal: View {
                     
                     Text(engineManager.currentChunkNumber > 0 ? engineManager.liveSpeedSubtitle : dynamicFooter)
                         .font(.custom("DotGothic16-Regular", size: 12))
-                        .foregroundColor(.gray.opacity(0.85))
+                        .foregroundColor(theme.textSecondary)
                         .lineLimit(1)
                 }
                 .frame(minHeight: 20)
@@ -291,8 +293,8 @@ struct SplittingProgressModal: View {
             .padding(.horizontal, 36)
             .padding(.vertical, 36)
             .frame(width: 580)
-            .background(Color.black.opacity(0.95))
-            .border(Color.white.opacity(0.18), width: 1)
+            .background(theme.modalBackground)
+            .border(theme.cardBorder, width: 1)
             .overlay(CornerBrackets())
         }
         .ignoresSafeArea()
@@ -320,6 +322,7 @@ struct SplittingProgressModal: View {
 
 struct ModalDotMatrixProgressBar: View {
     let progress: Double
+    @State private var theme = ThemeManager.shared
     
     var body: some View {
         GeometryReader { geo in
@@ -332,7 +335,7 @@ struct ModalDotMatrixProgressBar: View {
             HStack(spacing: blockSpacing) {
                 ForEach(0..<blockCount, id: \.self) { i in
                     Rectangle()
-                        .fill(i < activeCount ? Color.red : Color.white.opacity(0.15))
+                        .fill(i < activeCount ? Color.red : theme.knobArcTrack)
                         .frame(width: blockWidth, height: 8)
                 }
             }
@@ -344,6 +347,7 @@ struct ModalDotMatrixProgressBar: View {
 struct ContentView: View {
     @Binding var isShowingAboutModal: Bool
     @Binding var isShowingSettingsModal: Bool
+    @State private var theme = ThemeManager.shared
     @State private var isSidebarVisible = true
     @State private var trackToRename: TrackModel? = nil
     @State private var trackToDelete: TrackModel? = nil
@@ -382,7 +386,7 @@ struct ContentView: View {
                 .transition(.identity) // 0ms Instant Nothing Hardware Snap
                 
                 Divider()
-                    .background(Color.white.opacity(0.12))
+                    .background(theme.hairline)
             }
             
             PlayerView(isSidebarVisible: $isSidebarVisible)
@@ -398,7 +402,7 @@ struct ContentView: View {
                     }
                 }
         }
-        .background(Color.black)
+        .background(theme.background)
         .background {
             // Global ⌘, Keyboard Shortcut for Settings
             Button("") {
@@ -411,7 +415,7 @@ struct ContentView: View {
             // MARK: - Window-Centered Nothing-Style Rename Modal
             if isShowingRenameModal, let track = trackToRename {
                 ZStack {
-                    Color.black.opacity(0.85)
+                    theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
                             isShowingRenameModal = false
@@ -442,7 +446,7 @@ struct ContentView: View {
             } else if isShowingDeleteModal, let track = trackToDelete {
                 // MARK: - Window-Centered Nothing-Style Delete Confirmation Modal
                 ZStack {
-                    Color.black.opacity(0.85)
+                    theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
                             isShowingDeleteModal = false
@@ -475,7 +479,7 @@ struct ContentView: View {
             } else if isShowingSettingsModal {
                 // MARK: - Window-Centered Nothing Hardware Settings & Shortcuts Modal
                 ZStack {
-                    Color.black.opacity(0.85)
+                    theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
                             isShowingSettingsModal = false
@@ -490,7 +494,7 @@ struct ContentView: View {
             } else if isShowingAboutModal {
                 // MARK: - Window-Centered Nothing Hardware About Modal
                 ZStack {
-                    Color.black.opacity(0.85)
+                    theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
                             isShowingAboutModal = false
@@ -505,7 +509,7 @@ struct ContentView: View {
             } else if AppMoveHelper.shared.shouldShowMoveModal && !engineManager.isSplitting {
                 // MARK: - Window-Centered Move to Applications Prompt
                 ZStack {
-                    Color.black.opacity(0.85)
+                    theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
                             UserDefaults.standard.set(true, forKey: "hasDeclinedMoveToApplications")
@@ -601,6 +605,7 @@ struct ContentView: View {
 // MARK: - Nothing Hardware About Isolate Modal Card
 struct AboutModalCard: View {
     let onDismiss: () -> Void
+    @State private var theme = ThemeManager.shared
     @State private var isCloseHovered = false
     @State private var isGitHubHovered = false
     
@@ -609,18 +614,18 @@ struct AboutModalCard: View {
             // Nothing Dot-Matrix App Icon Graphic
             ZStack(alignment: .topTrailing) {
                 RoundedRectangle(cornerRadius: 18)
-                    .fill(Color(white: 0.08))
+                    .fill(theme.knobFace)
                     .frame(width: 84, height: 84)
                     .overlay(
                         RoundedRectangle(cornerRadius: 18)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                            .stroke(theme.cardBorder, lineWidth: 1)
                     )
                 
-                // Stacked Square Pixel Stem Bars (White, Red, Red, White)
+                // Stacked Square Pixel Stem Bars (White/Charcoal, Red, Red, White/Charcoal)
                 HStack(alignment: .bottom, spacing: 5) {
                     VStack(spacing: 2) {
                         ForEach(0..<5, id: \.self) { _ in
-                            Rectangle().fill(Color.white).frame(width: 6, height: 4)
+                            Rectangle().fill(theme.spectrumBarDefault).frame(width: 6, height: 4)
                         }
                     }
                     VStack(spacing: 2) {
@@ -635,7 +640,7 @@ struct AboutModalCard: View {
                     }
                     VStack(spacing: 2) {
                         ForEach(0..<6, id: \.self) { _ in
-                            Rectangle().fill(Color.white).frame(width: 6, height: 4)
+                            Rectangle().fill(theme.spectrumBarDefault).frame(width: 6, height: 4)
                         }
                     }
                 }
@@ -655,7 +660,7 @@ struct AboutModalCard: View {
                     Text("ISOLATE")
                         .font(.custom("DotGothic16-Regular", size: 24))
                         .fontWeight(.bold)
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                     
                     Text("v1.0.0")
                         .font(.custom("DotGothic16-Regular", size: 13))
@@ -672,12 +677,12 @@ struct AboutModalCard: View {
                 
                 Text("4-STEM DEMUCS NEURAL ENGINE ACCELERATOR")
                     .font(.custom("DotGothic16-Regular", size: 11))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .tracking(0.5)
             }
             
             Divider()
-                .background(Color.white.opacity(0.12))
+                .background(theme.hairline)
                 .padding(.horizontal, 8)
             
             VStack(alignment: .leading, spacing: 8) {
@@ -685,19 +690,19 @@ struct AboutModalCard: View {
                     Circle().fill(Color.red).frame(width: 5, height: 5)
                     Text("APPLE SILICON NEURAL ENGINE (ANE) ACCELERATION")
                         .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
                     Circle().fill(Color.red).frame(width: 5, height: 5)
                     Text("60 FPS METAL & ACCELERATE DSP TELEMETRY")
                         .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
                     Circle().fill(Color.red).frame(width: 5, height: 5)
                     Text("100% PRIVATE & OFFLINE AUDIO PROCESSING")
                         .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
             }
             .padding(.horizontal, 12)
@@ -717,12 +722,12 @@ struct AboutModalCard: View {
                             .font(.custom("DotGothic16-Regular", size: 13))
                             .fontWeight(.bold)
                     }
-                    .foregroundColor(isGitHubHovered ? .white : .gray)
+                    .foregroundColor(isGitHubHovered ? theme.textPrimary : theme.textSecondary)
                     .frame(width: 140, height: 36)
-                    .background(isGitHubHovered ? Color.white.opacity(0.12) : Color.clear)
+                    .background(isGitHubHovered ? theme.surfaceHover : Color.clear)
                     .overlay(
                         RoundedRectangle(cornerRadius: 3)
-                            .stroke(isGitHubHovered ? Color.white : Color.gray.opacity(0.5), lineWidth: 1)
+                            .stroke(isGitHubHovered ? theme.textPrimary : theme.border, lineWidth: 1)
                     )
                     .contentShape(Rectangle())
                 }
@@ -756,11 +761,11 @@ struct AboutModalCard: View {
         }
         .padding(24)
         .frame(width: 440)
-        .background(Color.black)
+        .background(theme.modalBackground)
         .compositingGroup()
-        .border(Color.white.opacity(0.2), width: 1)
+        .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.black, radius: 24, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.9 : 0.2), radius: 24, x: 0, y: 8)
     }
 }
 
@@ -768,6 +773,7 @@ struct AboutModalCard: View {
 struct MoveToApplicationsModalCard: View {
     @ObservedObject var appMoveHelper: AppMoveHelper
     let onDismiss: () -> Void
+    @State private var theme = ThemeManager.shared
     
     @State private var isInstallHovered = false
     @State private var isSkipHovered = false
@@ -780,12 +786,12 @@ struct MoveToApplicationsModalCard: View {
                     .foregroundColor(.red)
                 Text("MOVE TO APPLICATIONS?")
                     .font(.custom("DotGothic16-Regular", size: 20))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
             }
             
             Text("Isolate works best when installed in your Applications folder.\nWould you like to move it now and eject the installer?")
                 .font(.custom("DotGothic16-Regular", size: 13))
-                .foregroundColor(.gray)
+                .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
@@ -806,12 +812,12 @@ struct MoveToApplicationsModalCard: View {
                     Text("NOT NOW")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(isSkipHovered ? .white : .gray)
+                        .foregroundColor(isSkipHovered ? theme.textPrimary : theme.textSecondary)
                         .frame(width: 120, height: 36)
-                        .background(isSkipHovered ? Color.white.opacity(0.12) : Color.clear)
+                        .background(isSkipHovered ? theme.surfaceHover : Color.clear)
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
-                                .stroke(isSkipHovered ? Color.white : Color.gray.opacity(0.6), lineWidth: 1)
+                                .stroke(isSkipHovered ? theme.textPrimary : theme.border, lineWidth: 1)
                         )
                         .contentShape(Rectangle())
                 }
@@ -857,8 +863,8 @@ struct MoveToApplicationsModalCard: View {
         }
         .padding(32)
         .frame(width: 440)
-        .background(Color.black.opacity(0.96))
-        .border(Color.white.opacity(0.2), width: 1)
+        .background(theme.modalBackground)
+        .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
     }
 }
@@ -869,6 +875,7 @@ struct RenameModalCard: View {
     @Binding var renameText: String
     let onCancel: () -> Void
     let onSave: (String) -> Void
+    @State private var theme = ThemeManager.shared
     
     @State private var isCancelHovered = false
     @State private var isSaveHovered = false
@@ -877,16 +884,16 @@ struct RenameModalCard: View {
         VStack(spacing: 22) {
             Text("RENAME TRACK")
                 .font(.custom("DotGothic16-Regular", size: 20))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
             
             TextField("Track Title", text: $renameText)
                 .font(.custom("DotGothic16-Regular", size: 15))
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color.black)
+                .background(theme.surface)
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red, lineWidth: 1))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
             
             HStack(spacing: 16) {
                 // Cancel Button
@@ -897,10 +904,10 @@ struct RenameModalCard: View {
                     Text("CANCEL")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(isCancelHovered ? .white : .gray)
+                        .foregroundColor(isCancelHovered ? theme.textPrimary : theme.textSecondary)
                         .frame(width: 110, height: 34)
-                        .background(isCancelHovered ? Color.white.opacity(0.12) : Color.clear)
-                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(isCancelHovered ? Color.white : Color.gray.opacity(0.6), lineWidth: 1))
+                        .background(isCancelHovered ? theme.surfaceHover : Color.clear)
+                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(isCancelHovered ? theme.textPrimary : theme.border, lineWidth: 1))
                         .contentShape(Rectangle()) // Entire 110x34 area clickable!
                 }
                 .buttonStyle(.plain)
@@ -939,10 +946,10 @@ struct RenameModalCard: View {
         }
         .padding(32)
         .frame(width: 420)
-        .background(Color.black.opacity(0.96))
-        .border(Color.white.opacity(0.2), width: 1)
+        .background(theme.modalBackground)
+        .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.black.opacity(0.9), radius: 12, x: 0, y: 6)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.9 : 0.15), radius: 12, x: 0, y: 6)
     }
 }
 
@@ -951,6 +958,7 @@ struct DeleteModalCard: View {
     let trackTitle: String
     let onCancel: () -> Void
     let onDelete: () -> Void
+    @State private var theme = ThemeManager.shared
     
     @State private var isCancelHovered = false
     @State private var isDeleteHovered = false
@@ -963,7 +971,7 @@ struct DeleteModalCard: View {
             
             Text("Are you sure you want to delete '\(trackTitle)' and its isolated stems?")
                 .font(.custom("DotGothic16-Regular", size: 14))
-                .foregroundColor(.gray)
+                .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
@@ -978,10 +986,10 @@ struct DeleteModalCard: View {
                     Text("CANCEL")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(isCancelHovered ? .white : .gray)
+                        .foregroundColor(isCancelHovered ? theme.textPrimary : theme.textSecondary)
                         .frame(width: 110, height: 34)
-                        .background(isCancelHovered ? Color.white.opacity(0.12) : Color.clear)
-                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(isCancelHovered ? Color.white : Color.gray.opacity(0.6), lineWidth: 1))
+                        .background(isCancelHovered ? theme.surfaceHover : Color.clear)
+                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(isCancelHovered ? theme.textPrimary : theme.border, lineWidth: 1))
                         .contentShape(Rectangle()) // Entire 110x34 area clickable!
                 }
                 .buttonStyle(.plain)
@@ -1014,10 +1022,10 @@ struct DeleteModalCard: View {
         }
         .padding(32)
         .frame(width: 420)
-        .background(Color.black.opacity(0.96))
-        .border(Color.white.opacity(0.2), width: 1)
+        .background(theme.modalBackground)
+        .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.black.opacity(0.9), radius: 12, x: 0, y: 6)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.9 : 0.15), radius: 12, x: 0, y: 6)
     }
 }
 
@@ -1085,7 +1093,9 @@ struct WindowAccessor: NSViewRepresentable {
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
         window.isOpaque = false
-        window.backgroundColor = .black
+        let isDark = ThemeManager.shared.isDark
+        window.backgroundColor = isDark ? .black : NSColor(red: 0.93, green: 0.93, blue: 0.94, alpha: 1.0)
+        window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
         window.minSize = NSSize(width: 960, height: 580)
         window.isMovableByWindowBackground = false
         
@@ -1109,6 +1119,7 @@ struct WindowAccessor: NSViewRepresentable {
 struct ErrorToastCard: View {
     let message: String
     let onDismiss: () -> Void
+    @State private var theme = ThemeManager.shared
     @State private var isCloseHovered = false
     
     var body: some View {
@@ -1121,7 +1132,7 @@ struct ErrorToastCard: View {
                 Text(message)
                     .font(.custom("DotGothic16-Regular", size: 12))
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
             }
             
@@ -1131,9 +1142,9 @@ struct ErrorToastCard: View {
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(isCloseHovered ? .white : .gray)
+                    .foregroundColor(isCloseHovered ? theme.textPrimary : theme.textSecondary)
                     .padding(5)
-                    .background(isCloseHovered ? Color.white.opacity(0.15) : Color.clear)
+                    .background(isCloseHovered ? theme.surfaceHover : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
@@ -1143,7 +1154,7 @@ struct ErrorToastCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color.black)
+        .background(theme.modalBackground)
         .compositingGroup()
         .border(Color.red.opacity(0.8), width: 1)
         .overlay(CornerBrackets())

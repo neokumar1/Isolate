@@ -98,6 +98,7 @@ struct LibraryView: View {
         }
     }
     
+    @State private var theme = ThemeManager.shared
     @State private var searchText = ""
     
     private var filteredTracks: [TrackModel] {
@@ -147,16 +148,16 @@ struct LibraryView: View {
                 }
                 
                 Divider()
-                    .background(Color.white.opacity(0.1))
+                    .background(theme.hairline)
                 
                 trackListView
                 
                 Divider()
-                    .background(Color.white.opacity(0.1))
+                    .background(theme.hairline)
                 
                 footerView
             }
-            .background(Color.black.opacity(0.85))
+            .background(theme.surface)
         }
     }
     
@@ -164,7 +165,7 @@ struct LibraryView: View {
         HStack {
             Text("LIBRARY")
                 .font(.custom("DotGothic16-Regular", size: 14))
-                .foregroundColor(.gray)
+                .foregroundColor(theme.textSecondary)
             
             Spacer()
             
@@ -195,12 +196,12 @@ struct LibraryView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
-                .foregroundColor(isSearchFocused ? .red : .gray)
+                .foregroundColor(isSearchFocused ? .red : theme.textSecondary)
             
             TextField("SEARCH STEMS...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom("DotGothic16-Regular", size: 11.5))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
                 .focused($isSearchFocused)
                 .onSubmit {
                     isSearchFocused = false
@@ -222,17 +223,17 @@ struct LibraryView: View {
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11))
-                        .foregroundColor(.gray)
+                        .foregroundColor(theme.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.white.opacity(isSearchFocused ? 0.08 : 0.04))
+        .background(isSearchFocused ? theme.surfaceHover : theme.surfaceSecondary)
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(isSearchFocused ? Color.red.opacity(0.8) : Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(isSearchFocused ? Color.red.opacity(0.8) : theme.cardBorder, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -348,14 +349,14 @@ struct LibraryView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.95))
+        .background(theme.surface)
     }
     
     private var telemetryView: some View {
         HStack(spacing: 4) {
             Text("\(tracks.count) \(tracks.count == 1 ? "TRACK" : "TRACKS")")
                 .font(.custom("DotGothic16-Regular", size: 10.5))
-                .foregroundColor(.gray.opacity(0.8))
+                .foregroundColor(theme.textSecondary)
             
             if totalOriginalBytes > 0 {
                 Text("•")
@@ -364,7 +365,7 @@ struct LibraryView: View {
                 
                 Text(formattedTotalSize)
                     .font(.custom("DotGothic16-Regular", size: 10.5))
-                    .foregroundColor(.gray.opacity(0.8))
+                    .foregroundColor(theme.textSecondary)
             }
             
             if totalDurationSeconds > 0 {
@@ -374,7 +375,7 @@ struct LibraryView: View {
                 
                 Text(formattedTotalDuration)
                     .font(.custom("DotGothic16-Regular", size: 10.5))
-                    .foregroundColor(.gray.opacity(0.8))
+                    .foregroundColor(theme.textSecondary)
             }
         }
         .lineLimit(1)
@@ -393,13 +394,13 @@ struct LibraryView: View {
                     .font(.custom("DotGothic16-Regular", size: 11))
                     .fontWeight(.bold)
             }
-            .foregroundColor(isSettingsHovered ? .white : .gray)
+            .foregroundColor(isSettingsHovered ? theme.textPrimary : theme.textSecondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(isSettingsHovered ? Color.white.opacity(0.08) : Color.clear)
+            .background(isSettingsHovered ? theme.surfaceHover : Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(isSettingsHovered ? Color.white.opacity(0.4) : Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(isSettingsHovered ? theme.textPrimary : theme.hairline, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -475,6 +476,7 @@ struct TrackRowView: View {
     let onRename: () -> Void
     let onDelete: () -> Void
     
+    @State private var theme = ThemeManager.shared
     @State private var isHovered = false
     @State private var isRenameHovered = false
     @State private var isDeleteHovered = false
@@ -483,9 +485,9 @@ struct TrackRowView: View {
         if isMenuOpen {
             return Color.red
         } else if isHovered {
-            return Color.white
+            return theme.textPrimary
         } else {
-            return Color.gray.opacity(0.7)
+            return theme.textSecondary
         }
     }
     
@@ -505,15 +507,15 @@ struct TrackRowView: View {
         .padding(.vertical, 6)
         .background(
             isMenuOpen
-                ? Color.black
-                : (isActive ? Color.red.opacity(0.12) : (isHovered ? Color.white.opacity(0.05) : Color.clear))
+                ? theme.surfaceSecondary
+                : (isActive ? Color.red.opacity(0.12) : (isHovered ? theme.surfaceHover : Color.clear))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 3)
                 .stroke(
                     isMenuOpen || isActive
                         ? Color.red.opacity(0.8)
-                        : (isHovered ? Color.white.opacity(0.12) : Color.clear),
+                        : (isHovered ? theme.cardBorder : Color.clear),
                     lineWidth: 1
                 )
         )
@@ -540,13 +542,13 @@ struct TrackRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)
                     .font(.custom("DotGothic16-Regular", size: 15))
-                    .foregroundColor(isActive ? .red : .white)
+                    .foregroundColor(isActive ? .red : theme.textPrimary)
                     .lineLimit(1)
                 
                 HStack(spacing: 8) {
                     Text(track.dateAdded, style: .date)
                         .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(.gray)
+                        .foregroundColor(theme.textSecondary)
                     
                     if isActive {
                         Circle()
@@ -572,11 +574,11 @@ struct TrackRowView: View {
                 Circle().fill(dotColor).frame(width: 3, height: 3)
             }
             .frame(width: 24, height: 24)
-            .background(isMenuOpen ? Color.red.opacity(0.18) : (isHovered ? Color.white.opacity(0.08) : Color.clear))
+            .background(isMenuOpen ? Color.red.opacity(0.18) : (isHovered ? theme.surfaceHover : Color.clear))
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(isMenuOpen ? Color.red : (isHovered ? Color.white.opacity(0.25) : Color.clear), lineWidth: 1)
+                    .stroke(isMenuOpen ? Color.red : (isHovered ? theme.border : Color.clear), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -594,10 +596,10 @@ struct TrackRowView: View {
                         .font(.custom("DotGothic16-Regular", size: 12))
                         .fontWeight(.bold)
                 }
-                .foregroundColor(isRenameHovered ? .black : .white)
+                .foregroundColor(isRenameHovered ? theme.surface : theme.textPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(isRenameHovered ? Color.white : Color.white.opacity(0.12))
+                .background(isRenameHovered ? theme.textPrimary : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
@@ -635,9 +637,9 @@ struct TrackRowView: View {
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                     .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.08))
+                    .background(theme.surfaceSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
@@ -668,7 +670,8 @@ public final class NothingScroller: NSScroller {
         )
         
         context.addRect(trackRect)
-        context.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.08))
+        let isDark = ThemeManager.shared.isDark
+        context.setFillColor(isDark ? CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.08) : CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.08))
         context.fillPath()
         
         context.restoreGState()

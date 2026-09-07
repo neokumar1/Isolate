@@ -5,6 +5,7 @@ struct CustomFader: View {
     @Binding var value: Double
     let label: String
     
+    @Bindable private var theme = ThemeManager.shared
     @State private var startValue: Double? = nil
     @State private var hitTop = false
     @State private var hitBottom = false
@@ -123,7 +124,7 @@ struct CustomFader: View {
                             if let lbl = tick.label {
                                 Text(lbl)
                                     .font(.custom("DotGothic16-Regular", size: 7.5))
-                                    .foregroundColor(tick.normVal == 1.0 ? Color.red.opacity(0.85) : Color.white.opacity(0.35))
+                                    .foregroundColor(tick.normVal == 1.0 ? Color.red.opacity(0.85) : theme.textMuted)
                                     .frame(width: 18, alignment: .trailing)
                             } else {
                                 Spacer()
@@ -131,7 +132,7 @@ struct CustomFader: View {
                             }
                             
                             Rectangle()
-                                .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : Color.white.opacity(tick.isMajor ? 0.25 : 0.12))
+                                .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : (theme.isDark ? Color.white.opacity(tick.isMajor ? 0.25 : 0.12) : Color.black.opacity(tick.isMajor ? 0.35 : 0.16)))
                                 .frame(width: tick.isMajor ? 6 : 3, height: 1)
                         }
                         .position(x: centerX - 18, y: yPos)
@@ -139,7 +140,7 @@ struct CustomFader: View {
                         
                         // Right Symmetrical Ticks
                         Rectangle()
-                            .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : Color.white.opacity(tick.isMajor ? 0.25 : 0.12))
+                            .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : (theme.isDark ? Color.white.opacity(tick.isMajor ? 0.25 : 0.12) : Color.black.opacity(tick.isMajor ? 0.35 : 0.16)))
                             .frame(width: tick.isMajor ? 6 : 3, height: 1)
                             .position(x: centerX + (tick.isMajor ? 11 : 9.5), y: yPos)
                             .allowsHitTesting(false)
@@ -159,11 +160,11 @@ struct CustomFader: View {
                     ZStack(alignment: .bottom) {
                         // Track background slot
                         Rectangle()
-                            .fill(Color(white: 0.08))
+                            .fill(theme.faderTrack)
                             .frame(width: 3.5, height: trackHeight - 12)
                             .overlay(
                                 Rectangle()
-                                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+                                    .stroke(theme.hairline, lineWidth: 0.5)
                             )
                         
                         // Track fill (active level)
@@ -188,14 +189,14 @@ struct CustomFader: View {
                     ZStack {
                         // Cap Body
                         RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color(white: 0.96))
+                            .fill(theme.faderThumb)
                             .frame(width: 40, height: 14)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 1.5)
                                     .stroke(
                                         (isHovered || isDragging)
                                             ? Color.red.opacity(0.90)
-                                            : Color.white.opacity(0.40),
+                                            : theme.faderThumbStroke,
                                         lineWidth: (isHovered || isDragging) ? 1.5 : 1
                                     )
                             )
@@ -209,11 +210,11 @@ struct CustomFader: View {
                         // Milled Knurling Grip Accents
                         HStack {
                             Rectangle()
-                                .fill(Color(white: 0.70))
+                                .fill(theme.faderThumbKnurling)
                                 .frame(width: 1, height: 8)
                             Spacer()
                             Rectangle()
-                                .fill(Color(white: 0.70))
+                                .fill(theme.faderThumbKnurling)
                                 .frame(width: 1, height: 8)
                         }
                         .frame(width: 32)

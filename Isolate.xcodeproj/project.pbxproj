@@ -17,6 +17,7 @@
 		8795659D14EB49E0487CF201 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B0F1BF366285DF7ED96856 /* PlayerView.swift */; };
 		95C2E3DA7EFB59D971F2F6E1 /* DotGothic16-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 65D4E52007621CC6578509E0 /* DotGothic16-Regular.ttf */; };
 		A424654DA3598C87FECBA99E /* IsolateUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51723840AA00CB3D59039A2 /* IsolateUITests.swift */; };
+		A835E32888406F90B405C409 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E25FF2F9713A5963BB3BD4 /* ThemeManager.swift */; };
 		BD13B32036CBA957B6A8FB50 /* NowPlayingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A696B7978AB11ACA46D7592E /* NowPlayingManager.swift */; };
 		BF1A95B3725BFC8C84B3AA92 /* DemucsEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FFF484DB9B227FEA9BFA72 /* DemucsEngine.swift */; };
 		CCA10CCFD58840F597E21121 /* IsolateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B54412E9E3F71B00BF34FB0 /* IsolateTests.swift */; };
@@ -44,6 +45,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		00E25FF2F9713A5963BB3BD4 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
 		3B32BB7E1AA2EC3946E2671E /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		49A8F54BCDFECE3713F6E918 /* FFTAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTAnalyzer.swift; sourceTree = "<group>"; };
 		4CF938C23122BA151FB3DFCE /* MenuBarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManager.swift; sourceTree = "<group>"; };
@@ -98,6 +100,7 @@
 				4CF938C23122BA151FB3DFCE /* MenuBarManager.swift */,
 				A696B7978AB11ACA46D7592E /* NowPlayingManager.swift */,
 				D39417E3CC1D1DF6CF0E4656 /* SettingsView.swift */,
+				00E25FF2F9713A5963BB3BD4 /* ThemeManager.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -280,6 +283,7 @@
 				BD13B32036CBA957B6A8FB50 /* NowPlayingManager.swift in Sources */,
 				8795659D14EB49E0487CF201 /* PlayerView.swift in Sources */,
 				EF40587C88F3A21DCBED178E /* SettingsView.swift in Sources */,
+				A835E32888406F90B405C409 /* ThemeManager.swift in Sources */,
 				64DAA5BF14FB75131FF30C78 /* TrackModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
