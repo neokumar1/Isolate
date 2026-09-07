@@ -23,7 +23,38 @@
 
 ---
 
-## [ 02. INSTALLATION & PACKAGES ]
+## [ 02. SYSTEM REQUIREMENTS & DEPENDENCIES ]
+
+### Minimum System Requirements
+
+| Component | Minimum Specification | Recommended |
+| :--- | :--- | :--- |
+| **Operating System** | macOS 14.0 (Sonoma) | macOS 15.0 (Sequoia) or newer |
+| **Processor (Architecture)** | Apple Silicon (M1 / M2 / M3 / M4 / M5) or Intel Core | Apple Silicon with Apple Neural Engine (ANE) |
+| **Unified Memory (RAM)** | 8 GB Unified Memory | 16 GB or higher for multi-track batch processing |
+| **Available Storage** | 1.0 GB free disk space | 5.0 GB+ for processed high-res stem library |
+| **Audio Hardware** | Built-in macOS audio or CoreAudio interface | 24-bit / 44.1 kHz+ CoreAudio DAC / Headphones |
+
+> [!NOTE]  
+> **Running the Pre-Built App**: `Isolate.app` is a self-contained native Swift/Metal/CoreML binary. **No external runtimes (such as Python, Node.js, or Docker) are required to run the app.**
+
+---
+
+### Development & Build Dependencies
+
+If you are developing, contributing, or building Isolate from source, the following tools and verified setup links are required:
+
+| Tool | Purpose | Installation Guide & Verified Link |
+| :--- | :--- | :--- |
+| **Homebrew** | macOS package manager for developer tools | [brew.sh](https://brew.sh) &bull; `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` |
+| **Apple Xcode** | Swift 5.10+ compiler and macOS SDK | [developer.apple.com/xcode](https://developer.apple.com/xcode/) or run `xcode-select --install` |
+| **XcodeGen** | Generates the `.xcodeproj` from `project.yml` | [github.com/yonaskolb/XcodeGen](https://github.com/yonaskolb/XcodeGen) &bull; `brew install xcodegen` |
+| **Node.js** | Used for CI runner scripts, GitHub Actions, and release tooling | [nodejs.org](https://nodejs.org) (v22 LTS / v24) &bull; `brew install node` |
+| **Git** | Distributed source version control | [git-scm.com](https://git-scm.com) &bull; `brew install git` |
+
+---
+
+## [ 03. INSTALLATION & PACKAGES ]
 
 ### Option A: Instant 1-Line Terminal Install (Recommended)
 
@@ -84,13 +115,14 @@ open build/Release/Isolate.app
 
 ---
 
-## [ 03. KEYBOARD SHORTCUTS ]
+## [ 04. KEYBOARD SHORTCUTS ]
 
 | Action | Shortcut | Description |
 | :--- | :--- | :--- |
 | **Play / Pause** | `Space` | Toggle global audio playback |
 | **Solo Stem (1 - 4)** | `1` / `2` / `3` / `4` | Exclusive solo for Vocals, Drums, Bass, Other |
 | **Mute Stem (V / D / B / O)** | `V` / `D` / `B` / `O` | Toggle mute for individual stem channels |
+| **Switch Studio HUD Modes** | `⌘1` / `⌘2` / `⌘3` / `⌘4` | Switch HUD: 32-Band FFT, Stem Macros, Stem Balance, Telemetry |
 | **Set Loop In / Out** | `[` / `]` | Mark A-B loop start and end points on the fly |
 | **Toggle Loop** | `L` | Toggle active A-B region loop on/off |
 | **Acapella / Instrumental / Reset** | `A` / `I` / `R` | Trigger stem macros immediately |
@@ -103,7 +135,7 @@ open build/Release/Isolate.app
 
 ---
 
-## [ 04. ARCHITECTURE ]
+## [ 05. ARCHITECTURE ]
 
 ```
 Isolate/
@@ -158,7 +190,7 @@ flowchart TD
 
 ---
 
-## [ 05. CREDITS & LICENSE ]
+## [ 06. CREDITS & LICENSE ]
 
 - **Demucs**: Hybrid Transformer Demucs by Alexandre Défossez ([Meta AI Research](https://github.com/facebookresearch/demucs)).
 - **Typography**: [DotGothic16](https://fonts.google.com/specimen/DotGothic16) font by Fontworks Inc.
