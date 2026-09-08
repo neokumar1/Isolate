@@ -752,6 +752,88 @@ final class IsolateTests: XCTestCase {
         engine.dismissError()
         XCTAssertNil(engine.errorMessage)
     }
+    
+    // Test 25: Verify Audio Graph Routing Integrity, Disconnected Node Prevention & Safe Playback
+    @MainActor
+    func testAudioGraphIntegrityAndPlaybackSafety() async throws {
+        let engine = AudioEngineManager()
+        
+        // 1. Toggling playback when no track is loaded must be safe and not throw or change isPlaying
+        XCTAssertFalse(engine.isPlaying)
+        engine.togglePlayback()
+        XCTAssertFalse(engine.isPlaying, "Toggling playback without loaded audio must not start playing")
+        
+        // 2. Synthesize test stems on disk
+        let sampleRate: Double = 44100.0
+        let frameCount = AVAudioFrameCount(sampleRate * 0.5) // 500ms
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 2, interleaved: false)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        for ch in 0..<2 {
+            let p = buffer.floatChannelData![ch]
+            for i in 0..<Int(frameCount) {
+                p[i] = 0.2 * sinf(2.0 * .pi * 440.0 * (Float(i) / Float(sampleRate)))
+            }
+        }
+        
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        
+        let origURL = tempDir.appendingPathComponent("original.wav")
+        let vocalURL = tempDir.appendingPathComponent("vocals.wav")
+        let drumURL = tempDir.appendingPathComponent("drums.wav")
+        let bassURL = tempDir.appendingPathComponent("bass.wav")
+        let otherURL = tempDir.appendingPathComponent("other.wav")
+        
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        for url in [origURL, vocalURL, drumURL, bassURL, otherURL] {
+            let writer = try AVAudioFile(forWriting: url, settings: settings)
+            try writer.write(from: buffer)
+        }
+        
+        let track = TrackModel(
+            id: origURL.path,
+            title: "Safety Test Song",
+            originalURL: origURL,
+            vocalStemURL: vocalURL,
+            bassStemURL: bassURL,
+            drumStemURL: drumURL,
+            otherStemURL: otherURL
+        )
+        
+        // 3. Load track: Must connect graph and schedule players safely
+        await engine.loadTrack(track)
+        XCTAssertEqual(engine.currentTrackID, track.id)
+        XCTAssertEqual(engine.currentTrackName, "SAFETY TEST SONG")
+        
+        // 4. Test togglePlayback (pause / play cycle)
+        if !engine.isPlaying {
+            engine.togglePlayback()
+        }
+        XCTAssertTrue(engine.isPlaying, "Audio engine must transition to playing without throwing 'disconnected state' error")
+        
+        // 5. Pause
+        engine.togglePlayback()
+        XCTAssertFalse(engine.isPlaying, "Audio engine must cleanly pause")
+        
+        // 6. Resume
+        engine.togglePlayback()
+        XCTAssertTrue(engine.isPlaying, "Audio engine must cleanly resume without error")
+        
+        // 7. Unload track
+        engine.unloadTrack()
+        XCTAssertFalse(engine.isPlaying)
+        XCTAssertNil(engine.currentTrackID)
+    }
 }
 
 

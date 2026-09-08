@@ -518,7 +518,7 @@ public final class AudioEngineManager: @unchecked Sendable {
         engine.connect(timePitchNode, to: masterEQ, format: nil)
         engine.connect(masterEQ, to: masterLimiter, format: nil)
         engine.connect(masterLimiter, to: engine.mainMixerNode, format: nil)
-        engine.connect(originalPlayer, to: masterLimiter, format: nil)
+        engine.connect(originalPlayer, to: engine.mainMixerNode, format: nil)
         
         let format = engine.mainMixerNode.outputFormat(forBus: 0)
         
@@ -1023,6 +1023,9 @@ public final class AudioEngineManager: @unchecked Sendable {
                     track.drumStemURL = data.drumStemURL
                     track.bassStemURL = data.bassStemURL
                     track.otherStemURL = data.otherStemURL
+                    currentTrackID = track.id
+                    currentTrackName = track.title.uppercased()
+                    extractMetadata(url: track.originalURL)
                     try? track.modelContext?.save()
                     return
                 } else {
@@ -1058,7 +1061,11 @@ public final class AudioEngineManager: @unchecked Sendable {
             if let fOrig = try? AVAudioFile(forReading: originalWavURL) {
                 self.audioFile = fOrig
             } else {
+                let isSecScoped = track.originalURL.startAccessingSecurityScopedResource()
                 self.audioFile = try? AVAudioFile(forReading: track.originalURL)
+                if isSecScoped {
+                    track.originalURL.stopAccessingSecurityScopedResource()
+                }
             }
             
             scheduleAllPlayers(at: nil)
@@ -1082,6 +1089,9 @@ public final class AudioEngineManager: @unchecked Sendable {
                     track.drumStemURL = data.drumStemURL
                     track.bassStemURL = data.bassStemURL
                     track.otherStemURL = data.otherStemURL
+                    currentTrackID = track.id
+                    currentTrackName = track.title.uppercased()
+                    extractMetadata(url: track.originalURL)
                     try? track.modelContext?.save()
                     return
                 }
@@ -1240,20 +1250,35 @@ public final class AudioEngineManager: @unchecked Sendable {
             let fBass = try AVAudioFile(forReading: stemURLs[2])
             let fOther = try AVAudioFile(forReading: stemURLs[3])
             
-            self.fileVocals = fVocals
-            self.fileDrums = fDrums
-            self.fileBass = fBass
-            self.fileOther = fOther
-            
-            // Check for original.wav in stem folder first
-            let originalWavURL = stemURLs[0].deletingLastPathComponent().appendingPathComponent("original.wav")
-            if let fOrig = try? AVAudioFile(forReading: originalWavURL) {
-                self.audioFile = fOrig
-            } else {
-                self.audioFile = try? AVAudioFile(forReading: url)
+            await MainActor.run {
+                self.fileVocals = fVocals
+                self.fileDrums = fDrums
+                self.fileBass = fBass
+                self.fileOther = fOther
+                
+                // Check for original.wav in stem folder first
+                let originalWavURL = stemURLs[0].deletingLastPathComponent().appendingPathComponent("original.wav")
+                if let fOrig = try? AVAudioFile(forReading: originalWavURL) {
+                    self.audioFile = fOrig
+                } else {
+                    let isSecScoped = url.startAccessingSecurityScopedResource()
+                    self.audioFile = try? AVAudioFile(forReading: url)
+                    if isSecScoped {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                
+                self.scheduleAllPlayers(at: nil)
+                self.etaTimer?.invalidate()
+                self.etaTimer = nil
+                self.isSplitting = false
+                self.splitProgress = 1.0
+                
+                // Auto-Play Isolated Stems on Completion (User Requirement A10)
+                if !UserDefaults.standard.bool(forKey: "isAutoPlayDisabled") {
+                    self.playSynced()
+                }
             }
-            
-            self.scheduleAllPlayers(at: nil)
             
             let cleanTitle = url.deletingPathExtension().lastPathComponent
             let data = TrackData(
@@ -1265,15 +1290,6 @@ public final class AudioEngineManager: @unchecked Sendable {
                 drumStemURL: stemURLs[1],
                 otherStemURL: stemURLs[3]
             )
-            
-            await MainActor.run {
-                self.etaTimer?.invalidate()
-                self.etaTimer = nil
-                self.isSplitting = false
-                self.splitProgress = 1.0
-            }
-            // Auto-Play Isolated Stems on Completion (User Requirement A10)
-            self.playSynced()
             return data
         }
         
@@ -1745,12 +1761,19 @@ public final class AudioEngineManager: @unchecked Sendable {
         }
     }
     
+    @MainActor
     private func playSynced() {
+        guard fileVocals != nil else { return }
         if !engine.isRunning {
-            try? engine.start()
+            do {
+                try engine.start()
+            } catch {
+                print("[Isolate] Failed to start audio engine: \(error)")
+                return
+            }
         }
-        let nodeTime = vocalPlayer.lastRenderTime ?? AVAudioTime(hostTime: mach_absolute_time())
-        let startTime = AVAudioTime(hostTime: nodeTime.hostTime + AVAudioTime.hostTime(forSeconds: 0.05))
+        let startHostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: 0.03)
+        let startTime = AVAudioTime(hostTime: startHostTime)
         
         vocalPlayer.play(at: startTime)
         drumPlayer.play(at: startTime)
@@ -1758,15 +1781,14 @@ public final class AudioEngineManager: @unchecked Sendable {
         otherPlayer.play(at: startTime)
         originalPlayer.play(at: startTime)
         
-        Task { @MainActor in
-            self.isPlaying = true
-            self.startPlaybackTimer()
-            NowPlayingManager.shared.updateNowPlayingPlaybackState()
-        }
+        self.isPlaying = true
+        self.startPlaybackTimer()
+        NowPlayingManager.shared.updateNowPlayingPlaybackState()
     }
     
     @MainActor
     public func togglePlayback() {
+        guard fileVocals != nil else { return }
         if isPlaying {
             vocalPlayer.pause()
             drumPlayer.pause()
