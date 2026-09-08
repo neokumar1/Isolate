@@ -707,6 +707,52 @@ final class IsolateTests: XCTestCase {
         themeManager.applyTheme(.system)
         XCTAssertEqual(themeManager.currentTheme, .system)
     }
+    
+    // Test 23: Verify Missing Stems Without Original Audio Source Unloads Engine Cleanly
+    @MainActor
+    func testMissingStemsWithoutSourceTriggersCleanUnloadAndErrorToast() async {
+        let engine = AudioEngineManager()
+        
+        let dummyOrig = URL(fileURLWithPath: "/tmp/non_existent_isolate_track_\(UUID().uuidString).mp3")
+        let dummyVocal = URL(fileURLWithPath: "/tmp/non_existent_isolate_stems_\(UUID().uuidString)/vocals.wav")
+        let dummyDrum = URL(fileURLWithPath: "/tmp/non_existent_isolate_stems_\(UUID().uuidString)/drums.wav")
+        let dummyBass = URL(fileURLWithPath: "/tmp/non_existent_isolate_stems_\(UUID().uuidString)/bass.wav")
+        let dummyOther = URL(fileURLWithPath: "/tmp/non_existent_isolate_stems_\(UUID().uuidString)/other.wav")
+        
+        let track = TrackModel(
+            id: dummyOrig.path,
+            title: "By Design Test",
+            originalURL: dummyOrig,
+            vocalStemURL: dummyVocal,
+            bassStemURL: dummyBass,
+            drumStemURL: dummyDrum,
+            otherStemURL: dummyOther
+        )
+        
+        await engine.loadTrack(track)
+        
+        // Audio engine must NOT be left in an active/zombie state
+        XCTAssertNil(engine.currentTrackID, "Current track ID must be cleared on missing stem/source failure")
+        XCTAssertFalse(engine.isPlaying, "Audio engine must not be playing on load failure")
+        XCTAssertNotNil(engine.errorMessage, "Error toast must be triggered on missing stem/source failure")
+        XCTAssertTrue(engine.errorMessage?.contains("NOT FOUND") == true, "Error message must indicate missing audio source")
+        
+        // Clean up error message
+        engine.dismissError()
+        XCTAssertNil(engine.errorMessage, "Error message must be nil after dismissError")
+    }
+    
+    // Test 24: Verify Error Toast State & Dismissal
+    @MainActor
+    func testErrorToastStateAndDismissal() {
+        let engine = AudioEngineManager()
+        engine.showError("TEST ERROR MESSAGE")
+        XCTAssertEqual(engine.errorMessage, "TEST ERROR MESSAGE")
+        
+        engine.dismissError()
+        XCTAssertNil(engine.errorMessage)
+    }
 }
+
 
 

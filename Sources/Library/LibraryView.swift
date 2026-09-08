@@ -299,6 +299,7 @@ struct LibraryView: View {
                             isSearchFocused = false
                             NSApp.keyWindow?.makeFirstResponder(nil)
                             activeMenuTrackID = nil
+                            guard !engineManager.isSplitting else { return }
                             Task {
                                 await engineManager.loadTrack(track)
                             }

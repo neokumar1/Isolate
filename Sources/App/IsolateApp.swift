@@ -471,6 +471,8 @@ struct ContentView: View {
                             let trackID = track.id
                             let wasActive = (engineManager.currentTrackID == trackID)
                             
+                            let stemDir = track.vocalStemURL.deletingLastPathComponent()
+                            try? FileManager.default.removeItem(at: stemDir)
                             try? FileManager.default.removeItem(at: track.vocalStemURL)
                             try? FileManager.default.removeItem(at: track.drumStemURL)
                             try? FileManager.default.removeItem(at: track.bassStemURL)
@@ -546,6 +548,7 @@ struct ContentView: View {
                         }
                     )
                     .padding(.top, 16)
+                    .allowsHitTesting(true)
                     .transition(.asymmetric(
                         insertion: .move(edge: .top).combined(with: .opacity),
                         removal: .move(edge: .top).combined(with: .opacity)
@@ -553,6 +556,8 @@ struct ContentView: View {
                     
                     Spacer()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
                 .zIndex(9999)
             }
         }

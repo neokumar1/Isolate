@@ -977,8 +977,11 @@ public final class AudioEngineManager: @unchecked Sendable {
     
     @MainActor
     public func loadTrack(_ track: TrackModel) async {
-        currentTrackID = track.id
-        currentTrackName = track.title.uppercased()
+        // Prevent re-entrant loads while neural separation is actively working
+        guard !isSplitting else { return }
+        
+        let sessionID = UUID()
+        self.playbackSessionID = sessionID
         
         // 1. Immediately hard stop all 5 player nodes & flush audio queues
         vocalPlayer.stop()
@@ -993,6 +996,48 @@ public final class AudioEngineManager: @unchecked Sendable {
         currentTimeString = "00:00 / -00:00"
         clearVisualizers()
         
+        self.fileVocals = nil
+        self.fileDrums = nil
+        self.fileBass = nil
+        self.fileOther = nil
+        self.audioFile = nil
+        
+        let fileManager = FileManager.default
+        let stemsExist = fileManager.fileExists(atPath: track.vocalStemURL.path) &&
+                         fileManager.fileExists(atPath: track.drumStemURL.path) &&
+                         fileManager.fileExists(atPath: track.bassStemURL.path) &&
+                         fileManager.fileExists(atPath: track.otherStemURL.path)
+        
+        if !stemsExist {
+            print("[Isolate] Cached stems missing on disk for '\(track.title)'. Initiating automatic recovery...")
+            let isSecScoped = track.originalURL.startAccessingSecurityScopedResource()
+            let origExists = fileManager.fileExists(atPath: track.originalURL.path)
+            if isSecScoped {
+                track.originalURL.stopAccessingSecurityScopedResource()
+            }
+            
+            if origExists {
+                if let data = await loadAndSplitAudio(url: track.originalURL) {
+                    guard self.playbackSessionID == sessionID else { return }
+                    track.vocalStemURL = data.vocalStemURL
+                    track.drumStemURL = data.drumStemURL
+                    track.bassStemURL = data.bassStemURL
+                    track.otherStemURL = data.otherStemURL
+                    try? track.modelContext?.save()
+                    return
+                } else {
+                    unloadTrack()
+                    return
+                }
+            } else {
+                unloadTrack()
+                showError("AUDIO SOURCE NOT FOUND: '\(track.title.uppercased())'")
+                return
+            }
+        }
+        
+        currentTrackID = track.id
+        currentTrackName = track.title.uppercased()
         extractMetadata(url: track.originalURL)
         
         do {
@@ -1000,6 +1045,8 @@ public final class AudioEngineManager: @unchecked Sendable {
             let fDrums = try AVAudioFile(forReading: track.drumStemURL)
             let fBass = try AVAudioFile(forReading: track.bassStemURL)
             let fOther = try AVAudioFile(forReading: track.otherStemURL)
+            
+            guard self.playbackSessionID == sessionID else { return }
             
             self.fileVocals = fVocals
             self.fileDrums = fDrums
@@ -1020,6 +1067,27 @@ public final class AudioEngineManager: @unchecked Sendable {
             }
         } catch {
             print("Failed to load cached stems: \(error)")
+            // Auto-recovery attempt if files exist but were corrupt or unreadable
+            let isSecScoped = track.originalURL.startAccessingSecurityScopedResource()
+            let origExists = fileManager.fileExists(atPath: track.originalURL.path)
+            if isSecScoped {
+                track.originalURL.stopAccessingSecurityScopedResource()
+            }
+            
+            if origExists {
+                print("[Isolate] Corrupt stems detected for '\(track.title)'. Auto-recovering from original audio...")
+                if let data = await loadAndSplitAudio(url: track.originalURL) {
+                    guard self.playbackSessionID == sessionID else { return }
+                    track.vocalStemURL = data.vocalStemURL
+                    track.drumStemURL = data.drumStemURL
+                    track.bassStemURL = data.bassStemURL
+                    track.otherStemURL = data.otherStemURL
+                    try? track.modelContext?.save()
+                    return
+                }
+            }
+            
+            unloadTrack()
             showError("FAILED TO LOAD STEMS FOR '\(track.title.uppercased())'")
         }
     }
