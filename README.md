@@ -2,10 +2,10 @@
 
 A fast, offline 4-stem audio separator for macOS.
 
-[![macOS 14.0+](https://img.shields.io/badge/macOS-14.0%2B-black?style=flat&logo=apple)](https://github.com/TheConfidentCoder/Isolate)
-[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1--M5-red?style=flat)](https://github.com/TheConfidentCoder/Isolate)
+[![macOS 14.0+](https://img.shields.io/badge/macOS-14.0%2B-black?style=flat&logo=apple)](https://github.com/neokumar1/Isolate)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1--M5-red?style=flat)](https://github.com/neokumar1/Isolate)
 [![License: MIT](https://img.shields.io/badge/License-MIT-gray?style=flat)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/TheConfidentCoder/Isolate?style=flat)](https://github.com/TheConfidentCoder/Isolate/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/neokumar1/Isolate?style=flat)](https://github.com/neokumar1/Isolate/releases/latest)
 
 Isolate splits any audio file into four stems: vocals, drums, bass, and other. It runs Demucs v4 directly on your Mac using Core ML and the Apple Neural Engine, so your audio never leaves your machine. No accounts, no cloud APIs, and no subscription.
 
@@ -43,7 +43,7 @@ Isolate is a self-contained macOS app. You do not need to install Python, Node.j
 ### Homebrew (recommended)
 
 ```bash
-brew install --cask TheConfidentCoder/isolate/isolate
+brew install --cask neokumar1/isolate/isolate
 ```
 
 To update later:
@@ -54,7 +54,7 @@ brew upgrade isolate
 
 ### Direct download
 
-1. Download `Isolate.dmg` from [Releases](https://github.com/TheConfidentCoder/Isolate/releases/latest).
+1. Download `Isolate.dmg` from [Releases](https://github.com/neokumar1/Isolate/releases/latest).
 2. Open the DMG and drag `Isolate.app` into `/Applications`.
 3. Open Isolate from your Applications folder.
 
@@ -65,7 +65,7 @@ If macOS shows a warning saying the developer cannot be verified:
 ### One-line terminal install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TheConfidentCoder/Isolate/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/neokumar1/Isolate/main/install.sh | bash
 ```
 
 ---

@@ -726,7 +726,7 @@ struct AboutModalCard: View {
                 // GitHub Repository Link
                 Button(action: {
                     Haptics.playClick()
-                    if let url = URL(string: "https://github.com/TheConfidentCoder/Isolate") {
+                    if let url = URL(string: "https://github.com/neokumar1/Isolate") {
                         NSWorkspace.shared.open(url)
                     }
                 }) {

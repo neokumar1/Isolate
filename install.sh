@@ -50,7 +50,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo -e "${WHITE}⚡ [1/4] Fetching latest release from GitHub...${NC}"
-DMG_URL="https://github.com/TheConfidentCoder/Isolate/releases/latest/download/Isolate.dmg"
+DMG_URL="https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg"
 DMG_FILE="$TEMP_DIR/Isolate.dmg"
 
 curl -fL "$DMG_URL" -o "$DMG_FILE" --progress-bar

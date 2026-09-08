@@ -7,7 +7,7 @@ Isolate is a standalone macOS application. You do not need Python, Node.js, Dock
 ## Method 1: Homebrew Cask (recommended)
 
 ```bash
-brew install --cask TheConfidentCoder/isolate/isolate
+brew install --cask neokumar1/isolate/isolate
 ```
 
 To update in the future:
@@ -20,7 +20,7 @@ brew upgrade isolate
 
 ## Method 2: Direct download (DMG)
 
-1. Download `Isolate.dmg` from [Releases](https://github.com/TheConfidentCoder/Isolate/releases/latest).
+1. Download `Isolate.dmg` from [Releases](https://github.com/neokumar1/Isolate/releases/latest).
 2. Open the disk image and drag `Isolate.app` into your `/Applications` folder.
 3. Open `Isolate.app` from Applications.
 
@@ -37,7 +37,7 @@ To open the app:
 ## Method 3: Terminal install script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TheConfidentCoder/Isolate/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/neokumar1/Isolate/main/install.sh | bash
 ```
 
 ---
@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/TheConfidentCoder/Isolate/main/inst
 Prerequisites: Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```bash
-git clone https://github.com/TheConfidentCoder/Isolate.git
+git clone https://github.com/neokumar1/Isolate.git
 cd Isolate
 xcodegen generate
 xcodebuild -scheme Isolate -configuration Release -destination 'platform=macOS' build

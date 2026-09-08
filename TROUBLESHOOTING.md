@@ -26,7 +26,7 @@ xattr -cr /Applications/Isolate.app
 ##### Option 3: Reinstall via Terminal (Zero Warnings)
 Run the automated curl installer:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TheConfidentCoder/Isolate/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/neokumar1/Isolate/main/install.sh | bash
 ```
 
 ---
