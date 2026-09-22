@@ -15,8 +15,8 @@ targets:
         CFBundleIdentifier: com.isolate.Isolate
         CFBundleName: Isolate
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "1.2.5"
-        CFBundleVersion: "1.2.5"
+        CFBundleShortVersionString: "1.2.8"
+        CFBundleVersion: "1.2.8"
         CFBundleIconFile: AppIcon
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
@@ -26,8 +26,10 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
         SWIFT_VERSION: 5.0
+        ARCHS: arm64
+        ENABLE_HARDENED_RUNTIME: YES
         APP_INTENTS_METADATA_EXTRACTION_ENABLED: NO
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
   IsolateTests:
     type: bundle.unit-test
     platform: macOS

@@ -2,34 +2,39 @@ name: Build & Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build Isolate (macOS)
     runs-on: macos-15
-    
+    timeout-minutes: 30
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v5
-
-      - name: Set up Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+      - uses: actions/checkout@v5
+      - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode Project
-        run: xcodegen generate
-
-      - name: Build macOS App (Release)
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Check shell scripts and whitespace
         run: |
-          xcodebuild -scheme Isolate -configuration Release -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
-
-      - name: Run Unit Tests
-        run: |
-          xcodebuild test -scheme Isolate -destination 'platform=macOS' -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          bash -n install.sh scripts/package_release.sh scripts/fetch_release_model.sh
+          git diff --check
+      - name: Build Apple Silicon release
+        run: xcodebuild build -project Isolate.xcodeproj -scheme Isolate -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO
+      - name: Run unit and audio regression tests
+        run: xcodebuild test -project Isolate.xcodeproj -scheme Isolate -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/DerivedData/Logs/Test/*.xcresult

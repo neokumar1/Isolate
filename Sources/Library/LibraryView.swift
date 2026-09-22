@@ -12,6 +12,7 @@ struct LibraryView: View {
     @Binding var activeMenuTrackID: String?
     var onRenameTrack: ((TrackModel) -> Void)? = nil
     var onDeleteTrack: ((TrackModel) -> Void)? = nil
+    var onImport: (() -> Void)? = nil
     var onOpenSettings: (() -> Void)? = nil
     
     @State private var isSettingsHovered = false
@@ -33,21 +34,19 @@ struct LibraryView: View {
         activeMenuTrackID: Binding<String?> = .constant(nil),
         onRenameTrack: ((TrackModel) -> Void)? = nil,
         onDeleteTrack: ((TrackModel) -> Void)? = nil,
+        onImport: (() -> Void)? = nil,
         onOpenSettings: (() -> Void)? = nil
     ) {
         self._activeMenuTrackID = activeMenuTrackID
         self.onRenameTrack = onRenameTrack
         self.onDeleteTrack = onDeleteTrack
+        self.onImport = onImport
         self.onOpenSettings = onOpenSettings
     }
     
-    var totalOriginalBytes: Int64 {
-        tracks.reduce(0) { total, track in
-            let size = (try? FileManager.default.attributesOfItem(atPath: track.originalURL.path)[.size] as? Int64) ?? 0
-            return total + size
-        }
-    }
-    
+    @State private var totalOriginalBytes: Int64 = 0
+    @State private var statisticsTask: Task<Void, Never>?
+
     var formattedTotalSize: String {
         let bytes = totalOriginalBytes
         let mb = Double(bytes) / 1_000_000.0
@@ -82,19 +81,24 @@ struct LibraryView: View {
     
     private func recalculateTotalDuration() {
         let urlPairs: [(vocal: URL, original: URL)] = tracks.map { ($0.vocalStemURL, $0.originalURL) }
-        Task.detached(priority: .userInitiated) {
+        statisticsTask?.cancel()
+        statisticsTask = Task {
+            let statistics = await Task.detached(priority: .utility) {
+            var totalBytes: Int64 = 0
             var totalSecs: Double = 0.0
             for pair in urlPairs {
+                totalBytes += (try? FileManager.default.attributesOfItem(atPath: pair.original.path)[.size] as? Int64) ?? 0
                 if let file = try? AVAudioFile(forReading: pair.vocal) {
                     totalSecs += Double(file.length) / file.processingFormat.sampleRate
                 } else if let file = try? AVAudioFile(forReading: pair.original) {
                     totalSecs += Double(file.length) / file.processingFormat.sampleRate
                 }
             }
-            let finalSecs = totalSecs
-            await MainActor.run {
-                self.totalDurationSeconds = finalSecs
-            }
+            return (totalSecs, totalBytes)
+            }.value
+            guard !Task.isCancelled else { return }
+            totalDurationSeconds = statistics.0
+            totalOriginalBytes = statistics.1
         }
     }
     
@@ -138,6 +142,12 @@ struct LibraryView: View {
         }
     }
     
+    private var groupedTracks: [(folder: URL, tracks: [TrackModel])] {
+        let groups = Dictionary(grouping: filteredTracks) { $0.originalURL.deletingLastPathComponent() }
+        return groups.keys.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            .map { (folder: $0, tracks: groups[$0] ?? []) }
+    }
+
     var body: some View {
         ZStack {
             VStack(alignment: .leading, spacing: 0) {
@@ -186,6 +196,7 @@ struct LibraryView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(engineManager.isSplitting)
         }
         .padding(.horizontal, 16)
         .padding(.top, 50)
@@ -280,13 +291,20 @@ struct LibraryView: View {
     
     private var tracksScrollView: some View {
         ScrollView {
-            VStack(spacing: 6) {
-                ForEach(Array(filteredTracks.enumerated()), id: \.element.id) { index, track in
+            LazyVStack(alignment: .leading, spacing: 6) {
+                ForEach(groupedTracks, id: \.folder) { group in
+                    Text(group.folder.lastPathComponent.uppercased())
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.top, 12)
+                        .padding(.horizontal, 8)
+                        .help(group.folder.path)
+                ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
                     let isCurrentMenuOpen = activeMenuTrackID == track.id
                     let zIndexValue: Double = isCurrentMenuOpen ? 1000.0 : Double(filteredTracks.count - index)
                     TrackRowView(
                         track: track,
-                        isActive: engineManager.currentTrackID == track.id || engineManager.currentTrackName == track.title.uppercased(),
+                        isActive: engineManager.currentTrackID == track.id,
                         isMenuOpen: isCurrentMenuOpen,
                         onToggleMenu: {
                             if activeMenuTrackID == track.id {
@@ -319,6 +337,7 @@ struct LibraryView: View {
                     )
                     .zIndex(zIndexValue)
                 }
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -327,6 +346,7 @@ struct LibraryView: View {
         .onAppear {
             recalculateTotalDuration()
         }
+        .onDisappear { statisticsTask?.cancel() }
         .onChange(of: tracks.count) { _, _ in
             recalculateTotalDuration()
         }
@@ -413,59 +433,9 @@ struct LibraryView: View {
     }
     
     private func importTrack() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [
-            .audio,
-            .mp3,
-            .mpeg4Audio,
-            .wav,
-            .aiff,
-            UTType(filenameExtension: "flac") ?? .audio,
-            UTType(filenameExtension: "alac") ?? .audio,
-            UTType(filenameExtension: "aac") ?? .audio,
-            UTType(filenameExtension: "caf") ?? .audio
-        ]
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        
-        if panel.runModal() == .OK {
-            let selectedURLs = panel.urls
-            guard !selectedURLs.isEmpty else { return }
-            
-            Task {
-                for url in selectedURLs {
-                    let isSecScoped = url.startAccessingSecurityScopedResource()
-                    defer {
-                        if isSecScoped {
-                            url.stopAccessingSecurityScopedResource()
-                        }
-                    }
-                    
-                    let path = url.path
-                    let descriptor = FetchDescriptor<TrackModel>(predicate: #Predicate { $0.id == path })
-                    if let existing = try? modelContext.fetch(descriptor).first {
-                        await engineManager.loadTrack(existing)
-                    } else {
-                        if let data = await engineManager.loadAndSplitAudio(url: url) {
-                            await MainActor.run {
-                                let newTrack = TrackModel(
-                                    id: data.id,
-                                    title: data.title,
-                                    originalURL: data.originalURL,
-                                    vocalStemURL: data.vocalStemURL,
-                                    bassStemURL: data.bassStemURL,
-                                    drumStemURL: data.drumStemURL,
-                                    otherStemURL: data.otherStemURL
-                                )
-                                modelContext.insert(newTrack)
-                                try? modelContext.save()
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        onImport?()
     }
+
 }
 
 struct TrackRowView: View {
@@ -584,6 +554,7 @@ struct TrackRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Actions for \(track.title)")
     }
     
     private var inlineActionsView: some View {

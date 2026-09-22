@@ -2,21 +2,20 @@ import SwiftUI
 import AppKit
 
 // MARK: - Persistent App Settings Model
+@MainActor
 @Observable
 public final class AppSettings {
     public static let shared = AppSettings()
     
     public var defaultExportFormat: String {
         didSet {
-            UserDefaults.standard.set(defaultExportFormat, forKey: "defaultExportFormat")
-            UserDefaults.standard.synchronize()
+            AppPreferences.defaults.set(defaultExportFormat, forKey: "defaultExportFormat")
         }
     }
     
     public var hardwareTheme: String {
         didSet {
-            UserDefaults.standard.set(hardwareTheme, forKey: "hardwareTheme")
-            UserDefaults.standard.synchronize()
+            AppPreferences.defaults.set(hardwareTheme, forKey: "hardwareTheme")
             ThemeManager.shared.applyTheme(HardwareTheme(rawValue: hardwareTheme) ?? .system)
             Haptics.playClick()
         }
@@ -24,8 +23,7 @@ public final class AppSettings {
     
     public var isMenuBarMiniPlayerEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(!isMenuBarMiniPlayerEnabled, forKey: "isMenuBarDisabled")
-            UserDefaults.standard.synchronize()
+            AppPreferences.defaults.set(!isMenuBarMiniPlayerEnabled, forKey: "isMenuBarDisabled")
             let enabled = isMenuBarMiniPlayerEnabled
             Task { @MainActor in
                 MenuBarManager.shared.setEnabled(enabled)
@@ -38,8 +36,7 @@ public final class AppSettings {
     
     public var isHapticsEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(!isHapticsEnabled, forKey: "isHapticsDisabled")
-            UserDefaults.standard.synchronize()
+            AppPreferences.defaults.set(!isHapticsEnabled, forKey: "isHapticsDisabled")
             if isHapticsEnabled {
                 Haptics.playClick()
             }
@@ -48,35 +45,33 @@ public final class AppSettings {
     
     public var isAutoPlayOnSelect: Bool {
         didSet {
-            UserDefaults.standard.set(!isAutoPlayOnSelect, forKey: "isAutoPlayDisabled")
-            UserDefaults.standard.synchronize()
+            AppPreferences.defaults.set(!isAutoPlayOnSelect, forKey: "isAutoPlayDisabled")
         }
     }
     
     public var waveformSensitivity: Double {
         didSet {
-            UserDefaults.standard.set(waveformSensitivity, forKey: "waveformSensitivity")
-            UserDefaults.standard.synchronize()
+            AppPreferences.defaults.set(waveformSensitivity, forKey: "waveformSensitivity")
         }
     }
     
     private init() {
-        self.defaultExportFormat = UserDefaults.standard.string(forKey: "defaultExportFormat") ?? "WAV"
-        self.hardwareTheme = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "system"
-        self.isMenuBarMiniPlayerEnabled = !UserDefaults.standard.bool(forKey: "isMenuBarDisabled")
-        self.isHapticsEnabled = !UserDefaults.standard.bool(forKey: "isHapticsDisabled")
-        self.isAutoPlayOnSelect = !UserDefaults.standard.bool(forKey: "isAutoPlayDisabled")
-        let savedSensitivity = UserDefaults.standard.double(forKey: "waveformSensitivity")
+        self.defaultExportFormat = AudioExporter.Format(rawValue: AppPreferences.defaults.string(forKey: "defaultExportFormat") ?? "WAV")?.rawValue ?? "WAV"
+        self.hardwareTheme = AppPreferences.defaults.string(forKey: "hardwareTheme") ?? "system"
+        self.isMenuBarMiniPlayerEnabled = !AppPreferences.defaults.bool(forKey: "isMenuBarDisabled")
+        self.isHapticsEnabled = !AppPreferences.defaults.bool(forKey: "isHapticsDisabled")
+        self.isAutoPlayOnSelect = !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled")
+        let savedSensitivity = AppPreferences.defaults.double(forKey: "waveformSensitivity")
         self.waveformSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.0
     }
     
     public func reloadFromStorage() {
-        self.defaultExportFormat = UserDefaults.standard.string(forKey: "defaultExportFormat") ?? "WAV"
-        self.hardwareTheme = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "system"
-        self.isMenuBarMiniPlayerEnabled = !UserDefaults.standard.bool(forKey: "isMenuBarDisabled")
-        self.isHapticsEnabled = !UserDefaults.standard.bool(forKey: "isHapticsDisabled")
-        self.isAutoPlayOnSelect = !UserDefaults.standard.bool(forKey: "isAutoPlayDisabled")
-        let savedSensitivity = UserDefaults.standard.double(forKey: "waveformSensitivity")
+        self.defaultExportFormat = AudioExporter.Format(rawValue: AppPreferences.defaults.string(forKey: "defaultExportFormat") ?? "WAV")?.rawValue ?? "WAV"
+        self.hardwareTheme = AppPreferences.defaults.string(forKey: "hardwareTheme") ?? "system"
+        self.isMenuBarMiniPlayerEnabled = !AppPreferences.defaults.bool(forKey: "isMenuBarDisabled")
+        self.isHapticsEnabled = !AppPreferences.defaults.bool(forKey: "isHapticsDisabled")
+        self.isAutoPlayOnSelect = !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled")
+        let savedSensitivity = AppPreferences.defaults.double(forKey: "waveformSensitivity")
         self.waveformSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.0
     }
     
@@ -222,6 +217,7 @@ struct SettingsModalCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .onHover { hovering in
                     if hovering && !isCloseHovered { Haptics.playClick() }
                     isCloseHovered = hovering
@@ -229,6 +225,7 @@ struct SettingsModalCard: View {
             }
             .frame(height: 32)
         }
+        .onExitCommand(perform: onDismiss)
         .padding(24)
         .frame(width: 540, height: 510) // Constant width and height for complete visual consistency
         .background(theme.modalBackground)
@@ -260,9 +257,7 @@ struct SettingsModalCard: View {
             ) {
                 HStack(spacing: 5) {
                     exportFormatButton("WAV", label: "WAV 24B")
-                    exportFormatButton("MP3", label: "MP3 320K")
                     exportFormatButton("FLAC", label: "FLAC")
-                    exportFormatButton("ALL", label: "ALL ZIP")
                 }
             }
             
@@ -271,7 +266,7 @@ struct SettingsModalCard: View {
                 title: "MENU BAR MINI CONTROLLER",
                 subtitle: "Discreet macOS status bar item with quick stem controls"
             ) {
-                toggleSwitch(isOn: Binding(
+                toggleSwitch("Menu bar controller", isOn: Binding(
                     get: { settings.isMenuBarMiniPlayerEnabled },
                     set: { newVal in
                         settings.isMenuBarMiniPlayerEnabled = newVal
@@ -285,7 +280,7 @@ struct SettingsModalCard: View {
                 title: "TACTILE HAPTICS",
                 subtitle: "Physical haptic feedback on clicks, faders, and buttons"
             ) {
-                toggleSwitch(isOn: $settings.isHapticsEnabled)
+                toggleSwitch("Haptic feedback", isOn: $settings.isHapticsEnabled)
             }
             
             // Setting 5: Auto-Play on Select
@@ -293,7 +288,7 @@ struct SettingsModalCard: View {
                 title: "AUTO-PLAY ON SELECT",
                 subtitle: "Automatically start playback when clicking a track in Library"
             ) {
-                toggleSwitch(isOn: $settings.isAutoPlayOnSelect)
+                toggleSwitch("Auto-play on select", isOn: $settings.isAutoPlayOnSelect)
             }
             
             // Setting 6: Waveform Sensitivity
@@ -321,10 +316,11 @@ struct SettingsModalCard: View {
             shortcutRow(keys: ["R"], description: "Reset 4-Stem Mix to 100% Unity Gain")
             shortcutRow(keys: ["L"], description: "Toggle A-B Region Loop")
             shortcutRow(keys: ["Space"], description: "Play / Pause playback")
-            shortcutRow(keys: ["B"], description: "Toggle Bypass (Original vs Separated Stems)")
-            shortcutRow(keys: ["E"], description: "Export 4-Stem Audio Archive")
+            shortcutRow(keys: ["⌘", "⌥", "B"], description: "Compare Original and Stem Mix")
+            shortcutRow(keys: ["⌘", "⇧", "E"], description: "Export 4-Stem Audio Archive")
+            shortcutRow(keys: ["⌘", "⇧", "M"], description: "Export Current Mix as WAV")
             shortcutRow(keys: ["⌘", "O"], description: "Import / Batch Import audio tracks")
-            shortcutRow(keys: ["Tab"], description: "Toggle Library Sidebar")
+            shortcutRow(keys: ["⌘", "B"], description: "Toggle Library Sidebar")
             shortcutRow(keys: ["Double-Click"], description: "Reset fader or pan dial to Center")
         }
         .padding(.vertical, 4)
@@ -415,7 +411,7 @@ struct SettingsModalCard: View {
         .buttonStyle(.plain)
     }
     
-    private func toggleSwitch(isOn: Binding<Bool>) -> some View {
+    private func toggleSwitch(_ label: String, isOn: Binding<Bool>) -> some View {
         Button(action: {
             Haptics.playClick()
             isOn.wrappedValue.toggle()
@@ -444,6 +440,8 @@ struct SettingsModalCard: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn.wrappedValue ? "On" : "Off")
     }
     
     private func shortcutRow(keys: [String], description: String) -> some View {

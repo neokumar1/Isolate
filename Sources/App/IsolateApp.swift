@@ -4,319 +4,107 @@ import UniformTypeIdentifiers
 
 @main
 struct IsolateApp: App {
+    @Environment(\.openWindow) private var openWindow
     @State private var engineManager = AudioEngineManager()
     @State private var theme = ThemeManager.shared
-    @State private var isTargeted = false
     @State private var isShowingAboutModal = false
     @State private var isShowingSettingsModal = false
-    @Environment(\.modelContext) private var modelContext
-    
-    init() {
-        // Pre-warm CoreML Demucs Neural Engine pipeline in the background on startup
-        Task.detached(priority: .userInitiated) {
-            await DemucsEngine.shared.prewarmModel()
-        }
-    }
-    
+
     var body: some Scene {
-        WindowGroup {
-            ContentView(
-                isShowingAboutModal: $isShowingAboutModal,
-                isShowingSettingsModal: $isShowingSettingsModal
-            )
-            .ignoresSafeArea()
-            .overlay {
-                if engineManager.isSplitting {
-                    SplittingProgressModal()
-                        .environment(engineManager)
-                } else if isTargeted {
-                    // Drag & Drop Target Overlay
-                    ZStack {
-                        theme.modalBackdrop
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.red, style: StrokeStyle(lineWidth: 4, dash: [10]))
-                            .padding(24)
-                        VStack(spacing: 20) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 64))
-                            .foregroundColor(.red)
-                            Text("DROP AUDIO TO ISOLATE STEMS")
-                                .font(.custom("DotGothic16-Regular", size: 32))
-                                .foregroundColor(.red)
-                        }
-                    }
-                    .ignoresSafeArea()
-                }
-            }
-            .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-                var droppedURLs: [URL] = []
-                let dispatchGroup = DispatchGroup()
-                for provider in providers {
-                    dispatchGroup.enter()
-                    provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                        defer { dispatchGroup.leave() }
-                        if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                            droppedURLs.append(url)
-                        } else if let url = item as? URL {
-                            droppedURLs.append(url)
-                        }
-                    }
-                }
-                dispatchGroup.notify(queue: .main) {
-                    if !droppedURLs.isEmpty {
-                        handleDroppedFiles(urls: droppedURLs)
-                    }
-                }
-                return true
-            }
-            .preferredColorScheme(theme.preferredColorScheme)
-            .frame(minWidth: 960, minHeight: 580)
-            .background(WindowAccessor())
-            .navigationTitle("")
-            .environment(engineManager)
+        WindowGroup("Isolate", id: "main", for: String.self) { _ in
+            ContentView(isShowingAboutModal: $isShowingAboutModal,
+                        isShowingSettingsModal: $isShowingSettingsModal)
+                .ignoresSafeArea()
+                .preferredColorScheme(theme.preferredColorScheme)
+                .frame(minWidth: 960, minHeight: 580)
+                .background(WindowAccessor())
+                .environment(engineManager)
+        } defaultValue: {
+            "main"
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Isolate") {
-                    isShowingAboutModal = true
-                }
+                Button("About Isolate") { isShowingAboutModal = true }
             }
-            CommandGroup(after: .appSettings) {
-                Button("Settings...") {
-                    isShowingSettingsModal = true
-                }
-                .keyboardShortcut(",", modifiers: [.command])
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { isShowingSettingsModal = true }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
+            CommandGroup(replacing: .newItem) {
+                Button("Import Audio…") { engineManager.importRequested = true }
+                    .keyboardShortcut("o", modifiers: .command)
+                    .disabled(engineManager.isSplitting)
+                Button("Export Stems…") { engineManager.exportStems() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                    .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting || engineManager.isExporting)
+                Button("Export Mix…") { engineManager.exportMix() }
+                    .keyboardShortcut("m", modifiers: [.command, .shift])
+                    .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting || engineManager.isExporting)
+            }
+            CommandGroup(after: .windowArrangement) {
+                Button("Show Isolate") { openWindow(id: "main", value: "main") }
+                    .keyboardShortcut("0", modifiers: .command)
+            }
+            CommandMenu("Playback") {
+                Button(engineManager.isPlaying ? "Pause" : "Play") { engineManager.togglePlayback() }
+                    .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting)
+                Button("Compare Original") { engineManager.isBypassed.toggle() }
+                    .keyboardShortcut("b", modifiers: [.command, .option])
+                    .disabled(!engineManager.canBypass || engineManager.isSplitting)
             }
         }
-        .modelContainer(for: TrackModel.self)
-        .environment(engineManager)
-        .windowResizability(.contentSize)
+        .modelContainer(for: TrackModel.self, inMemory: AppPreferences.isTesting)
+        .defaultSize(width: 1280, height: 800)
+        .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
-    }
-    
-    private func handleDroppedFiles(urls: [URL]) {
-        let validAudioExtensions = ["mp3", "wav", "flac", "m4a", "aac", "aiff", "aif", "caf"]
-        let audioURLs = urls.filter { validAudioExtensions.contains($0.pathExtension.lowercased()) }
-        guard !audioURLs.isEmpty else { return }
-        
-        Task {
-            var processedCount = 0
-            var lastTitle = ""
-            for url in audioURLs {
-                let isSecScoped = url.startAccessingSecurityScopedResource()
-                defer {
-                    if isSecScoped {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-                
-                let path = url.path
-                let descriptor = FetchDescriptor<TrackModel>(predicate: #Predicate { $0.id == path })
-                if let existing = try? modelContext.fetch(descriptor).first {
-                    await engineManager.loadTrack(existing)
-                    processedCount += 1
-                    lastTitle = existing.title
-                } else {
-                    if let data = await engineManager.loadAndSplitAudio(url: url) {
-                        await MainActor.run {
-                            let newTrack = TrackModel(
-                                id: data.id,
-                                title: data.title,
-                                originalURL: data.originalURL,
-                                vocalStemURL: data.vocalStemURL,
-                                bassStemURL: data.bassStemURL,
-                                drumStemURL: data.drumStemURL,
-                                otherStemURL: data.otherStemURL
-                            )
-                            modelContext.insert(newTrack)
-                            try? modelContext.save()
-                        }
-                        processedCount += 1
-                        lastTitle = data.title
-                    }
-                }
-            }
-            if processedCount > 0 {
-                await MainActor.run {
-                    MenuBarManager.shared.sendBatchCompletionNotification(count: processedCount, lastTitle: lastTitle)
-                }
-            }
-        }
+
     }
 }
 
-// MARK: - Splitting Progress Modal with Cancel Import Action
 struct SplittingProgressModal: View {
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
-    @State private var isCancelHovered = false
-    @State private var currentHeadlineIndex = 0
-    @State private var currentFooterIndex = 0
-    @State private var isBlinking = false
-    @State private var rotationTimer: Timer? = nil
-    @State private var blinkTimer: Timer? = nil
-    
-    private var dynamicHeadline: String {
-        let progress = engineManager.splitProgress
-        if progress <= 0.005 {
-            return "INITIALIZING NEURAL ENGINE..."
-        } else if progress >= 0.98 {
-            return "RECOMBINING STEM MATRIX..."
-        } else if progress < 0.35 {
-            let earlyPool = [
-                "HUNTING DOWN THE 808 SUB BASS...",
-                "DE-BLEEDING DRUM TRANSIENTS...",
-                "SEPARATING SINE WAVES FROM SOUL...",
-                "ISOLATING THE GHOST IN THE MACHINE..."
-            ]
-            return earlyPool[currentHeadlineIndex % earlyPool.count]
-        } else if progress < 0.75 {
-            let midPool = [
-                "SURGICALLY EXTRACTING VOCALS...",
-                "UNTANGLING HARMONIC RESONANCE...",
-                "CONSULTING THE NEURAL ENGINE ORACLE...",
-                "PURGING BACKGROUND BLEED..."
-            ]
-            return midPool[currentHeadlineIndex % midPool.count]
-        } else {
-            let latePool = [
-                "POLISHING ISOLATED ARTIFACTS...",
-                "FILTERING RESIDUAL PHANTOM FREQUENCIES...",
-                "ALMOST AT 100% PURITY..."
-            ]
-            return latePool[currentHeadlineIndex % latePool.count]
-        }
-    }
-    
-    private var dynamicFooter: String {
-        let telemetryPool = [
-            "APPLE SILICON NEURAL ENGINE ACCELERATED",
-            "DEMUCS V4 COREML • FP16 QUANTIZED",
-            "44.1KHZ 16-BIT STEREO PRECISION MATRIX",
-            "HYBRID TRANSFORMER LATENCY 0.38X REALTIME",
-            "4-STEM ISOLATION • DUAL-CHANNEL DSP"
-        ]
-        return telemetryPool[currentFooterIndex % telemetryPool.count]
-    }
-    
+
     var body: some View {
         ZStack {
             theme.modalBackdrop
-            
             VStack(spacing: 24) {
-                // Header Status: Rotating Nothing-Themed Quirky Headlines (0ms Snap)
-                Text(dynamicHeadline)
+                Text(engineManager.splitStatusMessage)
                     .font(.custom("DotGothic16-Regular", size: 22))
-                    .foregroundColor(theme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: 32)
-                
-                // Discrete LED Hardware Progress Bar
                 ModalDotMatrixProgressBar(progress: engineManager.splitProgress)
-                    .frame(width: 480, height: 10)
-                
-                // Metrics Readout
-                HStack(spacing: 48) {
-                    VStack(alignment: .center, spacing: 4) {
-                        Text("PROGRESS")
-                            .font(.custom("DotGothic16-Regular", size: 12))
-                            .foregroundColor(theme.textSecondary)
-                        Text("\(Int(engineManager.splitProgress * 100))%")
-                            .font(.custom("DotGothic16-Regular", size: 22))
-                            .foregroundColor(.red)
-                    }
-                    
+                    .frame(height: 10)
+                    .accessibilityLabel("Separation progress")
+                    .accessibilityValue("\(Int(engineManager.splitProgress * 100)) percent")
+                HStack {
+                    Text("\(Int(engineManager.splitProgress * 100))%")
+                    Spacer()
                     if engineManager.totalChunkCount > 0 {
-                        VStack(alignment: .center, spacing: 4) {
-                            Text("CHUNKS")
-                                .font(.custom("DotGothic16-Regular", size: 12))
-                                .foregroundColor(theme.textSecondary)
-                            Text("\(engineManager.currentChunkNumber)/\(engineManager.totalChunkCount)")
-                                .font(.custom("DotGothic16-Regular", size: 22))
-                                .foregroundColor(theme.textPrimary)
-                        }
+                        Text("\(engineManager.currentChunkNumber) / \(engineManager.totalChunkCount) CHUNKS")
                     }
-                    
-                    VStack(alignment: .center, spacing: 4) {
-                        Text("ESTIMATED TIME")
-                            .font(.custom("DotGothic16-Regular", size: 12))
-                            .foregroundColor(theme.textSecondary)
-                        Text(engineManager.etaRemainingString)
-                            .font(.custom("DotGothic16-Regular", size: 22))
-                            .foregroundColor(theme.textPrimary)
-                    }
+                    Spacer()
+                    Text(engineManager.etaRemainingString)
                 }
-                
-                // Footer Status: Dynamic Hardware Telemetry with Pulsing REC LED
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 6, height: 6)
-                        .opacity(isBlinking ? 1.0 : 0.2)
-                    
-                    Text(engineManager.currentChunkNumber > 0 ? engineManager.liveSpeedSubtitle : dynamicFooter)
-                        .font(.custom("DotGothic16-Regular", size: 12))
-                        .foregroundColor(theme.textSecondary)
-                        .lineLimit(1)
-                }
-                .frame(minHeight: 20)
-                
-                // Prominent Bottom Nothing-Style Cancel Action Button
-                Button(action: {
-                    Haptics.playClick()
+                .font(.custom("DotGothic16-Regular", size: 16))
+                .foregroundStyle(theme.textPrimary)
+                Text(engineManager.liveSpeedSubtitle)
+                    .font(.custom("DotGothic16-Regular", size: 12))
+                    .foregroundStyle(theme.textSecondary)
+                Button(engineManager.lastImportCancelled ? "CANCELLING…" : "CANCEL IMPORT") {
                     engineManager.cancelSplitAudio()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .bold))
-                        Text(engineManager.splitStatusMessage.contains("CANCEL") ? "CANCELLING..." : "CANCEL IMPORT")
-                            .font(.custom("DotGothic16-Regular", size: 13))
-                            .fontWeight(.bold)
-                    }
-                    .foregroundColor(isCancelHovered ? .black : .red)
-                    .frame(width: 170, height: 36)
-                    .background(isCancelHovered ? Color.red : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(isCancelHovered ? Color.red : Color.red.opacity(0.8), lineWidth: 1)
-                    )
-                    .contentShape(Rectangle()) // Entire 170x36 area clickable!
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
-                .onHover { hovering in
-                    if hovering && !isCancelHovered { Haptics.playClick() }
-                    isCancelHovered = hovering
-                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(engineManager.lastImportCancelled)
+                .tint(.red)
             }
-            .padding(.horizontal, 36)
-            .padding(.vertical, 36)
+            .padding(36)
             .frame(width: 580)
             .background(theme.modalBackground)
-            .border(theme.cardBorder, width: 1)
+            .border(theme.cardBorder)
             .overlay(CornerBrackets())
         }
         .ignoresSafeArea()
-        .onAppear {
-            rotationTimer?.invalidate()
-            rotationTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
-                Haptics.playAlignment()
-                currentHeadlineIndex += 1
-                currentFooterIndex += 1
-            }
-            
-            blinkTimer?.invalidate()
-            blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
-                isBlinking.toggle()
-            }
-        }
-        .onDisappear {
-            rotationTimer?.invalidate()
-            rotationTimer = nil
-            blinkTimer?.invalidate()
-            blinkTimer = nil
-        }
     }
 }
 
@@ -348,6 +136,9 @@ struct ContentView: View {
     @Binding var isShowingAboutModal: Bool
     @Binding var isShowingSettingsModal: Bool
     @State private var theme = ThemeManager.shared
+    @State private var importer = ImportCoordinator()
+    @ObservedObject private var appMoveHelper = AppMoveHelper.shared
+    @State private var isTargeted = false
     @State private var isSidebarVisible = true
     @State private var trackToRename: TrackModel? = nil
     @State private var trackToDelete: TrackModel? = nil
@@ -375,6 +166,7 @@ struct ContentView: View {
                         trackToDelete = track
                         isShowingDeleteModal = true
                     },
+                    onImport: { importer.chooseFiles(context: modelContext, engine: engineManager) },
                     onOpenSettings: {
                         activeMenuTrackID = nil
                         isShowingSettingsModal = true
@@ -402,36 +194,45 @@ struct ContentView: View {
                     }
                 }
         }
+        .disabled(engineManager.isSplitting || isShowingDeleteModal || isShowingSettingsModal || isShowingAboutModal)
         .background(theme.background)
-        .background {
-            // Global ⌘, Keyboard Shortcut for Settings
-            Button("") {
-                isShowingSettingsModal.toggle()
+        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+            importer.acceptDrop(providers, context: modelContext, engine: engineManager)
+        }
+        .onChange(of: engineManager.importRequested) { _, requested in
+            if requested {
+                engineManager.importRequested = false
+                importer.chooseFiles(context: modelContext, engine: engineManager)
             }
-            .keyboardShortcut(",", modifiers: [.command])
-            .hidden()
-            
+        }
+        .overlay {
+            if engineManager.isSplitting {
+                SplittingProgressModal()
+            } else if isTargeted {
+                Text("DROP AUDIO TO IMPORT")
+                    .font(.custom("DotGothic16-Regular", size: 24))
+                    .padding(32)
+                    .background(theme.modalBackground)
+                    .border(Color.red)
+                    .allowsHitTesting(false)
+            }
+        }
+        .background {
             // Global ⌘B Keyboard Shortcut for Sidebar Toggle
             Button("") {
                 Haptics.playClick()
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+                withAnimation(.easeOut(duration: 0.12)) {
                     isSidebarVisible.toggle()
                 }
             }
             .keyboardShortcut("b", modifiers: [.command])
             .hidden()
         }
-        .overlay {
-            // MARK: - Window-Centered Nothing-Style Rename Modal
-            if isShowingRenameModal, let track = trackToRename {
-                ZStack {
-                    theme.modalBackdrop
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            isShowingRenameModal = false
-                        }
-                    
-                    RenameModalCard(
+        // Native sheet ownership gives the text field a working key window and
+        // blocks the player without disabling the sheet's text-input hierarchy.
+        .sheet(isPresented: $isShowingRenameModal) {
+            if let track = trackToRename {
+                RenameModalCard(
                         trackTitle: track.title,
                         renameText: $renameText,
                         onCancel: {
@@ -439,21 +240,22 @@ struct ContentView: View {
                         },
                         onSave: { newTitle in
                             let oldTitle = track.title
-                            let trackID = track.id
                             track.title = newTitle
-                            try? modelContext.save()
-                            if engineManager.currentTrackID == trackID ||
-                               engineManager.currentTrackName == oldTitle.uppercased() ||
-                               engineManager.currentTrackName == newTitle.uppercased() ||
-                               engineManager.currentTrackName.contains(oldTitle.uppercased()) {
-                                engineManager.currentTrackName = newTitle.uppercased()
+                            do { try modelContext.save() }
+                            catch {
+                                track.title = oldTitle
+                                isShowingRenameModal = false
+                                engineManager.showError("Could not rename the track: \(error.localizedDescription)")
+                                return
                             }
-                            engineManager.updateTrackTitle(id: trackID, newTitle: newTitle)
+                            engineManager.updateTrackTitle(id: track.id, newTitle: newTitle)
                             isShowingRenameModal = false
                         }
                     )
-                }
-            } else if isShowingDeleteModal, let track = trackToDelete {
+            }
+        }
+        .overlay {
+            if isShowingDeleteModal, let track = trackToDelete {
                 // MARK: - Window-Centered Nothing-Style Delete Confirmation Modal
                 ZStack {
                     theme.modalBackdrop
@@ -468,21 +270,24 @@ struct ContentView: View {
                             isShowingDeleteModal = false
                         },
                         onDelete: {
-                            let trackID = track.id
-                            let wasActive = (engineManager.currentTrackID == trackID)
-                            
+                            guard !engineManager.isExporting else {
+                                engineManager.showError("Wait for the export to finish before deleting this track.")
+                                return
+                            }
+                            let wasActive = engineManager.currentTrackID == track.id
                             let stemDir = track.vocalStemURL.deletingLastPathComponent()
-                            try? FileManager.default.removeItem(at: stemDir)
-                            try? FileManager.default.removeItem(at: track.vocalStemURL)
-                            try? FileManager.default.removeItem(at: track.drumStemURL)
-                            try? FileManager.default.removeItem(at: track.bassStemURL)
-                            try? FileManager.default.removeItem(at: track.otherStemURL)
-                            
+                            let sharedCache = tracks.contains { $0.id != track.id && $0.vocalStemURL.deletingLastPathComponent() == stemDir }
                             modelContext.delete(track)
-                            try? modelContext.save()
-                            
-                            if wasActive {
-                                engineManager.unloadTrack()
+                            do { try modelContext.save() }
+                            catch {
+                                modelContext.rollback()
+                                engineManager.showError("Could not delete the track: \(error.localizedDescription)")
+                                return
+                            }
+                            if wasActive { engineManager.unloadTrack() }
+                            if !sharedCache, StemCache.owns(stemDir), FileManager.default.fileExists(atPath: stemDir.path) {
+                                do { try FileManager.default.removeItem(at: stemDir) }
+                                catch { engineManager.showError("Track removed; cached audio could not be cleaned up: \(error.localizedDescription)") }
                             }
                             isShowingDeleteModal = false
                         }
@@ -518,21 +323,21 @@ struct ContentView: View {
                         }
                     )
                 }
-            } else if AppMoveHelper.shared.shouldShowMoveModal && !engineManager.isSplitting {
+            } else if appMoveHelper.shouldShowMoveModal && !engineManager.isSplitting {
                 // MARK: - Window-Centered Move to Applications Prompt
                 ZStack {
                     theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
-                            UserDefaults.standard.set(true, forKey: "hasDeclinedMoveToApplications")
-                            AppMoveHelper.shared.shouldShowMoveModal = false
+                            AppPreferences.defaults.set(true, forKey: "hasDeclinedMoveToApplications")
+                            appMoveHelper.shouldShowMoveModal = false
                         }
                     
                     MoveToApplicationsModalCard(
-                        appMoveHelper: AppMoveHelper.shared,
+                        appMoveHelper: appMoveHelper,
                         onDismiss: {
-                            UserDefaults.standard.set(true, forKey: "hasDeclinedMoveToApplications")
-                            AppMoveHelper.shared.shouldShowMoveModal = false
+                            AppPreferences.defaults.set(true, forKey: "hasDeclinedMoveToApplications")
+                            appMoveHelper.shouldShowMoveModal = false
                         }
                     )
                 }
@@ -557,19 +362,19 @@ struct ContentView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(false)
                 .zIndex(9999)
             }
         }
         .onAppear {
-            AppMoveHelper.shared.checkLocationOnStartup()
+            appMoveHelper.checkLocationOnStartup()
             NowPlayingManager.shared.configure(
                 engineManager: engineManager,
                 playlistProvider: { tracks },
                 trackSelectHandler: { track in
                     Task {
+                        guard !engineManager.isSplitting else { return }
                         await engineManager.loadTrack(track)
-                        if !engineManager.isPlaying {
+                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
                             engineManager.togglePlayback()
                         }
                     }
@@ -580,8 +385,9 @@ struct ContentView: View {
                 playlistProvider: { tracks },
                 trackSelectHandler: { track in
                     Task {
+                        guard !engineManager.isSplitting else { return }
                         await engineManager.loadTrack(track)
-                        if !engineManager.isPlaying {
+                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
                             engineManager.togglePlayback()
                         }
                     }
@@ -594,8 +400,9 @@ struct ContentView: View {
                 playlistProvider: { newTracks },
                 trackSelectHandler: { track in
                     Task {
+                        guard !engineManager.isSplitting else { return }
                         await engineManager.loadTrack(track)
-                        if !engineManager.isPlaying {
+                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
                             engineManager.togglePlayback()
                         }
                     }
@@ -606,8 +413,9 @@ struct ContentView: View {
                 playlistProvider: { newTracks },
                 trackSelectHandler: { track in
                     Task {
+                        guard !engineManager.isSplitting else { return }
                         await engineManager.loadTrack(track)
-                        if !engineManager.isPlaying {
+                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
                             engineManager.togglePlayback()
                         }
                     }
@@ -677,7 +485,7 @@ struct AboutModalCard: View {
                         .fontWeight(.bold)
                         .foregroundColor(theme.textPrimary)
                     
-                    Text("v1.0.0")
+                    Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"))
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .foregroundColor(.red)
                         .padding(.horizontal, 6)
@@ -690,7 +498,7 @@ struct AboutModalCard: View {
                         )
                 }
                 
-                Text("4-STEM DEMUCS NEURAL ENGINE ACCELERATOR")
+                Text("4-STEM ON-DEVICE AUDIO SEPARATION")
                     .font(.custom("DotGothic16-Regular", size: 11))
                     .foregroundColor(theme.textSecondary)
                     .tracking(0.5)
@@ -703,13 +511,13 @@ struct AboutModalCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Circle().fill(Color.red).frame(width: 5, height: 5)
-                    Text("APPLE SILICON NEURAL ENGINE (ANE) ACCELERATION")
+                    Text("CORE ML PROCESSING ON APPLE SILICON")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
                     Circle().fill(Color.red).frame(width: 5, height: 5)
-                    Text("60 FPS METAL & ACCELERATE DSP TELEMETRY")
+                    Text("LIVE SPECTRUM & ACCELERATE AUDIO ANALYSIS")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
@@ -894,6 +702,7 @@ struct RenameModalCard: View {
     
     @State private var isCancelHovered = false
     @State private var isSaveHovered = false
+    @FocusState private var isTitleFocused: Bool
     
     var body: some View {
         VStack(spacing: 22) {
@@ -902,12 +711,13 @@ struct RenameModalCard: View {
                 .foregroundColor(theme.textPrimary)
             
             TextField("Track Title", text: $renameText)
+                .focused($isTitleFocused)
                 .font(.custom("DotGothic16-Regular", size: 15))
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(theme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red, lineWidth: 1).allowsHitTesting(false))
                 .foregroundColor(theme.textPrimary)
             
             HStack(spacing: 16) {
@@ -965,6 +775,7 @@ struct RenameModalCard: View {
         .border(theme.cardBorder, width: 1)
         .overlay(CornerBrackets())
         .shadow(color: Color.black.opacity(theme.isDark ? 0.9 : 0.15), radius: 12, x: 0, y: 6)
+        .onAppear { isTitleFocused = true }
     }
 }
 
@@ -1110,7 +921,7 @@ struct WindowAccessor: NSViewRepresentable {
         window.isOpaque = false
         let isDark = ThemeManager.shared.isDark
         window.backgroundColor = isDark ? .black : NSColor(red: 0.93, green: 0.93, blue: 0.94, alpha: 1.0)
-        window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        window.appearance = ThemeManager.shared.currentTheme == .system ? nil : NSAppearance(named: isDark ? .darkAqua : .aqua)
         window.minSize = NSSize(width: 960, height: 580)
         window.isMovableByWindowBackground = false
         
@@ -1148,7 +959,7 @@ struct ErrorToastCard: View {
                     .font(.custom("DotGothic16-Regular", size: 12))
                     .fontWeight(.bold)
                     .foregroundColor(theme.textPrimary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             
             Button(action: {
@@ -1163,10 +974,12 @@ struct ErrorToastCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss error")
             .onHover { hovering in
                 isCloseHovered = hovering
             }
         }
+        .frame(maxWidth: 700)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(theme.modalBackground)

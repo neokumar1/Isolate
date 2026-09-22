@@ -29,72 +29,48 @@ public final class NowPlayingManager: NSObject {
     private func setupRemoteCommands() {
         let commandCenter = MPRemoteCommandCenter.shared()
         
-        // 1. Play Command
-        commandCenter.playCommand.isEnabled = true
+        // MediaPlayer may invoke handlers off the main thread. Queue UI/audio state
+        // changes on the main actor and acknowledge that the command was accepted.
         commandCenter.playCommand.addTarget { [weak self] _ in
-            guard let self = self, let engine = self.engineManager else { return .commandFailed }
-            if !engine.isPlaying {
+            Task { @MainActor in
+                guard let self, let engine = self.engineManager, !engine.isPlaying else { return }
                 engine.togglePlayback()
             }
-            self.updateNowPlayingPlaybackState()
             return .success
         }
-        
-        // 2. Pause Command
-        commandCenter.pauseCommand.isEnabled = true
         commandCenter.pauseCommand.addTarget { [weak self] _ in
-            guard let self = self, let engine = self.engineManager else { return .commandFailed }
-            if engine.isPlaying {
+            Task { @MainActor in
+                guard let self, let engine = self.engineManager, engine.isPlaying else { return }
                 engine.togglePlayback()
             }
-            self.updateNowPlayingPlaybackState()
             return .success
         }
-        
-        // 3. Toggle Play/Pause Command (Function Row F8 & AirPods click)
-        commandCenter.togglePlayPauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self = self, let engine = self.engineManager else { return .commandFailed }
-            engine.togglePlayback()
-            self.updateNowPlayingPlaybackState()
+            Task { @MainActor in self?.engineManager?.togglePlayback() }
             return .success
         }
-        
-        // 4. Next Track (F9 & AirPods double-click)
-        commandCenter.nextTrackCommand.isEnabled = true
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.playNextTrack()
+            Task { @MainActor in self?.playNextTrack() }
             return .success
         }
-        
-        // 5. Previous Track (F7 & AirPods triple-click)
-        commandCenter.previousTrackCommand.isEnabled = true
         commandCenter.previousTrackCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.playPreviousTrack()
+            Task { @MainActor in self?.playPreviousTrack() }
             return .success
         }
-        
-        // 6. Interactive Scrubbing in Control Center & Lock Screen
-        commandCenter.changePlaybackPositionCommand.isEnabled = true
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let self = self,
-                  let engine = self.engineManager,
-                  let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
-                  let duration = engine.totalTrackDuration, duration > 0 else {
-                return .commandFailed
+            guard let position = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime,
+                  position.isFinite else { return .commandFailed }
+            Task { @MainActor in
+                guard let engine = self?.engineManager, !engine.isSplitting,
+                      let duration = engine.totalTrackDuration, duration > 0 else { return }
+                engine.seek(toPercentage: position / duration)
             }
-            let targetSeconds = positionEvent.positionTime
-            let targetPercentage = max(0.0, min(1.0, targetSeconds / duration))
-            engine.seek(toPercentage: targetPercentage)
-            self.updateNowPlayingProgress(elapsed: targetSeconds, duration: duration)
             return .success
         }
     }
-    
+
     public func playNextTrack() {
-        guard let engine = engineManager,
+        guard let engine = engineManager, !engine.isSplitting,
               let tracks = playlistProvider?(),
               !tracks.isEmpty else { return }
         
@@ -105,7 +81,7 @@ public final class NowPlayingManager: NSObject {
     }
     
     public func playPreviousTrack() {
-        guard let engine = engineManager,
+        guard let engine = engineManager, !engine.isSplitting,
               let tracks = playlistProvider?(),
               !tracks.isEmpty else { return }
         
@@ -139,7 +115,7 @@ public final class NowPlayingManager: NSObject {
         
         info[MPMediaItemPropertyPlaybackDuration] = max(0.0, duration)
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = max(0.0, elapsed)
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? (engineManager?.playbackRate ?? 1) : 0.0
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
         
         // High-Res Artwork with Nothing OS Application Icon Fallback
@@ -158,7 +134,7 @@ public final class NowPlayingManager: NSObject {
     public func updateNowPlayingPlaybackState() {
         guard let engine = engineManager else { return }
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPNowPlayingInfoPropertyPlaybackRate] = engine.isPlaying ? 1.0 : 0.0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = engine.isPlaying ? (engineManager?.playbackRate ?? 1) : 0.0
         if let elapsed = engine.currentPlaybackTimeSeconds {
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         }
@@ -170,7 +146,7 @@ public final class NowPlayingManager: NSObject {
         guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         info[MPMediaItemPropertyPlaybackDuration] = duration
-        info[MPNowPlayingInfoPropertyPlaybackRate] = (engineManager?.isPlaying == true) ? 1.0 : 0.0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = (engineManager?.isPlaying == true) ? (engineManager?.playbackRate ?? 1) : 0.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
     

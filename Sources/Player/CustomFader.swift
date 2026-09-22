@@ -2,8 +2,10 @@ import SwiftUI
 import AppKit
 
 struct CustomFader: View {
+    @Environment(\.isEnabled) private var isEnabled
     @Binding var value: Double
     let label: String
+    var peak: Float = 0
     
     @Bindable private var theme = ThemeManager.shared
     @State private var startValue: Double? = nil
@@ -11,7 +13,6 @@ struct CustomFader: View {
     @State private var hitBottom = false
     @State private var isHovered = false
     @State private var isDragging = false
-    @State private var lastClickTime: Date? = nil
     @State private var isClippingHeld = false
     @State private var clipHoldTask: Task<Void, Never>? = nil
     
@@ -23,20 +24,18 @@ struct CustomFader: View {
     }
     
     private let ticks: [FaderTick] = [
-        FaderTick(normVal: 1.0, label: "0", isMajor: true),
-        FaderTick(normVal: 0.85, label: nil, isMajor: false),
-        FaderTick(normVal: 0.70, label: "-6", isMajor: true),
-        FaderTick(normVal: 0.50, label: "-12", isMajor: true),
-        FaderTick(normVal: 0.35, label: nil, isMajor: false),
-        FaderTick(normVal: 0.22, label: "-24", isMajor: true),
-        FaderTick(normVal: 0.12, label: nil, isMajor: false),
-        FaderTick(normVal: 0.0, label: "-∞", isMajor: true)
+        FaderTick(normVal: 1, label: "+6", isMajor: true),
+        FaderTick(normVal: 60.0 / 66, label: "0", isMajor: true),
+        FaderTick(normVal: 54.0 / 66, label: "-6", isMajor: true),
+        FaderTick(normVal: 48.0 / 66, label: "-12", isMajor: true),
+        FaderTick(normVal: 36.0 / 66, label: "-24", isMajor: true),
+        FaderTick(normVal: 0, label: "-∞", isMajor: true)
     ]
-    
+
     var body: some View {
         GeometryReader { geo in
             let trackHeight = max(1, geo.size.height)
-            let thumbCenterY = trackHeight * (1.0 - CGFloat(value))
+            let thumbCenterY = trackHeight * (1.0 - CGFloat(FaderScale.position(for: value)))
             let centerX = geo.size.width / 2.0
             
             ZStack(alignment: .top) {
@@ -50,46 +49,30 @@ struct CustomFader: View {
                                 isDragging = true
                                 
                                 if startValue == nil {
-                                    let now = Date()
-                                    if let last = lastClickTime, now.timeIntervalSince(last) < 0.30 {
-                                        // Double Click Reset to 100%
-                                        Haptics.playClick()
-                                        withAnimation(.easeOut(duration: 0.12)) {
-                                            value = 1.0
-                                        }
-                                        triggerClipHold()
-                                        lastClickTime = nil
-                                        startValue = nil
-                                        return
-                                    }
-                                    lastClickTime = now
-                                    
                                     // Check if drag started on/near thumb vs track jump
                                     let clickY = drag.startLocation.y
                                     let distFromThumb = abs(clickY - thumbCenterY)
                                     if distFromThumb <= 16 {
-                                        startValue = value
+                                        startValue = FaderScale.position(for: value)
                                     } else {
                                         let jumpedVal = min(max(Double(1.0 - (clickY / trackHeight)), 0.0), 1.0)
-                                        value = jumpedVal
+                                        value = FaderScale.gain(at: jumpedVal)
                                         startValue = jumpedVal
                                         Haptics.playClick()
-                                        if jumpedVal >= 0.995 { triggerClipHold() }
                                     }
                                     
-                                    hitTop = (value >= 0.999)
+                                    hitTop = (FaderScale.position(for: value) >= 0.999)
                                     hitBottom = (value <= 0.001)
                                 }
                                 
                                 let isOptionHeld = NSEvent.modifierFlags.contains(.option)
                                 let multiplier = isOptionHeld ? 0.25 : 1.0
                                 let delta = (-drag.translation.height / trackHeight) * multiplier
-                                let targetVal = min(max((startValue ?? value) + delta, 0.0), 1.0)
+                                let targetVal = min(max((startValue ?? FaderScale.position(for: value)) + delta, 0.0), 1.0)
                                 
                                 if targetVal >= 0.999 && !hitTop {
                                     hitTop = true
                                     Haptics.playAlignment()
-                                    triggerClipHold()
                                 } else if targetVal < 0.999 {
                                     hitTop = false
                                 }
@@ -101,8 +84,8 @@ struct CustomFader: View {
                                     hitBottom = false
                                 }
                                 
-                                if abs(value - targetVal) > 0.0005 {
-                                    value = targetVal
+                                if abs(FaderScale.position(for: value) - targetVal) > 0.0005 {
+                                    value = FaderScale.gain(at: targetVal)
                                 }
                             }
                             .onEnded { _ in
@@ -149,7 +132,7 @@ struct CustomFader: View {
                 
                 // 3. Vertical Track Slot & Active Level Meter with Peak-Hold Clip LED
                 ZStack(alignment: .top) {
-                    let isLit = isClippingHeld || value >= 0.995
+                    let isLit = isClippingHeld
                     Circle()
                         .fill(isLit ? Color.red : Color.red.opacity(0.18))
                         .frame(width: 4.5, height: 4.5)
@@ -161,7 +144,7 @@ struct CustomFader: View {
                         // Track background slot
                         Rectangle()
                             .fill(theme.faderTrack)
-                            .frame(width: 3.5, height: trackHeight - 12)
+                            .frame(width: 3.5, height: max(0, trackHeight - 12))
                             .overlay(
                                 Rectangle()
                                     .stroke(theme.hairline, lineWidth: 0.5)
@@ -170,7 +153,7 @@ struct CustomFader: View {
                         // Track fill (active level)
                         Rectangle()
                             .fill(Color.red)
-                            .frame(width: 3.5, height: max(0, (trackHeight - 12) * CGFloat(value)))
+                            .frame(width: 3.5, height: max(0, (max(0, trackHeight - 12)) * CGFloat(FaderScale.position(for: value))))
                     }
                     .padding(.top, 10)
                 }
@@ -238,15 +221,33 @@ struct CustomFader: View {
             }
         }
         .frame(minHeight: 70, maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) volume")
+        .accessibilityValue(value > 0 ? String(format: "%.1f decibels", 20 * log10(value)) : "Muted")
+        .accessibilityAdjustableAction { direction in
+            adjust(direction == .increment ? 0.02 : -0.02)
+        }
+        .focusable(isEnabled)
+        .onKeyPress(.upArrow) { adjust(0.02); return .handled }
+        .onKeyPress(.downArrow) { adjust(-0.02); return .handled }
+        .contextMenu { Button("Reset to 0 dB") { value = 1 } }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { value = 1; Haptics.playAlignment() })
+        .onChange(of: peak) { _, peak in if peak >= 1 { triggerClipHold() } }
+        .onDisappear { clipHoldTask?.cancel() }
+
     }
     
+    private func adjust(_ delta: Double) {
+        value = FaderScale.gain(at: FaderScale.position(for: value) + delta)
+    }
+
     private func triggerClipHold() {
         isClippingHeld = true
         clipHoldTask?.cancel()
         clipHoldTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
-            if value < 0.995 {
+            if peak < 1 {
                 withAnimation(.easeOut(duration: 0.35)) {
                     isClippingHeld = false
                 }

@@ -1,32 +1,27 @@
-# Isolate - Project Roadmap
+# Project status
 
-## Phase 1: Foundation & UI Scaffolding
-- [ ] Initialize SwiftUI macOS project (`Isolate`).
-- [ ] Setup the fundamental "Nothing" design system (Colors, Fonts, basic custom controls).
-- [ ] Create the core Views: Library View, Player/Mixer View.
-- [ ] Implement basic Drag-and-Drop file ingestion (without splitting yet).
-- [ ] Build a standard audio player using `AVAudioEngine` for non-split tracks.
+## Implemented in this checkout
 
-## Phase 2: CoreML Stem Splitting
-- [ ] Acquire/Convert a Demucs model to CoreML format optimized for Apple Silicon (ANE).
-- [ ] Implement the asynchronous CoreML worker to ingest an audio file and produce 4 audio buffers/files.
-- [ ] Handle caching of split stems (so files don't need to be re-split on subsequent plays).
-- [ ] Add progress indicators/UI for the splitting process.
+- [x] Native SwiftUI library and Nothing-inspired four-channel mixer.
+- [x] Core ML separation with bounded audio buffers, progress, cancellation and validated cache publication.
+- [x] Synchronized stems, original comparison, faders, mute/solo, pan, EQ, speed and pitch.
+- [x] A–B practice looping.
+- [x] SwiftData library, folder grouping, search, rename/delete, metadata/artwork.
+- [x] Individual WAV/FLAC stem archives and current-mix WAV export.
+- [x] Real audio regression coverage and UI smoke tests.
+- [x] Model-aware local packaging and draft-only release automation.
+- [x] Updated build/audio/model documentation and bundled third-party notices.
 
-## Phase 3: The Stem Player UX & Effects
-- [ ] Implement the 4-channel UI (custom sliders/knobs for Vocals, Bass, Drums, Other).
-- [ ] Upgrade the `AVAudioEngine` graph to support 4 simultaneous player nodes perfectly synced.
-- [ ] Hook up the UI volume sliders to the respective mixer nodes.
-- [ ] Add real-time effects: Pitch shifting and Playback speed via `AVAudioUnitTimePitch`.
-- [ ] Implement seamless looping capability.
+Verification evidence and public-release gates are tracked in [QUALITY_REPORT.md](QUALITY_REPORT.md) and [RELEASE.md](RELEASE.md).
 
-## Phase 4: Library Management
-- [ ] Implement persistent storage (SwiftData) for track metadata.
-- [ ] Parse ID3 tags (Title, Artist, Album Artwork) upon drag-and-drop.
-- [ ] Build a robust Library UI to sort, search, and manage imported tracks.
+## Future capabilities
 
-## Phase 5: Exporting & Polish
-- [ ] Implement offline rendering to mix down the current slider states into a single audio file.
-- [ ] Implement batch export of the 4 individual isolated stems.
-- [ ] Final UI/UX polish (animations, haptics, layout adjustments).
-- [ ] Prepare repository for Open Source release (Documentation, Licensing, Build instructions).
+These are not part of the current product contract:
+
+- Sample-accurate, seamless DAW-style looping.
+- Original-only playback before separation.
+- Automatic BPM/key analysis beyond source tags.
+- MP3 encoding, multichannel export, or loop-region export.
+- Reproducible model conversion tooling and measured performance across a hardware/OS matrix.
+
+Completed features must be validated against behavior, not just checked off after a build.

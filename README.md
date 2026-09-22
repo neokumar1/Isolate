@@ -1,163 +1,79 @@
 # Isolate
 
-A fast, offline 4-stem audio separator for macOS.
+A native music stem player for Apple Silicon Macs, with a Nothing-inspired mixer interface.
 
-[![macOS 14.0+](https://img.shields.io/badge/macOS-14.0%2B-black?style=flat&logo=apple)](https://github.com/neokumar1/Isolate)
-[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1--M5-red?style=flat)](https://github.com/neokumar1/Isolate)
-[![License: MIT](https://img.shields.io/badge/License-MIT-gray?style=flat)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/neokumar1/Isolate?style=flat)](https://github.com/neokumar1/Isolate/releases/latest)
-
-Isolate splits any audio file into four stems: vocals, drums, bass, and other. It runs Demucs v4 directly on your Mac using Core ML and the Apple Neural Engine, so your audio never leaves your machine. No accounts, no cloud APIs, and no subscription.
-
-Once a track is split, you can mute or solo parts, shape each stem with a 3-band EQ, pan channels across stereo, loop specific sections, and export stems as WAV, FLAC, or MP3.
-
----
+Isolate separates audio into **vocals, drums, bass, and other** using a local Core ML model. Balance the four channels, practice with an A–B loop, compare against the original, and export your work. Audio processing runs on your Mac; no account or cloud service is required.
 
 ## Features
 
-- **Local neural separation**: Splits tracks into vocals, drums, bass, and other in seconds using Core ML on Apple Silicon.
-- **Mixer channel strips**: Vertical faders calibrated from -∞ to +6 dB, peak-hold clip LEDs, and double-click to reset to unity (0 dB).
-- **3-band EQ per stem**: Low (100 Hz shelf), mid (1 kHz bell), and high (8 kHz shelf) bands with ±12 dB range on every channel.
-- **Stereo pan**: Left/right balance with a center snap.
-- **Real-time spectrum**: 32-band FFT analyzer shows master mix frequency energy during playback.
-- **Stem presets**: Quick buttons for Acapella, Instrumental, Drumless, Karaoke, and Bass & Drums.
-- **A-B looping**: Set in and out points on the waveform to loop a section for practice or transcription.
-- **Menu bar controller**: Mini player in the macOS menu bar for quick playback control while using other apps.
-- **Audio export**: Save separated stems as 24-bit WAV, FLAC, or MP3 files for Logic Pro, Ableton, FL Studio, or DJ software.
+- Four synchronized stem channels with calibrated −60 to +6 dB faders, silence at the bottom, mute, solo, and stereo pan.
+- Three-band EQ on each stem and the master bus: 100 Hz low shelf, 1 kHz bell, and 10 kHz high shelf. EQ presets and bypass controls.
+- Playback speed from 0.5× to 1.5× in preset steps; pitch from −12 to +12 semitones.
+- A–B practice loops, original/mix comparison, live spectrum and level meters.
+- Batch import, drag and drop, searchable SwiftData library grouped by source folder, and metadata/artwork when present.
+- Content-based caching: identical source bytes reuse the same completed separation; unfinished imports never become valid cache entries.
+- Four individual **24-bit WAV or FLAC stems in a ZIP**, or a **24-bit WAV mix** with the current channel levels, pan, EQ, speed, and pitch.
+- Dark, light, and system appearances; menu bar controls, media keys, and trackpad haptics.
 
----
+The original is decoded to stereo 44.1 kHz for comparison. Stem exports exclude fader, pan, tempo, and pitch changes; optional stem EQ baking is available in the EQ panel. Mix exports render the full track, including the original when comparison bypass is active. Loop boundaries do not trim exports.
 
-## Requirements
+## Requirements and installation
 
-Isolate is a self-contained macOS app. You do not need to install Python, Node.js, command line tools, or any extra audio packages.
+- Apple Silicon Mac; deployment target macOS 14 or later.
+- Disk space for the app/model and decoded stems. Cached float audio uses about **106 MB per minute** across four stems and the original.
+- A compatible HTDemucs Core ML model, bundled by the release packaging process. A source checkout does not contain model weights.
 
-- macOS 14.0 (Sonoma) or newer
-- Apple Silicon Mac (M1, M2, M3, M4, M5) or Intel Mac
-- 8 GB Unified Memory or more
-- ~500 MB disk space
-
----
-
-## Installation
-
-### Homebrew (recommended)
-
-```bash
-brew install --cask neokumar1/isolate/isolate
-```
-
-To update later:
-
-```bash
-brew upgrade isolate
-```
-
-### Direct download
-
-1. Download `Isolate.dmg` from [Releases](https://github.com/neokumar1/Isolate/releases/latest).
-2. Open the DMG and drag `Isolate.app` into `/Applications`.
-3. Open Isolate from your Applications folder.
-
-If macOS shows a warning saying the developer cannot be verified:
-- Run `xattr -cr /Applications/Isolate.app` in Terminal, or
-- Go to **System Settings** > **Privacy & Security**, scroll down, and click **Open Anyway**.
-
-### One-line terminal install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/neokumar1/Isolate/main/install.sh | bash
-```
-
----
+The public v1.2.7 DMG inspected on September 21, 2026 lacks the separation model. This checkout prepares v1.2.8 with model-aware packaging; it has not been published. See [INSTALL.md](INSTALL.md) and [MODEL.md](MODEL.md) for working source-build instructions, and [QUALITY_REPORT.md](QUALITY_REPORT.md) for verification. Once a complete package is available on [GitHub Releases](https://github.com/neokumar1/Isolate/releases), open its DMG and drag Isolate into Applications.
 
 ## Quick start
 
-1. **Open a track**: Drag and drop an audio file into the window, or press `⌘O`. Supported formats include MP3, WAV, FLAC, M4A, AAC, and AIFF.
-2. **Wait for separation**: Isolate processes the audio on your Mac. A typical song takes 10 to 25 seconds on Apple Silicon.
-3. **Adjust the mix**: Use the four faders to balance levels. Tweak low, mid, and high frequencies on any stem, or click `S` to solo a single part.
-4. **Loop a section**: Press `[` to mark the loop start and `]` to mark the loop end. Press `L` to toggle looping on or off.
-5. **Export stems**: Press `E` to export the four separated audio files to your disk.
-
----
-
-## Interface overview
-
-### Top header
-
-- **Track info**: Shows album art, song title, artist, and timing.
-- **Spectrum visualizer**: 32-band FFT bars display frequency distribution in real time.
-- **Hardware telemetry**: Shows detected chip architecture, active neural units, and output sample rate.
-- **Preset macros**:
-  - `Acapella`: Solos vocals and mutes the rest.
-  - `Instrumental`: Mutes vocals and keeps all instruments.
-  - `Drumless`: Mutes drums.
-  - `Karaoke`: Lowers vocal volume.
-  - `D&B`: Solos drums and bass together.
-  - `Reset`: Restores all faders to 0 dB and centers pan dials.
-- **Bypass (`B`)**: Toggles between your current stem mix and the original unedited file so you can compare changes.
-
-### Stem channel strips
-
-Each of the four channels (Vocals, Drums, Bass, Other) has:
-
-- **Mini waveform**: Shows audio amplitude for that specific stem.
-- **3-band EQ**: `LOW`, `MID`, and `HIGH` rotary controls. Double-click any knob to reset to 0 dB.
-- **Pan**: Rotary dial to place the stem left or right in the stereo field.
-- **Fader**: Vertical slider with dB graduation marks. Double-click the thumb to return to 0 dB unity.
-- **Clip indicator**: Red LED lights for 1.2 seconds if the stem hits 0 dBFS.
-- **Mute (`M`) and Solo (`S`)**: Mute the channel or hear it alone.
-
-### Bottom transport bar
-
-The bottom transport bar stays visible at every window size:
-
-- **Waveform scrubber**: Click or drag to jump anywhere in the song.
-- **Time readouts**: Shows elapsed time on the left and remaining time on the right.
-- **Controls**: Play/pause (`Space`), loop toggle (`L`), and loop in/out points (`[` and `]`).
-- **Master volume**: Controls overall output level. An internal limiter set to -0.3 dBFS prevents digital distortion.
-
-### Menu bar mini player
-
-When Isolate is running, a small equalizer icon appears in your macOS menu bar. Click it to pause, resume, adjust volume, or mute stems without bringing the main window forward.
-
----
+1. Press **⌘O** or drop local audio files into the window. MP3, WAV, FLAC, M4A/AAC/ALAC, AIFF, and CAF are accepted when supported by the macOS decoder. DRM-protected audio is unsupported.
+2. Wait for separation, or press Escape to cancel. Progress and speed are measured from the current job; the first model load can take longer.
+3. Adjust the four channels. Double-click a fader, pan dial, or EQ knob to reset it.
+4. Set loop markers with **[** and **]**, and toggle looping with **L**.
+5. Use **File → Export Stems…** or **File → Export Mix…**.
 
 ## Keyboard shortcuts
 
-| Key | Action |
-| :--- | :--- |
-| `Space` | Play / pause |
-| `1` / `2` / `3` / `4` | Solo Vocals, Drums, Bass, or Other |
-| `V` / `D` / `B` / `O` | Mute Vocals, Drums, Bass, or Other |
-| `[` / `]` | Set loop start / loop end point |
-| `L` | Toggle A-B looping on or off |
-| `A` / `I` / `R` | Trigger Acapella, Instrumental, or Reset preset |
-| `B` | Toggle bypass (original vs. stem mix) |
-| `E` | Open stem export dialog |
-| `⌘O` | Open an audio file |
-| `?` or `/` | Show keyboard shortcuts card |
-| `Esc` | Close open dialog or card |
+| Shortcut | Action |
+| --- | --- |
+| Space | Play / pause |
+| ⌘O | Import audio / batch import |
+| ⌘⇧E | Export four stems as ZIP |
+| ⌘⇧M | Export the full current mix as WAV |
+| ⌘⌥B | Compare original / stem mix |
+| 1 / 2 / 3 / 4 | Solo vocals / drums / bass / other |
+| V / D / B / O | Mute vocals / drums / bass / other |
+| A / I / R | Acapella / instrumental / reset mix |
+| [ / ] / L | Set loop start / end / toggle loop |
+| ⌘E | Bypass all EQ |
+| ⌘1 … ⌘5 | Select header display mode |
+| ⌘B | Show / hide library |
+| ⌘0 | Show main window |
+| ⌘, | Settings and shortcuts |
+| ? or / | Shortcut reference card |
+| Escape | Dismiss a dialog or cancel separation |
 
----
+Focused faders and dials also support keyboard adjustment and accessibility actions.
 
-## FAQ
+## Development
 
-**Does my audio get uploaded to any servers?**  
-No. Everything runs locally on your computer. Isolate does not connect to the internet to process audio.
+Requires Xcode 26.2 or later (Swift 6.2 compiler or later) and [XcodeGen](https://github.com/yonaskolb/XcodeGen). The project currently uses Swift 5 language mode.
 
-**What file formats can I open?**  
-MP3, WAV (16/24/32-bit), FLAC, M4A, AAC, AIFF, and OGG.
+```sh
+brew install xcodegen
+xcodegen generate
+xcodebuild build -project Isolate.xcodeproj -scheme Isolate \
+  -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData
+open build/DerivedData/Build/Products/Debug/Isolate.app
+```
 
-**How fast does it split a track?**  
-On an M1 or M2 Mac, a 3-minute track typically takes 15 to 25 seconds. On M3, M4, or newer Macs, it takes under 10 seconds.
+Set up the model using [MODEL.md](MODEL.md) before importing audio. Run checks using [RELEASE.md](RELEASE.md). Architecture and signal flow are documented in [ARCHITECTURE.md](ARCHITECTURE.md) and [AUDIO_ENGINE.md](AUDIO_ENGINE.md).
 
-**Can I import exported stems into my DAW?**  
-Yes. When you export, Isolate writes standard 24-bit WAV, FLAC, or MP3 files that you can drop directly into Logic Pro, Ableton, FL Studio, Reaper, or DJ software.
+## Practical limits
 
----
+Separation quality depends on the source and model; some bleed and artifacts are expected. Processing speed and Core ML compute-device selection depend on hardware, OS, and workload. Isolate does not claim a fixed speed, memory ceiling, or exclusive Neural Engine execution. Looping uses scheduled playback and is intended for practice; it is not a sample-accurate DAW loop engine. BPM and key are read from metadata, with unknown values shown explicitly.
 
-## License and credits
+## Credits
 
-- **License**: Released under the [MIT License](LICENSE).
-- **Demucs**: Hybrid Transformer Demucs architecture by Alexandre Défossez ([Meta AI Research](https://github.com/facebookresearch/demucs)).
-- **Font**: [DotGothic16](https://fonts.google.com/specimen/DotGothic16) by Fontworks Inc.
+App code: [MIT](LICENSE). Model architecture: [Demucs by Meta](https://github.com/facebookresearch/demucs). Typography: DotGothic16 by Fontworks. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Isolate is an independent project and is not affiliated with Nothing or Apple.

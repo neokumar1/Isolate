@@ -1,28 +1,46 @@
-# Isolate - Architecture Document
+# Architecture
 
-## Overview
-Isolate is a native macOS application built with SwiftUI, designed for Apple Silicon. It combines robust music library management with on-device AI stem splitting and real-time audio manipulation.
+Isolate is an Apple Silicon macOS app using SwiftUI, SwiftData, AVFoundation, Core ML, Accelerate, and CryptoKit. `project.yml` is the XcodeGen source of truth; generated Xcode project changes must be regenerated from it.
 
-## Core Technologies
-1. **UI Framework**: SwiftUI. Modern declarative UI, allowing for the highly custom "Nothing" aesthetic while maintaining native performance.
-2. **State Management**: Observation framework (`@Observable`). We will use a clean MVVM (Model-View-ViewModel) architecture.
-3. **Audio Processing (Stem Splitting)**: CoreML. We will utilize the Demucs model, converted and optimized for the Apple Neural Engine (ANE) on Apple Silicon. This ensures the highest quality separation of 4 stems (Vocals, Bass, Drums, Other) entirely offline.
-4. **Audio Playback & Effects**: `AVFoundation` and `AVAudioEngine`. Provides low-latency playback, multi-node graph construction for stem mixing, and real-time effects (pitch, speed, looping).
-5. **Persistence (Library)**: Core Data or SwiftData to manage the persistent database of imported tracks, metadata, and locations of cached separated stems.
+## Ownership
 
-## High-Level Modules
+| Component | Responsibility |
+| --- | --- |
+| `IsolateApp` / `ContentView` | Main window, commands, shared engine, modal state, SwiftData context |
+| `ImportCoordinator` | File selection, ordered drops, sequential batch imports, persistence |
+| `DemucsEngine` actor | Exclusive separation, model loading, inference, overlap reconstruction |
+| `StreamingAudio` | Bounded decode/resampling, normalization statistics, reflected windows |
+| `StemCache` | Content keys, cache validation, staged publication and ownership checks |
+| `AudioEngineManager` (`@MainActor`) | Playback graph, controls, metadata tasks, export snapshots |
+| `AudioMeterProcessor` | Tap-local FFT, spectrum, waveform and peak readings |
+| `AudioExporter` | Independent offline graph, encoding, ZIP, destination replacement |
+| `TrackModel` | SwiftData record for source identity, user title, date and stem paths |
+| `ThemeManager` / `AppSettings` | Persisted appearance and application preferences |
+| `NowPlayingManager` / `MenuBarManager` | System media controls, metadata, optional status item |
 
-### 1. App State & Router
-Manages the global state, navigation (Library view vs. Player view), and global settings.
+## Import transaction
 
-### 2. Library Manager
-Handles dragging and dropping of audio files (MP3, AAC, FLAC, WAV, M4A), parsing ID3 tags (metadata/artwork), and persisting track information to the local database.
+1. Reserve import state before suspending; one batch processes files sequentially.
+2. Hash source bytes plus a pipeline version. Reuse only complete, consistent caches.
+3. Decode a float WAV original into a temporary cache directory, computing mono mean and standard deviation in a streaming pass.
+4. Process reflected ten-second windows at five-second hops. Accumulate only the active overlap; write finished hops immediately.
+5. Close and validate the four stems and original, then publish the directory. Cancellation/failure removes the unfinished generation.
+6. Install validated audio handles into the player; insert/save the SwiftData record. Save errors remain visible.
 
-### 3. Stem Separation Engine (CoreML Worker)
-An asynchronous worker that takes an input audio file, prepares the tensor data, runs inference via the Demucs CoreML model, and outputs 4 separate audio files (stems) to a cache directory. 
+Memory for input/output audio is bounded by chunk size rather than track length. Core ML memory use is separate and depends on the model/runtime. Temporary and final disk usage still scales with track length.
 
-### 4. Audio Playback Engine
-A robust wrapper around `AVAudioEngine` that loads the 4 stems synchronously, routes them through individual mixer nodes (for volume/mute/solo), and applies global effect nodes (like `AVAudioUnitTimePitch`) before routing to the main output.
+## Playback and UI safety
 
-### 5. Export Engine
-An offline rendering pipeline that takes the current mixer states and effects, and renders a mixed down `.wav` or `.m4a` file, or exports the 4 individual stem files to a user-specified directory on the Mac.
+The audio graph and observable UI state belong to the main actor. Each meter tap owns its mutable FFT state; value snapshots cross back to the UI. Playback completion and metadata tasks carry generation IDs so cancelled or replaced tracks cannot update current state. Remote media callbacks enqueue main-actor work.
+
+Exports snapshot the selected files and controls and use an independent graph on a worker task. Library deletion is blocked while exporting. Existing output files are replaced only after the rendered file/archive has been created successfully.
+
+The app uses one logical main window. Hosted tests and `-ui-testing` launches use separate preferences, an in-memory library, and a temporary stem cache.
+
+Track renaming uses a native sheet so its text field can accept keyboard focus while the player is blocked. Decorative corner overlays do not receive pointer events; disabled mixer controls stop participating in keyboard focus.
+
+## Files and persistence
+
+Source paths identify library entries; identical bytes at different paths may share a cache. Deletion checks both cache ownership and remaining library references. External source audio is never deleted. The app is not App Sandbox enabled; security-scoped access is still balanced for URLs provided by system pickers.
+
+See [AUDIO_ENGINE.md](AUDIO_ENGINE.md), [MODEL.md](MODEL.md), and [RELEASE.md](RELEASE.md) for detailed contracts and verification.

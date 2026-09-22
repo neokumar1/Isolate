@@ -1,38 +1,45 @@
-name: Release Build & Publish
+name: Prepare Release Draft
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
-    name: Build & Publish Release DMG
     runs-on: macos-15
-
+    timeout-minutes: 45
+    env:
+      ISOLATE_MODEL_ARCHIVE_URL: ${{ vars.ISOLATE_MODEL_ARCHIVE_URL }}
+      ISOLATE_MODEL_ARCHIVE_SHA256: ${{ vars.ISOLATE_MODEL_ARCHIVE_SHA256 }}
+      TEST_RUNNER_ISOLATE_REQUIRE_MODEL: '1'
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v5
-
-      - name: Set up Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+      - uses: actions/checkout@v5
+      - name: Require a release tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: test "$REF_TYPE" = tag
+      - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode Project
-        run: xcodegen generate
-
-      - name: Package Release DMG & ZIP
-        run: |
-          bash scripts/package_release.sh ${{ github.ref_name }}
-
-      - name: Create GitHub Release
+      - run: brew install xcodegen
+      - name: Fetch and validate pinned release model
+        run: bash scripts/fetch_release_model.sh
+      - run: xcodegen generate
+      - name: Require passing tests including actual model inference
+        run: xcodebuild test -project Isolate.xcodeproj -scheme Isolate -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO
+      - name: Package release with bundled model
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/package_release.sh "$RELEASE_TAG"
+      - name: Create draft for manual review
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -40,18 +47,20 @@ jobs:
             dist/Isolate-${{ github.ref_name }}.dmg
             dist/Isolate-${{ github.ref_name }}-macOS.zip
             dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
           generate_release_notes: true
-          draft: false
-          prerelease: false
+          draft: true
           body: |
-            ### ⚡ Isolate: 4-Stem Neural Audio Isolation
-            
-            #### 📦 Installation:
-            1. Download and open **`Isolate.dmg`**.
-            2. Drag **`Isolate.app`** into **`Applications`**.
-            
-            > [!IMPORTANT]
-            > **First-Launch Gatekeeper Note**:
-            > Because Isolate is an independent open-source app, macOS Gatekeeper may show a security notice on first launch.
-            > - **Option 1**: Right-click (or Control-click) `Isolate.app` in Applications → click **Open** → click **Open**.
-            > - **Option 2**: In Terminal, run: `xattr -cr /Applications/Isolate.app`
+            Apple Silicon · macOS 14+
+            Includes the validated Core ML separation model.
+
+            These CI artifacts are ad-hoc signed and are not notarized. Before publishing,
+            complete the platform and distribution checks in RELEASE.md. Download the DMG,
+            drag Isolate into Applications, and follow Apple's Privacy & Security guidance
+            if macOS requests explicit approval.
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-results
+          path: build/DerivedData/Logs/Test/*.xcresult

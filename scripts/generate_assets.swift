@@ -1,6 +1,6 @@
 import Cocoa
 
-func createDMGBackground() {
+func createDMGBackground() throws {
     let width: CGFloat = 660
     let height: CGFloat = 400
     let scale: CGFloat = 2.0
@@ -9,7 +9,7 @@ func createDMGBackground() {
     let image = NSImage(size: size)
     image.lockFocus()
     
-    guard let context = NSGraphicsContext.current?.cgContext else { return }
+    guard let context = NSGraphicsContext.current?.cgContext else { image.unlockFocus(); throw AssetError.renderFailed }
     context.scaleBy(x: scale, y: scale)
     
     // Clean Pure White Background matching reference screenshot
@@ -22,14 +22,14 @@ func createDMGBackground() {
        let rep = NSBitmapImageRep(data: tiffData),
        let pngData = rep.representation(using: .png, properties: [:]) {
         let outDir = URL(fileURLWithPath: "Assets")
-        try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let outURL = outDir.appendingPathComponent("dmg_background.png")
-        try? pngData.write(to: outURL)
-        print("Generated clean DMG background at \(outURL.path)")
-    }
+        try pngData.write(to: outURL, options: .atomic)
+        print("Generated DMG background at \(outURL.path)")
+    } else { throw AssetError.renderFailed }
 }
 
-func createAppIcon() {
+func createAppIcon() throws {
     let iconSpecs: [(name: String, pixelSize: Int)] = [
         ("icon_16x16.png", 16),
         ("icon_16x16@2x.png", 32),
@@ -43,21 +43,20 @@ func createAppIcon() {
         ("icon_512x512@2x.png", 1024)
     ]
     
-    let iconsetDir = URL(fileURLWithPath: "Assets/AppIcon.iconset")
-    try? FileManager.default.removeItem(at: iconsetDir)
-    try? FileManager.default.createDirectory(at: iconsetDir, withIntermediateDirectories: true)
+    let iconsetDir = FileManager.default.temporaryDirectory.appendingPathComponent("Isolate-\(UUID().uuidString).iconset")
+    defer { try? FileManager.default.removeItem(at: iconsetDir) }
+    try FileManager.default.createDirectory(at: iconsetDir, withIntermediateDirectories: true)
     
     for spec in iconSpecs {
         let s = CGFloat(spec.pixelSize)
         let size = NSSize(width: s, height: s)
         let img = NSImage(size: size)
         img.lockFocus()
-        guard let ctx = NSGraphicsContext.current?.cgContext else { continue }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { img.unlockFocus(); throw AssetError.renderFailed }
         
         let bounds = CGRect(x: 0, y: 0, width: s, height: s)
         
-        // 1. Modern macOS 26/27 Full-Bleed Dark Hardware Background
-        // Full rectangular bleed fills 100% of canvas so macOS clips the squircle naturally
+        // 1. Dark hardware background
         ctx.setFillColor(CGColor(red: 0.055, green: 0.055, blue: 0.06, alpha: 1.0))
         ctx.fill(bounds)
         
@@ -144,22 +143,23 @@ func createAppIcon() {
            let rep = NSBitmapImageRep(data: tiffData),
            let png = rep.representation(using: .png, properties: [:]) {
             let outURL = iconsetDir.appendingPathComponent(spec.name)
-            try? png.write(to: outURL)
-        }
+            try png.write(to: outURL)
+        } else { throw AssetError.renderFailed }
     }
     
-    // Generate AppIcon.icns using iconutil
-    let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-    proc.arguments = ["-c", "icns", "Assets/AppIcon.iconset", "-o", "Assets/AppIcon.icns"]
-    try? proc.run()
-    proc.waitUntilExit()
-    
-    // Copy to Sources/Resources/AppIcon.icns
-    try? FileManager.default.removeItem(atPath: "Sources/Resources/AppIcon.icns")
-    try? FileManager.default.copyItem(atPath: "Assets/AppIcon.icns", toPath: "Sources/Resources/AppIcon.icns")
-    print("Generated complete Nothing dot-matrix AppIcon.icns (Full-Bleed macOS 26/27 Edition)")
+    let temporaryIcon = iconsetDir.appendingPathComponent("AppIcon.icns")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+    process.arguments = ["-c", "icns", iconsetDir.path, "-o", temporaryIcon.path]
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { throw AssetError.iconConversionFailed }
+    let data = try Data(contentsOf: temporaryIcon)
+    try data.write(to: URL(fileURLWithPath: "Assets/AppIcon.icns"), options: .atomic)
+    try data.write(to: URL(fileURLWithPath: "Sources/Resources/AppIcon.icns"), options: .atomic)
+    print("Generated Nothing-inspired dot-matrix AppIcon.icns")
 }
 
-createDMGBackground()
-createAppIcon()
+enum AssetError: Error { case renderFailed, iconConversionFailed }
+try createDMGBackground()
+try createAppIcon()

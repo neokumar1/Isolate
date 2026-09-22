@@ -1,0 +1,64 @@
+import AVFoundation
+import CryptoKit
+
+/// Only complete, validated generations are published into the persistent cache.
+enum StemCache {
+    static let root: URL = {
+        if AppPreferences.isTesting {
+            return FileManager.default.temporaryDirectory.appending(path: "IsolateTestCache-\(UUID().uuidString)")
+        }
+        return URL.applicationSupportDirectory.appending(path: "Isolate/Stems", directoryHint: .isDirectory)
+    }()
+
+    static func key(for source: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: source)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        // Increment when the separation algorithm or model contract changes.
+        hash.update(data: Data("Isolate-streaming-v2".utf8))
+        while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
+            try Task.checkCancellation()
+            hash.update(data: data)
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func validFiles(in directory: URL) -> [URL]? {
+        let stems = DemucsEngine.stemNames.map { directory.appending(path: "\($0).wav") }
+        let urls = stems + [directory.appending(path: "original.wav")]
+        var length: AVAudioFramePosition?
+        for url in urls {
+            guard let file = try? AVAudioFile(forReading: url), file.length > 0,
+                  file.processingFormat.channelCount == 2,
+                  file.processingFormat.sampleRate == DemucsEngine.sampleRate else { return nil }
+            if let length, file.length != length { return nil }
+            length = file.length
+        }
+        return stems
+    }
+
+    static func owns(_ directory: URL) -> Bool {
+        let parent = directory.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        return parent == root.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    static func publish(_ staging: URL, to destination: URL) throws {
+        let fm = FileManager.default
+        guard validFiles(in: staging) != nil else {
+            throw DemucsError.conversionFailed("The separated audio is incomplete.")
+        }
+        if fm.fileExists(atPath: destination.path) {
+            let backup = destination.deletingLastPathComponent().appending(path: ".backup-\(UUID().uuidString)")
+            try fm.moveItem(at: destination, to: backup)
+            do {
+                try fm.moveItem(at: staging, to: destination)
+            } catch {
+                try? fm.moveItem(at: backup, to: destination)
+                throw error
+            }
+            try? fm.removeItem(at: backup)
+        } else {
+            try fm.moveItem(at: staging, to: destination)
+        }
+    }
+}

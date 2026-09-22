@@ -1,5 +1,6 @@
 import AppKit
 
+@MainActor
 struct Haptics {
     static func playClick() {
         guard AppSettings.shared.isHapticsEnabled else { return }

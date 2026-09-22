@@ -4,19 +4,13 @@ cask "isolate" do
 
   url "https://github.com/neokumar1/Isolate/releases/download/v#{version}/Isolate.dmg"
   name "Isolate"
-  desc "Raw 4-stem audio isolation powered by Demucs v4 Neural Engine CoreML"
+  desc "Four-stem audio separation and mixing with Core ML"
   homepage "https://github.com/neokumar1/Isolate"
 
   depends_on macos: ">= :sonoma"
   depends_on arch: :arm64
 
   app "Isolate.app"
-
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Isolate.app"],
-                   sudo: false
-  end
 
   zap trash: [
     "~/Library/Application Support/Isolate",

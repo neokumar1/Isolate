@@ -12,59 +12,24 @@ This document serves as the central source of truth for the **Isolate** app. It 
 
 ---
 
-## 1. Project Overview & Target
-* **App Name**: Isolate
-* **Platform**: macOS (Apple Silicon optimized)
-* **Minimum Target**: macOS 14 (Sonoma)
-* **Core Purpose**: Music player and on-device AI stem splitter (Vocals, Bass, Drums, Other).
+## Project contract
 
-## 2. Requirements & User Preferences (Confirmed)
-* **Stem Separation Model**: We need to find, download, or convert a Demucs model to CoreML format.
-* **Stem Splitting UX**: The split process will be foreground/blocking with a loading screen.
-* **Input Audio Formats**: Prioritize MP3, WAV, FLAC, AAC / M4A, ALAC.
-* **Database/Persistence**: SwiftData.
-* **Typography**: We will find and download a suitable open-source dot-matrix font to match the brand.
-* **Exporting**: Default export format will be lossless WAV.
-* **Player UI Layout**: Horizontal layout (like a traditional mixing console).
-* **Stem Controls**: Each of the 4 stems will have a Volume (Slider), Mute, and Solo button.
-* **Library Organization**: Tracks should be grouped by their original folder structure.
+- Native macOS 14+ app for Apple Silicon; Xcode 26.2+ / Swift 6.2+ compiler, Swift 5 language mode.
+- Four stems in model order: vocals, drums, bass, other. SwiftData library and folder grouping.
+- Nothing-inspired dark/light/system themes, DotGothic16, horizontal mixer, custom hardware controls.
+- Foreground separation with cancellation. Default stem export is 24-bit WAV ZIP; FLAC ZIP and full-mix WAV are also implemented.
+- Preserve source audio and user data. Do not commit, push, publish, or replace an installed app unless requested.
 
-## 3. Architecture & Audio Engine
-* **Frameworks**: SwiftUI, SwiftData, CoreML, AVFoundation (`AVAudioEngine`), Accelerate (`vDSP`).
-* **Stem Splitting Flow (CoreML & Apple Silicon)**:
-    1. Read input audio via `AVAssetReader` and convert to `Float32` chunks.
-    2. Process audio using `vDSP` to conform to the 44.1kHz stereo format required by the model.
-    3. Run inference sequentially through `HTDemucs_CoreML_FP16.mlpackage` utilizing the Apple Neural Engine (`ANE`) and GPU (`MLComputeDevice`).
-    4. Reconstruct the output using Accelerate vector math and write 4 separate `.caf` stem files to the local App Sandbox cache.
-    5. Maintain extreme memory efficiency (~1GB limit) by streaming inference chunks rather than holding the entire uncompressed track in RAM.
-* **Playback Graph**:
-    * 5 `AVAudioPlayerNode` instances (4 for stems, 1 for Bypass/Original).
-    * `AVAudioTap` placed on the mixer nodes, backed by `Accelerate` to compute live RMS acoustic energy for the Dynamic UI.
-    * 4 `AVAudioMixerNode` instances (handling volume/mute/solo for each stem).
-    * Routes into a Main Mixer Node.
-    * `AVAudioUnitTimePitch` applied globally to adjust playback speed and pitch in real-time.
+## Engineering references
 
-### Phase 2: Core Enhancements & Optimization
-1. **CPU/Memory Optimization (Priority)**: Clean up CoreML memory usage, profile CPU bottlenecks.
-2. **Persistence / Caching**: SwiftData to remember imported tracks. Cache AI output stems to disk so subsequent loads are instant.
-3. **Export Stems**: 'Save As' dialog to export the 4 individual separated stems bundled into a single ZIP archive, named `[TrackName]_[StemType].caf`.
-4. **Master Bypass**: A toggle to instantly compare the AI-separated stems against the original audio.
-5. **Keyboard Shortcuts**: Pro-level shortcuts (Spacebar for Play/Pause, hotkeys for Mute/Solo).
-6. **Visual EQ Curve**: Add an EQ spectrum visualizer alongside the existing Nothing-style waveform for each stem.
+- [ARCHITECTURE.md](ARCHITECTURE.md): ownership, actors, transactions, and persistence.
+- [AUDIO_ENGINE.md](AUDIO_ENGINE.md): actual signal path, separation, controls, and export semantics.
+- [MODEL.md](MODEL.md): required tensor shapes, source order, reference hashes, and model provisioning.
+- [DESIGN.md](DESIGN.md): Nothing-inspired visual system.
+- [RELEASE.md](RELEASE.md): test commands, packaging, signing, and public-release gates.
+- [QUALITY_REPORT.md](QUALITY_REPORT.md): verification evidence for the current audit.
+- [ROADMAP.md](ROADMAP.md): implemented capabilities and explicitly deferred features.
 
-* **Export Pipeline**:
-    * Switch `AVAudioEngine` to `enableManualRenderingMode` to rapidly process and bounce the current audio graph state (including effect nodes and mixer levels) directly to an audio file on disk.
+`project.yml` is the source of truth for Xcode configuration. Regenerate after adding source/resources or changing target settings. Keep model binaries and generated distribution artifacts out of Git.
 
-## 4. Design System ("Nothing" Brand Aesthetic)
-* **Visuals**: Highly stylized, utilitarian, hardware-inspired. Dark grays, deep blacks, dotted grids, glassmorphism, and subtle noise textures.
-* **Accents**: High saturation red (`#FF0000`) for active states.
-* **Typography**: Dot-matrix font for headers/numbers, and a rigid sans-serif (e.g., Space Grotesk/Inter/SF Pro) for secondary body text.
-* **Components**: Custom sliders and pill-shaped/circular buttons. Rigid grid-based layouts mimicking physical mixers.
-* **Interactions**: Snappy, rigid, fast-easing animations with tactile haptic feedback (where applicable).
-
-## 5. Development Roadmap Summary
-* **Phase 1**: SwiftUI scaffolding, "Nothing" design system setup, basic Drag & Drop, standard non-split `AVAudioEngine` playback.
-* **Phase 2**: CoreML Demucs integration, offline caching, and blocking loading UI.
-* **Phase 3**: 4-Channel Stem Player UX, `AVAudioEngine` graph syncing, global effects, and looping.
-* **Phase 4**: SwiftData library persistence grouped by folders, ID3 tag parsing.
-* **Phase 5**: Manual rendering export (mixed down and batch stems), final polish, and open-source prep.
+Use measured progress and real metadata; do not invent BPM, key, hardware utilization, speed, memory ceilings, or audio-quality guarantees. Audio working buffers are bounded by chunk length; Core ML allocation and disk use must be assessed separately.

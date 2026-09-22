@@ -1,162 +1,67 @@
 #!/bin/bash
-set -e
-
-VERSION="${1:-v1.2.5}"
-echo "=========================================================="
-echo "⚡ PACKAGING ISOLATE RELEASE: ${VERSION}"
-echo "=========================================================="
+set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
+APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)
+VERSION="${1:-v${APP_VERSION}}"
+if [[ "$VERSION" != "v${APP_VERSION}" ]]; then
+    echo "Release tag ${VERSION} does not match app version ${APP_VERSION}. Update project.yml and regenerate first." >&2
+    exit 1
+fi
+MODEL_SOURCE="${ISOLATE_MODEL_PATH:-$HOME/Library/Application Support/Isolate/HTDemucs.mlmodelc}"
+if [[ ! -d "$MODEL_SOURCE" ]]; then
+    echo "Set ISOLATE_MODEL_PATH to the validated HTDemucs.mlmodelc directory. Releases must include the model." >&2
+    exit 1
+fi
+swift scripts/validate_model.swift "$MODEL_SOURCE"
 
-DIST_DIR="$PROJECT_DIR/dist"
-BUILD_DIR="$PROJECT_DIR/build/Release"
-STAGING_DIR="$PROJECT_DIR/build/dmg_staging"
-TMP_DMG="$DIST_DIR/tmp.dmg"
-FINAL_DMG="$DIST_DIR/Isolate.dmg"
-VERSIONED_DMG="$DIST_DIR/Isolate-${VERSION}.dmg"
-FINAL_ZIP="$DIST_DIR/Isolate-${VERSION}-macOS.zip"
-CHECKSUMS="$DIST_DIR/SHA256SUMS.txt"
+DIST_DIR="${ISOLATE_DIST_DIR:-$PROJECT_DIR/dist}"
+mkdir -p "$DIST_DIR"
+DIST_DIR="$(cd "$DIST_DIR" && pwd)"
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/isolate-release.XXXXXX")
+trap 'rm -rf "$WORK_DIR"' EXIT
+BUILD_DIR="$WORK_DIR/products"
+STAGING_DIR="$WORK_DIR/staging"
+mkdir -p "$STAGING_DIR"
 
-# 1. Clean previous build artifacts
-hdiutil detach "/Volumes/Isolate" -force 2>/dev/null || true
-rm -rf "$DIST_DIR" "$PROJECT_DIR/build"
-mkdir -p "$DIST_DIR" "$STAGING_DIR"
-
-# 2. Generate assets (DMG background & Icons)
-echo "🎨 Step 1/7: Generating DMG assets & icons..."
-swift scripts/generate_assets.swift
-
-# 3. Generate Xcode Project & Build Release App
-echo "🔨 Step 2/7: Building Isolate.app (Release configuration)..."
 xcodegen generate
-xcodebuild -scheme Isolate \
-  -configuration Release \
-  -destination 'platform=macOS' \
-  CONFIGURATION_BUILD_DIR="$BUILD_DIR" \
-  build
-
+xcodebuild build -project Isolate.xcodeproj -scheme Isolate -configuration Release \
+    -destination 'platform=macOS,arch=arm64' -derivedDataPath "$WORK_DIR/DerivedData" \
+    CONFIGURATION_BUILD_DIR="$BUILD_DIR" CODE_SIGNING_ALLOWED=NO
 APP_BUNDLE="$BUILD_DIR/Isolate.app"
+ditto "$MODEL_SOURCE" "$APP_BUNDLE/Contents/Resources/HTDemucs.mlmodelc"
 
-# 4. Embed CoreML Model & AppIcon into App Bundle Resources
-echo "🧠 Step 3/7: Embedding Demucs Neural Engine CoreML model & AppIcon..."
-MODEL_SOURCE="$HOME/Library/Application Support/Isolate/HTDemucs.mlmodelc"
-if [ ! -d "$MODEL_SOURCE" ]; then
-    MODEL_SOURCE="/Users/neokumar/Library/Application Support/Isolate/HTDemucs.mlmodelc"
+SIGNING_IDENTITY="${ISOLATE_SIGNING_IDENTITY:--}"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+    codesign --force --deep --sign - "$APP_BUNDLE"
+else
+    codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
 fi
-if [ -d "$MODEL_SOURCE" ]; then
-    cp -R "$MODEL_SOURCE" "$APP_BUNDLE/Contents/Resources/HTDemucs.mlmodelc"
-    echo "   Embedded HTDemucs.mlmodelc into app bundle."
-fi
-if [ -f "$PROJECT_DIR/Assets/AppIcon.icns" ]; then
-    cp "$PROJECT_DIR/Assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
-    echo "   Embedded AppIcon.icns into app bundle resources."
+codesign --verify --deep --strict "$APP_BUNDLE"
+
+if [[ -n "${ISOLATE_NOTARY_PROFILE:-}" ]]; then
+    [[ "$SIGNING_IDENTITY" != "-" ]] || { echo "Notarization requires Developer ID signing." >&2; exit 1; }
+    ditto -c -k --keepParent "$APP_BUNDLE" "$WORK_DIR/notarize.zip"
+    xcrun notarytool submit "$WORK_DIR/notarize.zip" --keychain-profile "$ISOLATE_NOTARY_PROFILE" --wait
+    xcrun stapler staple "$APP_BUNDLE"
 fi
 
-# 5. Ad-Hoc Code Sign the App Bundle
-echo "🔐 Step 4/7: Applying ad-hoc codesign to app bundle..."
-codesign --force --deep --sign - "$APP_BUNDLE"
-
-# 6. Prepare Staging Folder for DMG
-echo "📦 Step 5/7: Preparing DMG staging directory..."
-cp -R "$APP_BUNDLE" "$STAGING_DIR/Isolate.app"
+ditto "$APP_BUNDLE" "$STAGING_DIR/Isolate.app"
 ln -s /Applications "$STAGING_DIR/Applications"
-
 mkdir -p "$STAGING_DIR/.background"
-cp "$PROJECT_DIR/Assets/dmg_background.png" "$STAGING_DIR/.background/dmg_background.png"
-if [ -f "$PROJECT_DIR/Assets/AppIcon.icns" ]; then
-    cp "$PROJECT_DIR/Assets/AppIcon.icns" "$STAGING_DIR/.VolumeIcon.icns"
-fi
-if [ -f "$PROJECT_DIR/Assets/dmg_ds_store" ]; then
-    cp "$PROJECT_DIR/Assets/dmg_ds_store" "$STAGING_DIR/.DS_Store"
-fi
+cp Assets/dmg_background.png "$STAGING_DIR/.background/dmg_background.png"
+cp Assets/AppIcon.icns "$STAGING_DIR/.VolumeIcon.icns"
+if [[ -f Assets/dmg_ds_store ]]; then cp Assets/dmg_ds_store "$STAGING_DIR/.DS_Store"; fi
+hdiutil create -srcfolder "$STAGING_DIR" -volname Isolate -fs HFS+ -format UDZO \
+    "$WORK_DIR/Isolate.dmg" -quiet
+hdiutil verify "$WORK_DIR/Isolate.dmg" -quiet
+ditto -c -k --keepParent "$APP_BUNDLE" "$WORK_DIR/Isolate-${VERSION}-macOS.zip"
 
-SetFile -a C "$STAGING_DIR" 2>/dev/null || true
-SetFile -a V "$STAGING_DIR/.VolumeIcon.icns" 2>/dev/null || true
-SetFile -a V "$STAGING_DIR/.background" 2>/dev/null || true
-
-# 7. Create Read-Write DMG & Layout Finder Window
-echo "💿 Step 6/7: Creating and styling DMG installer window..."
-rm -f "$TMP_DMG" "$FINAL_DMG" "$VERSIONED_DMG"
-hdiutil create -srcfolder "$STAGING_DIR" -volname "Isolate" -fs HFS+ \
-  -fsargs "-c c=64,a=16,e=16" -format UDRW -size 680m "$TMP_DMG" -quiet
-
-# Mount temporary DMG
-MOUNT_INFO=$(hdiutil attach -readwrite -noverify -noautoopen "$TMP_DMG")
-DEV_NODE=$(echo "$MOUNT_INFO" | grep Apple_HFS | awk '{print $1}')
-MOUNT_DIR=$(mount | grep "$DEV_NODE" | sed 's/.*on \(.*\) (.*/\1/')
-if [ -z "$MOUNT_DIR" ]; then
-    MOUNT_DIR="/Volumes/Isolate"
-fi
-echo "   Mounted temporary DMG at $MOUNT_DIR ($DEV_NODE)"
-
-# Ensure volume icon and invisibility attributes
-cp "$PROJECT_DIR/Assets/AppIcon.icns" "$MOUNT_DIR/.VolumeIcon.icns"
-SetFile -c icnC "$MOUNT_DIR/.VolumeIcon.icns" 2>/dev/null || true
-SetFile -a C "$MOUNT_DIR" 2>/dev/null || true
-SetFile -a V "$MOUNT_DIR/.VolumeIcon.icns" 2>/dev/null || true
-SetFile -a V "$MOUNT_DIR/.background" 2>/dev/null || true
-
-# Configure Finder window layout using AppleScript
-osascript <<EOF || true
-tell application "Finder"
-    tell disk "Isolate"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set pathbar visible of container window to true
-        set the bounds of container window to {400, 150, 1060, 550}
-        
-        set theViewOptions to the icon view options of container window
-        set arrangement of theViewOptions to not arranged
-        set icon size of theViewOptions to 140
-        set background picture of theViewOptions to file ".background:dmg_background.png"
-        
-        try
-            set position of item "Isolate.app" of container window to {170, 160}
-        end try
-        try
-            set position of item "Applications" of container window to {490, 160}
-        end try
-        
-        update without registering applications
-        delay 2
-        close
-    end tell
-end tell
-EOF
-
-# Sync & save .DS_Store to Assets for CI reproducibility
-sync
-sleep 1
-if [ -f "$MOUNT_DIR/.DS_Store" ]; then
-    cp "$MOUNT_DIR/.DS_Store" "$PROJECT_DIR/Assets/dmg_ds_store"
-fi
-
-# Detach
-hdiutil detach "$DEV_NODE" -quiet || hdiutil detach "$MOUNT_DIR" -force -quiet
-
-# Convert to compressed read-only UDZO DMG
-hdiutil convert "$TMP_DMG" -format UDZO -imagekey zlib-level=9 -o "$FINAL_DMG" -quiet
-cp "$FINAL_DMG" "$VERSIONED_DMG"
-rm -f "$TMP_DMG"
-rm -rf "$STAGING_DIR"
-
-# 8. Create Standalone ZIP
-echo "🗜 Step 7/7: Creating standalone ZIP archive..."
-cd "$BUILD_DIR"
-zip -r -y -q "$FINAL_ZIP" "Isolate.app"
-cd "$PROJECT_DIR"
-
-# 9. Compute Checksums
-echo "🔒 Computing SHA256 checksums..."
+# Publish only complete artifacts; existing build directories are never erased.
+cp "$WORK_DIR/Isolate.dmg" "$DIST_DIR/Isolate-${VERSION}.dmg"
+cp "$WORK_DIR/Isolate.dmg" "$DIST_DIR/Isolate.dmg"
+cp "$WORK_DIR/Isolate-${VERSION}-macOS.zip" "$DIST_DIR/"
 cd "$DIST_DIR"
-shasum -a 256 "Isolate.dmg" "Isolate-${VERSION}.dmg" "Isolate-${VERSION}-macOS.zip" > "$CHECKSUMS"
-cd "$PROJECT_DIR"
-
-echo "=========================================================="
-echo "✅ RELEASE PACKAGES BUILT SUCCESSFULLY!"
-echo "=========================================================="
-ls -lh "$DIST_DIR"
-cat "$CHECKSUMS"
+shasum -a 256 Isolate.dmg "Isolate-${VERSION}.dmg" "Isolate-${VERSION}-macOS.zip" > SHA256SUMS.txt
+printf 'Release artifacts ready in %s\n' "$DIST_DIR"

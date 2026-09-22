@@ -127,7 +127,7 @@ public struct PlayerView: View {
     private func sidebarToggleButton(isSidebarVisible: Binding<Bool>) -> some View {
         Button(action: {
             Haptics.playClick()
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 isSidebarVisible.wrappedValue.toggle()
             }
         }) {
@@ -154,6 +154,7 @@ public struct PlayerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(isSidebarVisible.wrappedValue ? "Hide library" : "Show library")
         .help(isSidebarVisible.wrappedValue ? "Hide Library Sidebar (⌘B)" : "Show Library Sidebar (⌘B)")
     }
     
@@ -346,20 +347,13 @@ public struct PlayerView: View {
             
             // On-The-Fly Loop Setters ([ and ])
             Button("") {
-                Haptics.playClick()
-                engineManager.loopStartProgress = engineManager.playbackProgress
-                if engineManager.loopEndProgress <= engineManager.loopStartProgress {
-                    engineManager.loopEndProgress = min(1.0, engineManager.loopStartProgress + 0.25)
-                }
-                engineManager.isLooping = true
+                engineManager.setLoopStart(engineManager.playbackProgress)
             }.keyboardShortcut("[", modifiers: []).hidden()
-            
+
             Button("") {
-                Haptics.playClick()
-                engineManager.loopEndProgress = max(engineManager.loopStartProgress + 0.05, engineManager.playbackProgress)
-                engineManager.isLooping = true
+                engineManager.setLoopEnd(engineManager.playbackProgress)
             }.keyboardShortcut("]", modifiers: []).hidden()
-            
+
             // HUD Cheat Sheet Toggle (? / /)
             Button("") {
                 Haptics.playClick()
@@ -389,6 +383,7 @@ public struct PlayerView: View {
 }
 
 struct StemChannelView: View {
+    @Environment(AudioEngineManager.self) private var engineManager
     var channelIndex: Int = 0
     let title: String
     @Binding var volume: Double
@@ -547,7 +542,7 @@ struct StemChannelView: View {
             .padding(.top, isCompactHeight ? 0 : 2)
             
             // Hardware Fader with Decibel Scale & Machined Thumb
-            CustomFader(value: $volume, label: title)
+            CustomFader(value: $volume, label: title, peak: engineManager.stemPeaks[channelIndex])
                 .frame(minHeight: isCompactHeight ? 75 : 120, maxHeight: .infinity)
             
             // Mute & Solo Hardware Switches
@@ -594,6 +589,8 @@ struct StemChannelView: View {
         }
         .buttonStyle(.plain)
         .onHover { isMutedHovered = $0 }
+        .accessibilityLabel("Mute \(title)")
+        .accessibilityValue(isMuted ? "On" : "Off")
         .help("Mute channel (\(channelIndex == 0 ? "V" : channelIndex == 1 ? "D" : channelIndex == 2 ? "B" : "O"))")
     }
     
@@ -625,12 +622,15 @@ struct StemChannelView: View {
         }
         .buttonStyle(.plain)
         .onHover { isSoloedHovered = $0 }
+        .accessibilityLabel("Solo \(title)")
+        .accessibilityValue(isSoloed ? "On" : "Off")
         .help("Solo channel (\(channelIndex + 1))")
     }
 }
 
 // MARK: - Nothing Bipolar Stereo Pan Control
 struct PanKnobView: View {
+    @Environment(\.isEnabled) private var isEnabled
     @Binding var pan: Float // -1.0 to +1.0
     var isCompactHeight: Bool = false
     @State private var theme = ThemeManager.shared
@@ -739,11 +739,20 @@ struct PanKnobView: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, isCompactHeight ? 1 : 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Pan")
+        .accessibilityValue(panLabel)
+        .accessibilityAdjustableAction { pan = max(-1, min(1, pan + ($0 == .increment ? 0.05 : -0.05))) }
+        .focusable(isEnabled)
+        .onKeyPress(.leftArrow) { pan = max(-1, pan - 0.05); return .handled }
+        .onKeyPress(.rightArrow) { pan = min(1, pan + 0.05); return .handled }
+        .contextMenu { Button("Center Pan") { pan = 0 } }
     }
 }
 
 // MARK: - Rotary 3-Band EQ Knob (-12dB to +12dB)
 struct RotaryEQKnobView: View {
+    @Environment(\.isEnabled) private var isEnabled
     let bandName: String
     let freqLabel: String
     @Binding var gain: Float // -12.0 ... +12.0
@@ -900,6 +909,14 @@ struct RotaryEQKnobView: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(bandName) EQ")
+        .accessibilityValue(gainString)
+        .accessibilityAdjustableAction { gain = max(-12, min(12, gain + ($0 == .increment ? 0.5 : -0.5))) }
+        .focusable(isEnabled)
+        .onKeyPress(.upArrow) { gain = min(12, gain + 0.5); return .handled }
+        .onKeyPress(.downArrow) { gain = max(-12, gain - 0.5); return .handled }
+        .contextMenu { Button("Reset EQ Gain") { gain = 0 } }
     }
 }
 
@@ -1006,34 +1023,17 @@ struct StemDynamicWaveformView: View {
     @State private var theme = ThemeManager.shared
     
     // Per-stem 7 calibrated acoustic frequency gains
-    private var bandGains: [Float] {
-        switch title {
-        case "VOCALS":
-            return [18.0, 24.0, 32.0, 42.0, 54.0, 68.0, 90.0]
-        case "DRUMS":
-            return [14.0, 18.0, 22.0, 30.0, 42.0, 58.0, 75.0]
-        case "BASS":
-            return [12.0, 14.0, 16.0, 20.0, 28.0, 38.0, 50.0]
-        case "OTHER":
-            return [18.0, 22.0, 28.0, 36.0, 48.0, 64.0, 82.0]
-        default:
-            return [20.0, 24.0, 30.0, 38.0, 48.0, 62.0, 80.0]
-        }
-    }
-    
     private var barAmplitudes: [CGFloat] {
         guard isPlaying, effectiveVolume > 0.001, !magnitudes.isEmpty else {
             return Array(repeating: 0.0, count: 7)
         }
         
-        let gains = bandGains
         let sensitivity = Float(AppSettings.shared.waveformSensitivity)
         var bars: [CGFloat] = []
         
         for i in 0..<7 {
             let rawMag = i < magnitudes.count ? magnitudes[i] : 0.0
-            let gain = i < gains.count ? gains[i] : 25.0
-            let scaled = rawMag * gain * Float(effectiveVolume) * sensitivity
+            let scaled = rawMag * sensitivity
             
             if scaled < 0.015 {
                 bars.append(0.0)
@@ -1079,7 +1079,7 @@ struct StemDynamicWaveformView: View {
                             .frame(width: 5.0, height: 2.5)
                     }
                 }
-                .animation(.spring(response: 0.08, dampingFraction: 0.7, blendDuration: 0.01), value: amp)
+                .animation(.easeOut(duration: 0.08), value: amp)
             }
         }
         .frame(height: 30)
@@ -1096,7 +1096,7 @@ public struct DotMatrixCell: Sendable {
 
 public final class DotMatrixImageProcessor {
     public static func generateColorDotMatrix(from image: NSImage, gridSize: Int = 50) -> [[DotMatrixCell]]? {
-        guard let tiffData = image.tiffRepresentation,
+        guard (1...256).contains(gridSize), let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
               let cgImage = bitmap.cgImage else { return nil }
         
@@ -1137,9 +1137,7 @@ public final class DotMatrixImageProcessor {
                 let gRaw = Float(rawData[offset + 1]) / 255.0
                 let bRaw = Float(rawData[offset + 2]) / 255.0
                 
-                // 100% Perceptual Brightness Compensation:
-                // Compensates for non-emissive aperture gaps between circular dots
-                // so total luminous flux matches the original continuous-tone image 1:1
+                // Lift artwork brightness slightly to compensate for gaps between dots.
                 let gain: Float = 1.25
                 let rComp = min(1.0, powf(rRaw, 0.94) * gain)
                 let gComp = min(1.0, powf(gRaw, 0.94) * gain)
@@ -1160,6 +1158,7 @@ struct AlbumArtView: View {
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
     @State private var dotMatrix: [[DotMatrixCell]]? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHighRes = false
     
     // Constant hardware OLED display panel substrate (deep black #0A0A0A)
@@ -1186,7 +1185,7 @@ struct AlbumArtView: View {
                         let cellHeight = sz.height / CGFloat(gridSize)
                         
                         let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterWaveformAmplitudes.reduce(0, +) / Float(max(1, engineManager.masterWaveformAmplitudes.count))) : 0.0
-                        let pulse = engineManager.isPlaying ? 1.0 + (audioEnergy * 0.05) : 1.0
+                        let pulse = engineManager.isPlaying && !reduceMotion ? 1.0 + (audioEnergy * 0.05) : 1.0
                         
                         // Uniform, crisp circular LED dot radius across all luminance levels (fill ratio 0.90)
                         let baseDotRadius = (cellWidth * 0.5) * 0.90
@@ -1276,12 +1275,7 @@ struct AlbumArtView: View {
             dotMatrix = nil
             return
         }
-        Task.detached(priority: .userInitiated) {
-            let matrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50)
-            await MainActor.run {
-                self.dotMatrix = matrix
-            }
-        }
+        dotMatrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50)
     }
 }
 
@@ -1316,6 +1310,8 @@ struct CornerBrackets: View {
             }
             .stroke(Color.red, lineWidth: 2)
         }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1392,7 +1388,7 @@ struct DynamicIslandDotWaveformView: View {
                             .frame(width: 4.5, height: 2.5)
                     }
                 }
-                .animation(.spring(response: 0.08, dampingFraction: 0.7, blendDuration: 0.01), value: amp)
+                .animation(.easeOut(duration: 0.08), value: amp)
             }
         }
         .frame(height: 36)
@@ -1402,6 +1398,7 @@ struct DynamicIslandDotWaveformView: View {
 
 // MARK: - Discrete LED Dot-Matrix Progress Bar with A-B Looping
 struct DotMatrixProgressBar: View {
+    @Environment(\.isEnabled) private var isEnabled
     let progress: Double
     let isLooping: Bool
     let loopStart: Double
@@ -1461,17 +1458,29 @@ struct DotMatrixProgressBar: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         onSeekingChanged(true)
-                        let percent = max(0, min(1, value.location.x / geo.size.width))
+                        let percent = max(0, min(1, value.location.x / max(1, geo.size.width)))
                         onSeek(percent)
                     }
                     .onEnded { value in
-                        let percent = max(0, min(1, value.location.x / geo.size.width))
+                        let percent = max(0, min(1, value.location.x / max(1, geo.size.width)))
                         onSeek(percent)
                         onSeekingChanged(false)
                     }
             )
         }
         .frame(height: 36)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback position")
+        .accessibilityValue("\(Int(progress * 100)) percent")
+        .accessibilityAdjustableAction { seekBy($0 == .increment ? 0.01 : -0.01) }
+        .focusable(isEnabled)
+        .onKeyPress(.leftArrow) { seekBy(-0.01); return .handled }
+        .onKeyPress(.rightArrow) { seekBy(0.01); return .handled }
+    }
+    private func seekBy(_ amount: Double) {
+        onSeekingChanged(true)
+        onSeek(max(0, min(1, progress + amount)))
+        onSeekingChanged(false)
     }
 }
 
@@ -1698,6 +1707,8 @@ struct TransportBar: View {
         }
         .buttonStyle(PlainButtonStyle())
         .keyboardShortcut(.space, modifiers: [])
+        .accessibilityLabel(engineManager.isPlaying ? "Pause" : "Play")
+        .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting)
     }
     
     private func bypassButton(isCompact: Bool) -> some View {
@@ -1727,6 +1738,7 @@ struct TransportBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!engineManager.canBypass)
         .onHover { hovering in
             isBypassHovered = hovering
         }
@@ -1776,7 +1788,8 @@ struct TransportBar: View {
             )
             .contentShape(Rectangle())
         }
-        .disabled(engineManager.isExporting || engineManager.exportState == .completed)
+        .disabled(!engineManager.hasLoadedTrack || engineManager.isExporting || engineManager.isSplitting)
+        .contextMenu { Button("Export Mix…") { engineManager.exportMix() } }
         .buttonStyle(.plain)
         .onHover { hovering in
             isExportHovered = hovering
@@ -1785,6 +1798,7 @@ struct TransportBar: View {
 }
 
 struct MarqueeText: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     var fontSize: CGFloat = 24
     var color: Color = .primary
@@ -1840,6 +1854,9 @@ struct MarqueeText: View {
             .onChange(of: text) { _, _ in
                 startAnimation(containerWidth: containerWidth, textWidth: textWidth)
             }
+            .onChange(of: reduceMotion) { _, _ in
+                startAnimation(containerWidth: containerWidth, textWidth: textWidth)
+            }
             .onChange(of: containerWidth) { _, newWidth in
                 startAnimation(containerWidth: newWidth, textWidth: textWidth)
             }
@@ -1868,7 +1885,7 @@ struct MarqueeText: View {
         }
         
         let overflow = textWidth - containerWidth
-        guard overflow > 6, containerWidth > 40 else {
+        guard !reduceMotion, overflow > 6, containerWidth > 40 else {
             return
         }
         
@@ -1986,7 +2003,7 @@ struct HeaderCenterTelemetryModule: View {
                             .fill(engineManager.isPlaying ? Color.red : theme.textMuted.opacity(0.5))
                             .frame(width: 5, height: 5)
                             .shadow(color: engineManager.isPlaying ? Color.red.opacity(0.8) : Color.clear, radius: 3)
-                        Text("ANE")
+                        Text("DSP")
                             .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8 : 9))
                             .foregroundColor(engineManager.isPlaying ? .red : theme.textMuted)
                     }
@@ -2408,9 +2425,9 @@ struct StudioTelemetryHUDView: View {
             )
             
             telemetryCard(
-                title: "NEURAL ENGINE (ANE)",
+                title: "ON-DEVICE PROCESSING",
                 line1: "\(AudioEngineManager.systemChipName)",
-                line2: engineManager.isPlaying ? "REALTIME ACTIVE • 5.1x" : "STANDBY • READY"
+                line2: engineManager.isSplitting ? "SEPARATING AUDIO" : "MODEL IDLE"
             )
             
             telemetryCard(
@@ -2461,6 +2478,7 @@ struct HUDEqualizerCurveView: View {
     
     @State private var selectedStemIndex: Int = 0 // 0: VOCALS, 1: DRUMS, 2: BASS, 3: OTHER, 4: MASTER
     @State private var draggingBand: Int? = nil
+    @State private var dragStartGain: Float? = nil
     
     private let stemNames = ["VOCALS", "DRUMS", "BASS", "OTHER", "MASTER"]
     
@@ -2799,14 +2817,8 @@ struct HUDEqualizerCurveView: View {
                 .onChanged { val in
                     draggingBand = bandIndex
                     let deltaY = -Float(val.translation.height) * 0.25
-                    let baseGain: Float = {
-                        switch bandIndex {
-                        case 0: return currentLow
-                        case 1: return currentMid
-                        case 2: return currentHigh
-                        default: return 0.0
-                        }
-                    }()
+                    if dragStartGain == nil { dragStartGain = gain }
+                    let baseGain = dragStartGain ?? gain
                     var target = max(-12.0, min(12.0, baseGain + deltaY))
                     if abs(target) < 0.25 {
                         target = 0.0
@@ -2816,6 +2828,7 @@ struct HUDEqualizerCurveView: View {
                 }
                 .onEnded { _ in
                     draggingBand = nil
+                    dragStartGain = nil
                 }
         )
         .onTapGesture(count: 2) {

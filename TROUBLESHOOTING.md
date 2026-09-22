@@ -1,46 +1,37 @@
-# 🔧 Isolate Troubleshooting & FAQ
+# Troubleshooting
 
-### 1. macOS Gatekeeper: "Apple could not verify Isolate.app is free of malware"
+## Import reports a missing or invalid model
 
-#### Why does this happen?
-When an app is downloaded from the internet using a web browser (Safari, Chrome, etc.), macOS automatically tags the file with a `com.apple.quarantine` extended attribute. Because Isolate is free, open-source software built without a $99/year Apple Developer ID certificate, macOS Gatekeeper blocks direct execution on first double-click.
+Use a complete packaged release, or follow [MODEL.md](MODEL.md) for a source build. A model with the right filename can still have incompatible tensor shapes or source order. Run `scripts/validate_model.swift` on the intended model. Isolate does not download models automatically.
 
-#### Solutions:
+## Unsupported or damaged audio
 
-##### Option 1: 1-Line Terminal Fix (Recommended)
-Run this command in Terminal:
-```bash
-xattr -cr /Applications/Isolate.app
-```
-*(This permanently strips the quarantine attribute. You will never see the warning again).*
+Try playing the file in a macOS audio application first. Import supports local MP3, WAV, FLAC, M4A/AAC/ALAC, AIFF, and CAF through the system decoder. DRM-protected files and OGG are unsupported. Renaming an extension does not convert a file.
 
-##### Option 2: macOS Sequoia / Sonoma GUI Settings
-1. Click **Done** on the alert dialog.
-2. Open **System Settings** on your Mac.
-3. Click **Privacy & Security** in the sidebar.
-4. Scroll down to the **Security** header.
-5. You will see: *"Isolate.app was blocked to protect your Mac"*.
-6. Click **Open Anyway**.
-7. Enter your Mac password or Touch ID and click **Open**.
+## Missing stems or moved source files
 
-##### Option 3: Reinstall via Terminal (Zero Warnings)
-Run the automated curl installer:
-```bash
-curl -fsSL https://raw.githubusercontent.com/neokumar1/Isolate/main/install.sh | bash
-```
+Isolate attempts to rebuild damaged/missing stems from the original source. Restore that file or reimport it from its new location. Existing complete caches can play without the source, but source metadata may be unavailable. Do not delete the library database as a first troubleshooting step.
 
----
+## No sound
 
-### 2. Audio Processing Speed & Hardware Acceleration
+Check the Mac's output device/volume, Isolate's play state, channel faders, mute/solo buttons, and original comparison. Reset the mix with R. Changing output devices should preserve the current position; pause/resume if the new device is still becoming available. Bluetooth adds latency.
 
-- **Apple Silicon Neural Engine (ANE)**: Isolate is compiled for `arm64` with CoreML `all` compute units. Neural stem splitting runs directly on the Apple Neural Engine and GPU.
-- **Audio Formats Supported**: `.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, `.aiff`.
+## Separation seems slow
 
----
+First use includes model loading or compilation. Speed depends on source duration, hardware, available memory, and Core ML's chosen devices. The displayed ETA is computed from completed chunks. Cancellation waits for the current prediction to return before releasing the job and removing partial files.
 
-### 3. Resetting App State
-If you ever want to reset all cached waveforms or settings:
-```bash
-rm -rf ~/Library/Application\ Support/Isolate
-rm -f ~/Library/Preferences/com.isolate.Isolate.plist
-```
+## Export fails
+
+Check free space and write access to the destination. Export Stems creates a ZIP containing WAV or FLAC files; Export Mix creates a WAV. Existing destinations are replaced only after a complete output has been prepared. MP3 export is not supported.
+
+## App launches without its window
+
+Choose **Window → Show Isolate** (⌘0). The app can continue playing while its window is closed. Open Settings with ⌘, once the main window is visible.
+
+## macOS blocks launch
+
+Verify the download source and review **Privacy & Security → Open Anyway** if you intend to trust that build. A local ad-hoc signature is not Developer ID notarization. Do not turn off Gatekeeper or remove all extended attributes recursively.
+
+## Reporting a problem
+
+Include the app version, macOS version, Mac model, audio format/sample rate/duration, steps, and the visible error. Avoid attaching private or copyrighted source audio; a short synthetic or freely shareable example is preferable.

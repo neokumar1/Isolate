@@ -1,98 +1,43 @@
 #!/bin/bash
-# ==============================================================================
-#  ISOLATE INSTALLER (macOS)
-#  Raw 4-Stem Audio Isolation for Apple Silicon
-#  1-Line Zero-Quarantine Install Script
-# ==============================================================================
+set -euo pipefail
 
-set -e
-
-RED='\033[0;31m'
-WHITE='\033[1;37m'
-GRAY='\033[0;90m'
-NC='\033[0m'
-
-echo ""
-echo -e "${RED}  :::  .::::::.  .:::::::  :::            :::  .::::::::::.  .::::::::.${NC}"
-echo -e "${RED}  :::  :::       :::   ::: :::          ::: :::     :::      :::       ${NC}"
-echo -e "${WHITE}  :::  '::::::.  :::   ::: :::         :::::::::    :::      '::::::.  ${NC}"
-echo -e "${WHITE}  :::       :::  :::   ::: :::        :::     :::   :::           :::  ${NC}"
-echo -e "${WHITE}  :::  '::::::'  ':::::::  ::::::::: :::       :::  :::      '::::::'  ${NC}"
-echo -e "${GRAY}  ───────────────────────────────────────────────────────────────────${NC}"
-echo -e "${WHITE}  ISOLATE • 4-STEM DEMUCS NEURAL ENGINE ACCELERATOR FOR macOS${NC}"
-echo -e "${GRAY}  ───────────────────────────────────────────────────────────────────${NC}"
-echo ""
-
-# 1. Architecture & Platform Verification
-ARCH=$(uname -m)
-OS=$(uname -s)
-
-if [ "$OS" != "Darwin" ]; then
-    echo -e "${RED}❌ Error: Isolate is built exclusively for macOS.${NC}"
+[[ "$(uname -s)" == Darwin ]] || { echo "Isolate requires macOS." >&2; exit 1; }
+[[ "$(uname -m)" == arm64 ]] || { echo "Isolate requires an Apple Silicon Mac." >&2; exit 1; }
+OS_MAJOR=$(sw_vers -productVersion | cut -d. -f1)
+[[ "$OS_MAJOR" -ge 14 ]] || { echo "Isolate requires macOS 14 or newer." >&2; exit 1; }
+if pgrep -x Isolate >/dev/null; then
+    echo "Quit Isolate before installing or updating it." >&2
     exit 1
 fi
-
-if [ "$ARCH" != "arm64" ]; then
-    echo -e "${RED}⚠️ Note: Isolate is optimized for Apple Silicon (M1/M2/M3/M4/M5) Neural Engines.${NC}"
-fi
-
-# 2. Preparation
-INSTALL_DIR="/Applications"
-APP_TARGET="$INSTALL_DIR/Isolate.app"
-TEMP_DIR=$(mktemp -d /tmp/isolate_install.XXXXXX)
-
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/isolate-install.XXXXXX")
+MOUNT_DIR="$WORK_DIR/volume"
+APP_TARGET="/Applications/Isolate.app"
+STAGED_APP="/Applications/.Isolate-install-$$.app"
+BACKUP_APP="/Applications/.Isolate-backup-$$.app"
 cleanup() {
-    if [ -n "$MOUNT_DIR" ] && [ -d "$MOUNT_DIR" ]; then
-        hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
-    fi
-    rm -rf "$TEMP_DIR"
+    hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
+    rm -rf "$WORK_DIR" "$STAGED_APP"
+    if [[ -d "$BACKUP_APP" && ! -e "$APP_TARGET" ]]; then mv "$BACKUP_APP" "$APP_TARGET"; fi
 }
 trap cleanup EXIT
 
-echo -e "${WHITE}⚡ [1/4] Fetching latest release from GitHub...${NC}"
-DMG_URL="https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg"
-DMG_FILE="$TEMP_DIR/Isolate.dmg"
+# Resolve latest once so a concurrent release cannot mix checksums and binaries.
+RELEASE_URL=$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/neokumar1/Isolate/releases/latest)
+VERSION="${RELEASE_URL##*/}"
+[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Could not resolve the release version." >&2; exit 1; }
+BASE_URL="https://github.com/neokumar1/Isolate/releases/download/$VERSION"
+curl -fL --retry 3 "$BASE_URL/Isolate.dmg" -o "$WORK_DIR/Isolate.dmg"
+curl -fsSL --retry 3 "$BASE_URL/SHA256SUMS.txt" -o "$WORK_DIR/SHA256SUMS.txt"
+EXPECTED=$(awk '$2 == "Isolate.dmg" && length($1) == 64 {print $1}' "$WORK_DIR/SHA256SUMS.txt")
+ACTUAL=$(shasum -a 256 "$WORK_DIR/Isolate.dmg" | awk '{print $1}')
+[[ -n "$EXPECTED" && "$EXPECTED" == "$ACTUAL" ]] || { echo "Download checksum mismatch; installation stopped." >&2; exit 1; }
 
-curl -fL "$DMG_URL" -o "$DMG_FILE" --progress-bar
-
-echo -e "${WHITE}📦 [2/4] Mounting DMG disk image...${NC}"
-MOUNT_OUT=$(hdiutil attach -nobrowse -readonly "$DMG_FILE")
-MOUNT_DIR=$(echo "$MOUNT_OUT" | grep -o '/Volumes/.*' | head -n 1)
-
-if [ -z "$MOUNT_DIR" ] || [ ! -d "$MOUNT_DIR/Isolate.app" ]; then
-    echo -e "${RED}❌ Error: Could not mount Isolate.dmg or locate Isolate.app bundle.${NC}"
-    exit 1
-fi
-
-echo -e "${WHITE}📂 [3/4] Installing to /Applications...${NC}"
-if [ -d "$APP_TARGET" ]; then
-    echo -e "${GRAY}   Removing previous version from /Applications...${NC}"
-    rm -rf "$APP_TARGET"
-fi
-
-cp -R "$MOUNT_DIR/Isolate.app" "$INSTALL_DIR/"
-
-hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach "$MOUNT_DIR" -force -quiet
-MOUNT_DIR=""
-
-echo -e "${WHITE}🔓 [4/4] Removing Gatekeeper quarantine attribute...${NC}"
-xattr -cr "$APP_TARGET" 2>/dev/null || true
-
-echo ""
-echo -e "${RED}===================================================================${NC}"
-echo -e "${WHITE}✅ ISOLATE INSTALLED SUCCESSFULLY!${NC}"
-echo -e "${GRAY}   Location: /Applications/Isolate.app${NC}"
-echo -e "${RED}===================================================================${NC}"
-echo ""
-
-# Prompt to launch immediately if interactive
-if [ -t 0 ]; then
-    read -p "🚀 Would you like to launch Isolate now? [Y/n] " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        echo -e "${WHITE}Launching Isolate...${NC}"
-        open "$APP_TARGET"
-    fi
-else
-    echo -e "${WHITE}Run 'open /Applications/Isolate.app' to launch.${NC}"
-fi
+hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_DIR" "$WORK_DIR/Isolate.dmg" -quiet
+codesign --verify --deep --strict "$MOUNT_DIR/Isolate.app"
+[[ -d "$MOUNT_DIR/Isolate.app/Contents/Resources/HTDemucs.mlmodelc" ]] || { echo "Release model is missing." >&2; exit 1; }
+ditto "$MOUNT_DIR/Isolate.app" "$STAGED_APP"
+if [[ -e "$APP_TARGET" ]]; then mv "$APP_TARGET" "$BACKUP_APP"; fi
+mv "$STAGED_APP" "$APP_TARGET"
+if [[ -d "$BACKUP_APP" ]]; then rm -rf "$BACKUP_APP"; fi
+printf 'Installed %s to %s\n' "$VERSION" "$APP_TARGET"
+printf 'Open Isolate from Applications. If macOS blocks it, review Privacy & Security → Open Anyway.\n'

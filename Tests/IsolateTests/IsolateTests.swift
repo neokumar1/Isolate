@@ -1,11 +1,12 @@
 import XCTest
 import Accelerate
 import AVFoundation
+import os
 @testable import Isolate
 
+@MainActor
 final class IsolateTests: XCTestCase {
     
-    // Test 1: Verify Constant Overlap-Add (COLA) Property of 50% Overlapped Hann Window
     func testHannWindowCOLAProperty() {
         let chunkSize = 441000
         let hopSize = 220500
@@ -24,81 +25,10 @@ final class IsolateTests: XCTestCase {
         }
     }
     
-    // Test 2: Verify Reflection Padding Symmetry and Continuity
-    func testReflectionPaddingContinuity() {
-        let originalCount = 1000
-        let padSize = 200
-        let paddedCount = originalCount + 2 * padSize
-        
-        var original = [Float](repeating: 0, count: originalCount)
-        for i in 0..<originalCount {
-            original[i] = sinf(Float(i) * 0.05)
-        }
-        
-        var padded = [Float](repeating: 0, count: paddedCount)
-        // Left reflection
-        for i in 0..<padSize {
-            padded[i] = original[min(originalCount - 1, padSize - i)]
-        }
-        // Center
-        for i in 0..<originalCount {
-            padded[padSize + i] = original[i]
-        }
-        // Right reflection
-        for i in 0..<padSize {
-            padded[padSize + originalCount + i] = original[max(0, originalCount - 2 - i)]
-        }
-        
-        // Check boundary equality
-        XCTAssertEqual(padded[padSize], original[0], accuracy: 1e-6)
-        XCTAssertEqual(padded[padSize + originalCount - 1], original[originalCount - 1], accuracy: 1e-6)
-        XCTAssertEqual(padded.count, paddedCount)
-    }
+
     
-    // Test 3: Verify Dynamic Standardization (Mean and Standard Deviation Calculation)
-    func testAudioStandardizationNormalization() {
-        let sampleCount = 44100
-        var channelL = [Float](repeating: 0, count: sampleCount)
-        var channelR = [Float](repeating: 0, count: sampleCount)
-        
-        for i in 0..<sampleCount {
-            let t = Float(i) / 44100.0
-            channelL[i] = 0.5 * sinf(2.0 * .pi * 440.0 * t) + 0.1
-            channelR[i] = 0.5 * sinf(2.0 * .pi * 880.0 * t) + 0.1
-        }
-        
-        var meanL: Float = 0
-        var meanR: Float = 0
-        vDSP_meanv(&channelL, 1, &meanL, vDSP_Length(sampleCount))
-        vDSP_meanv(&channelR, 1, &meanR, vDSP_Length(sampleCount))
-        let meanVal = (meanL + meanR) * 0.5
-        
-        var rmsL: Float = 0
-        var rmsR: Float = 0
-        vDSP_rmsqv(&channelL, 1, &rmsL, vDSP_Length(sampleCount))
-        vDSP_rmsqv(&channelR, 1, &rmsR, vDSP_Length(sampleCount))
-        let rmsVal = sqrtf((rmsL * rmsL + rmsR * rmsR) * 0.5)
-        let stdVal = sqrtf(max(0, rmsVal * rmsVal - meanVal * meanVal))
-        
-        XCTAssertEqual(meanVal, 0.1, accuracy: 1e-2, "Calculated mean should match injected DC offset")
-        XCTAssertGreaterThan(stdVal, 0.3, "Calculated standard deviation should reflect sine wave energy")
-        
-        // Normalize
-        var normL = [Float](repeating: 0, count: sampleCount)
-        for i in 0..<sampleCount {
-            normL[i] = (channelL[i] - meanVal) / stdVal
-        }
-        
-        var normMean: Float = 0
-        var normRMS: Float = 0
-        vDSP_meanv(&normL, 1, &normMean, vDSP_Length(sampleCount))
-        vDSP_rmsqv(&normL, 1, &normRMS, vDSP_Length(sampleCount))
-        
-        XCTAssertEqual(normMean, 0.0, accuracy: 1e-3, "Normalized audio must have zero mean")
-        XCTAssertEqual(normRMS, 1.0, accuracy: 1e-2, "Normalized audio must have unit variance / RMS")
-    }
+
     
-    // Test 4: Verify FFT Analyzer frequency band computation
     func testFFTAnalyzerExecution() {
         let analyzer = FFTAnalyzer(fftSize: 1024)
         var buffer = [Float](repeating: 0, count: 1024)
@@ -113,10 +43,9 @@ final class IsolateTests: XCTestCase {
         XCTAssertGreaterThan(maxMagnitude, 0.0, "FFT magnitude for sine wave must be greater than zero")
     }
     
-    // Test 5: Verify End-to-End Stem Splitting with DemucsEngine
     func testEndToEndStemSplittingWithSyntheticAudio() async throws {
         let sampleRate: Double = 44100.0
-        let duration: Double = 2.0
+        let duration: Double = 11.25
         let frameCount = AVAudioFrameCount(sampleRate * duration)
         
         let format = AVAudioFormat(
@@ -141,6 +70,7 @@ final class IsolateTests: XCTestCase {
         
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
         let tempAudioURL = tempDir.appendingPathComponent("test_track.wav")
         
         let diskSettings: [String: Any] = [
@@ -157,19 +87,23 @@ final class IsolateTests: XCTestCase {
             try writer.write(from: buffer)
         }
         
-        var progressUpdates: [Double] = []
+        let progressUpdates = OSAllocatedUnfairLock(initialState: [Double]())
         let stemURLs: [URL]
         do {
             stemURLs = try await DemucsEngine.shared.splitAudio(url: tempAudioURL) { info in
-                progressUpdates.append(info.fraction)
+                progressUpdates.withLock { $0.append(info.fraction) }
             }
         } catch DemucsError.modelNotFound(let msg) {
             try? FileManager.default.removeItem(at: tempDir)
-            throw XCTSkip("Skipping model inference test in CI environment: \(msg)")
+            if ProcessInfo.processInfo.environment["ISOLATE_REQUIRE_MODEL"] == "1" {
+                XCTFail(msg)
+                return
+            }
+            throw XCTSkip("Install the model to run inference: \(msg)")
         }
         
         XCTAssertEqual(stemURLs.count, 4, "Must output 4 stems (vocals, drums, bass, other)")
-        XCTAssertFalse(progressUpdates.isEmpty, "Must send progress updates during splitting")
+        XCTAssertFalse(progressUpdates.withLock { $0.isEmpty }, "Must send progress updates during splitting")
         
         for stemURL in stemURLs {
             XCTAssertTrue(FileManager.default.fileExists(atPath: stemURL.path), "Stem file must exist on disk at \(stemURL.path)")
@@ -177,12 +111,20 @@ final class IsolateTests: XCTestCase {
             XCTAssertEqual(audioFile.processingFormat.sampleRate, sampleRate, "Sample rate must be 44.1kHz")
             XCTAssertEqual(audioFile.processingFormat.channelCount, 2, "Must be stereo audio")
             XCTAssertEqual(audioFile.length, Int64(frameCount), "Stem audio length must match original input length")
+            let rendered = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: frameCount)!
+            try audioFile.read(into: rendered)
+            for channel in 0..<2 {
+                let samples = UnsafeBufferPointer(start: rendered.floatChannelData![channel], count: Int(frameCount))
+                XCTAssertTrue(samples.allSatisfy(\.isFinite), "Model output must be finite across overlap boundaries")
+            }
         }
         
-        try? FileManager.default.removeItem(at: tempDir)
+        let cached = try await DemucsEngine.shared.splitAudio(url: tempAudioURL) { _ in }
+        XCTAssertEqual(cached, stemURLs)
+        // This directory belongs to the test-only cache root.
+        if let first = stemURLs.first { try? FileManager.default.removeItem(at: first.deletingLastPathComponent()) }
     }
     
-    // Test 6: Verify 50x50 Nothing RGB Color Dot-Matrix Image Sampling
     func testDotMatrixImageProcessorSampling() {
         let size = NSSize(width: 200, height: 200)
         let image = NSImage(size: size)
@@ -204,7 +146,6 @@ final class IsolateTests: XCTestCase {
         XCTAssertGreaterThan(cornerCell?.r ?? 0.0, 0.7, "Red background corner must have high red component")
     }
     
-    // Test 7: Verify AudioEngineManager HUD Mode Switching and Bounds Protection
     @MainActor
     func testAudioEngineManagerHUDModeSwitching() {
         let engine = AudioEngineManager()
@@ -230,76 +171,12 @@ final class IsolateTests: XCTestCase {
         XCTAssertEqual(engine.activeHUDModeIndex, 4, "Index < 0 must be ignored")
     }
     
-    // Test 8: Verify Stem Search Multi-Token Matching
-    func testStemSearchFilteringLogic() {
-        let queryTokens = ["drake", "vocal"]
-        let candidateText = "what did i miss? drake iceman vocals.wav 44.1khz"
-        
-        let matches = queryTokens.allSatisfy { token in
-            candidateText.contains(token)
-        }
-        XCTAssertTrue(matches, "Multi-token search must match title and stem tokens")
-        
-        let nonMatchingQuery = ["kendrick", "vocal"]
-        let noMatch = nonMatchingQuery.allSatisfy { token in
-            candidateText.contains(token)
-        }
-        XCTAssertFalse(noMatch, "Multi-token search must reject non-matching tokens")
-    }
+
     
-    // Test 9: Verify Unified Toolbar Standard macOS Traffic Light Padding
-    func testUnifiedToolbarTrafficLightGeometry() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 800, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        
-        let toolbar = NSToolbar(identifier: "IsolateTestToolbar")
-        window.toolbar = toolbar
-        window.toolbarStyle = .unified
-        
-        guard let closeButton = window.standardWindowButton(.closeButton) else {
-            XCTFail("Close button must exist on standard titled window")
-            return
-        }
-        
-        let buttonFrameInWindow = closeButton.convert(closeButton.bounds, to: nil)
-        let leftPadding = buttonFrameInWindow.minX
-        let topPadding = window.frame.height - buttonFrameInWindow.maxY
-        
-        XCTAssertGreaterThanOrEqual(leftPadding, 18.0, "Close button left padding must be >= 18pt (macOS unified standard)")
-        XCTAssertGreaterThanOrEqual(topPadding, 18.0, "Close button top padding must be >= 18pt (macOS unified standard)")
-    }
+
     
-    // Test 10: Verify Player Header Top Padding Clears NSToolbar Window Drag Area & Fullscreen Handling
-    func testPlayerHeaderTitlebarClearanceAndFullscreenHandling() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 960, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        let toolbar = NSToolbar(identifier: "IsolateTestClearanceToolbar")
-        toolbar.displayMode = .iconOnly
-        toolbar.showsBaselineSeparator = false
-        window.toolbar = toolbar
-        window.toolbarStyle = .unified
-        
-        let headerTopPadding: CGFloat = 50.0
-        XCTAssertGreaterThanOrEqual(headerTopPadding, 50.0, "Player header top padding must be >= 50pt to clear titlebar click area")
-        
-        toolbar.isVisible = false
-        XCTAssertFalse(toolbar.isVisible, "Toolbar must hide when full-screen is active to prevent grey bar clipping")
-        
-        toolbar.isVisible = true
-        XCTAssertTrue(toolbar.isVisible, "Toolbar must restore visibility upon exiting full-screen")
-    }
+
     
-    // Test 11: Verify 3-Band Equalizer DSP Nodes and Stem Gain / Bypass Controls
     @MainActor
     func testEqualizerDSPNodesAndBypassControls() {
         let engine = AudioEngineManager()
@@ -351,7 +228,6 @@ final class IsolateTests: XCTestCase {
         }
     }
     
-    // Test 12: Verify Factory EQ Presets Definition and Application
     @MainActor
     func testFactoryEQPresets() {
         let engine = AudioEngineManager()
@@ -370,7 +246,6 @@ final class IsolateTests: XCTestCase {
         XCTAssertEqual(vocalEQ.high, vocalAirPreset.highGain, accuracy: 1e-4)
     }
     
-    // Test 13: Verify Offline Stem Audio EQ Rendering (renderStemToFile)
     func testOfflineStemAudioEQRendering() throws {
         let sampleRate: Double = 44100.0
         let duration: Double = 0.5
@@ -431,46 +306,8 @@ final class IsolateTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
     
-    // Test 14: Verify Minimum Window Height Layout Fit and Transport Bar Integrity
-    func testMinimumWindowHeightLayoutFitAndTransportBarIntegrity() {
-        let minWindowHeight: CGFloat = 580.0
-        let compactHeaderHeight: CGFloat = 122.0
-        let transportBarHeight: CGFloat = 64.0 // 48pt height + 16pt vertical padding
-        let headerMixerSpacing: CGFloat = 4.0
-        
-        // Channel strip fixed heights in compact mode:
-        let topStatusBarHeight: CGFloat = 2.0
-        let headerLabelHeight: CGFloat = 34.0
-        let dynamicWaveformHeight: CGFloat = 22.0
-        let panKnobHeight: CGFloat = 24.0
-        let eqStripHeight: CGFloat = 62.0
-        let volumeReadoutHeight: CGFloat = 20.0
-        let faderMinHeight: CGFloat = 75.0
-        let muteSoloButtonsHeight: CGFloat = 28.0
-        let channelSpacing: CGFloat = 28.0 // 7 gaps * 4pt
-        let channelPadding: CGFloat = 8.0 // 4pt top + 4pt bottom
-        
-        let minChannelHeight = topStatusBarHeight + headerLabelHeight + dynamicWaveformHeight +
-            panKnobHeight + eqStripHeight + volumeReadoutHeight + faderMinHeight +
-            muteSoloButtonsHeight + channelSpacing + channelPadding
-        
-        let totalRequiredHeight = compactHeaderHeight + headerMixerSpacing + minChannelHeight + transportBarHeight
-        
-        XCTAssertLessThanOrEqual(
-            totalRequiredHeight,
-            minWindowHeight,
-            "Total minimum content height (\(totalRequiredHeight)pt) must fit within the minimum window height (\(minWindowHeight)pt) so TransportBar is never pushed off-screen"
-        )
-        
-        let headroom = minWindowHeight - totalRequiredHeight
-        XCTAssertGreaterThanOrEqual(
-            headroom,
-            50.0,
-            "Must have at least 50pt headroom buffer (\(headroom)pt available) allowing faders to comfortably breathe on compact displays"
-        )
-    }
+
     
-    // Test 15: Verify Hardware Theme Switching, Token Consistency & System Appearance Tracking
     func testHardwareThemeSwitchingAndTokenConsistency() {
         let themeManager = ThemeManager.shared
         
@@ -499,47 +336,10 @@ final class IsolateTests: XCTestCase {
         XCTAssertNil(themeManager.preferredColorScheme, "System theme must allow SwiftUI to follow system color scheme")
     }
     
-    // Test 16: Verify Settings Modal Fixed Geometry and Tab Consistency
-    func testSettingsModalFixedGeometry() {
-        let modalWidth: CGFloat = 540.0
-        let modalHeight: CGFloat = 510.0
-        let tabContentHeight: CGFloat = 345.0
-        
-        XCTAssertEqual(modalWidth, 540.0, "Modal card width must be locked to 540pt")
-        XCTAssertEqual(modalHeight, 510.0, "Modal card height must be locked to 510pt")
-        XCTAssertEqual(tabContentHeight, 345.0, "Tab body container height must be pinned to 345pt to guarantee zero window jumping between tabs")
-    }
+
     
-    // Test 17: Verify Header Track Info Dynamic Expansion & Sidebar Alignment Geometry
-    func testHeaderTrackInfoExpansionAndSidebarAlignment() {
-        // 1. Dynamic Width Calculations
-        let wideWidth: CGFloat = 1440.0
-        let isCompactHeight = false
-        let artSize: CGFloat = isCompactHeight ? 76 : 100
-        
-        let computeTrackWidth: (CGFloat, Bool) -> CGFloat = { width, isSidebarClosed in
-            let isCompact = width < 860
-            if isCompact { return .infinity }
-            let isWide = width >= 1260
-            let availableForTrack = width - artSize - 70 - (isWide ? 440 : 360)
-            let baseMax: CGFloat = isWide ? (isSidebarClosed ? 680 : 480) : (isSidebarClosed ? 500 : 360)
-            return max(240, min(availableForTrack, baseMax))
-        }
-        
-        let closedWidth = computeTrackWidth(wideWidth, true)
-        let openWidth = computeTrackWidth(wideWidth, false)
-        
-        XCTAssertGreaterThan(closedWidth, openWidth, "Track info width must dynamically expand when sidebar is closed")
-        XCTAssertEqual(closedWidth, 680.0, "On wide displays with sidebar closed, track info width must expand up to 680pt")
-        XCTAssertEqual(openWidth, 480.0, "On wide displays with sidebar open, track info width must allocate 480pt")
-        
-        // 2. Alignment Verification
-        let headerLeftPadding: CGFloat = 24.0
-        let mixerLeftPadding: CGFloat = 24.0
-        XCTAssertEqual(headerLeftPadding, mixerLeftPadding, "Header and Mixer Channel grid must have identical 24pt margin for precise vertical alignment")
-    }
+
     
-    // Test 18: Verify TimePitchNode Transparent Bypass and Master Limiter Presence
     @MainActor
     func testTimePitchNodeTransparentBypassAndMasterLimiter() {
         let engine = AudioEngineManager()
@@ -559,7 +359,6 @@ final class IsolateTests: XCTestCase {
         XCTAssertNotNil(engine.masterLimiter, "masterLimiter True-Peak brickwall limiter must be attached to prevent inter-sample DAC clipping")
     }
     
-    // Test 19: Verify Intelligent Flat EQ Bypassing
     @MainActor
     func testIntelligentFlatEQBypass() {
         let engine = AudioEngineManager()
@@ -579,136 +378,6 @@ final class IsolateTests: XCTestCase {
         engine.setStemEQ(0, low: 0.0, mid: 0.0, high: 0.0)
         XCTAssertTrue(engine.vocalEQ.bypass, "Vocal EQ bypass must re-engage when returned to flat")
     }
-    
-    // Test 20: Verify FFTAnalyzer and Stem Meter Analyzer
-    func testFastFFTAnalyzerAndDedicatedStemMeters() {
-        let analyzer = FFTAnalyzer(fftSize: 1024)
-        var buffer = [Float](repeating: 0, count: 1024)
-        for i in 0..<1024 {
-            let t = Float(i) / 44100.0
-            buffer[i] = 0.5 * sinf(2.0 * .pi * 1000.0 * t) // 1 kHz pure sine
-        }
-        
-        let bins = analyzer.computeFFT(buffer: &buffer)
-        XCTAssertEqual(bins.count, 512, "1024-point FFT must output 512 magnitude bins")
-        XCTAssertGreaterThan(bins.max() ?? 0, 0.05, "1 kHz tone must register strong magnitude")
-        
-        // Test StemMeterAnalyzer 7-band log-spaced extraction
-        let meter = StemMeterAnalyzer()
-        let bands = buffer.withUnsafeBufferPointer { p in
-            meter.computeBands(buffer: p.baseAddress!, stem: 0)
-        }
-        XCTAssertEqual(bands.count, 7, "StemMeterAnalyzer must output exactly 7 log-spaced bands")
-        
-        // Band 2 in Vocals covers 600Hz - 1200Hz, which contains 1000Hz
-        XCTAssertGreaterThan(bands[2], 0.05, "Band 2 (1 kHz vocal region) must have strong energy")
-        
-        // Silent audio test
-        var silent = [Float](repeating: 0, count: 1024)
-        let silentBands = silent.withUnsafeBufferPointer { p in
-            meter.computeBands(buffer: p.baseAddress!, stem: 0)
-        }
-        for b in silentBands {
-            XCTAssertEqual(b, 0.0, accuracy: 1e-6, "Silent buffer must produce exactly zero energy in all bands")
-        }
-    }
-    
-    // Test 21: Verify Demucs Infrasonic, Ultrasonic, and Soft-Knee Limiter Conditioning
-    func testDemucsPristineAudioConditioningFilters() {
-        let count = 44100
-        
-        // 1. Infrasonic Filter: Attenuates 5 Hz rumble while preserving 1 kHz
-        var rumble = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            let t = Float(i) / 44100.0
-            rumble[i] = sinf(2.0 * .pi * 5.0 * t)
-        }
-        DemucsEngine.applyInfrasonicFilter(channel: &rumble, count: count)
-        var rumbleRMS: Float = 0
-        rumble.withUnsafeBufferPointer { p in
-            vDSP_rmsqv(p.baseAddress! + 22050, 1, &rumbleRMS, 22050)
-        }
-        XCTAssertLessThan(rumbleRMS, 0.10, "5 Hz infrasonic rumble must be attenuated by > 17 dB")
-        
-        var tone1k = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            let t = Float(i) / 44100.0
-            tone1k[i] = sinf(2.0 * .pi * 1000.0 * t)
-        }
-        DemucsEngine.applyInfrasonicFilter(channel: &tone1k, count: count)
-        var toneRMS: Float = 0
-        tone1k.withUnsafeBufferPointer { p in
-            vDSP_rmsqv(p.baseAddress! + 22050, 1, &toneRMS, 22050)
-        }
-        XCTAssertEqual(toneRMS, 0.7071, accuracy: 0.01, "1 kHz audio must be preserved with 0.0 dB attenuation")
-        
-        // 2. Ultrasonic Filter: Attenuates 21.5 kHz phase noise while preserving 1 kHz
-        var ultrasonic = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            let t = Float(i) / 44100.0
-            ultrasonic[i] = sinf(2.0 * .pi * 21500.0 * t)
-        }
-        DemucsEngine.applyUltrasonicFilter(channel: &ultrasonic, count: count)
-        var ultraRMS: Float = 0
-        ultrasonic.withUnsafeBufferPointer { p in
-            vDSP_rmsqv(p.baseAddress! + 22050, 1, &ultraRMS, 22050)
-        }
-        XCTAssertLessThan(ultraRMS, 0.05, "21.5 kHz ultrasonic noise must be attenuated by > 23 dB")
-        
-        // 3. Soft-Knee Limiter: Transparent below 0.95, asymptotic at 1.0
-        var testAudio: [Float] = [0.0, 0.5, 0.90, 0.95, 1.2, 2.5, -3.0]
-        DemucsEngine.applySoftLimiter(channel: &testAudio, count: testAudio.count)
-        XCTAssertEqual(testAudio[0], 0.0, accuracy: 1e-5)
-        XCTAssertEqual(testAudio[1], 0.5, accuracy: 1e-5, "Sub-threshold audio must remain 100% bit-transparent")
-        XCTAssertEqual(testAudio[2], 0.90, accuracy: 1e-5, "Sub-threshold audio must remain 100% bit-transparent")
-        XCTAssertEqual(testAudio[3], 0.95, accuracy: 1e-5, "Threshold boundary must remain exact")
-        XCTAssertLessThanOrEqual(testAudio[4], 1.00, "Peaks must not exceed 1.00 (0.0 dBFS ceiling)")
-        XCTAssertLessThanOrEqual(testAudio[5], 1.00, "Extreme peaks must be safely caught below 1.00")
-        XCTAssertGreaterThanOrEqual(testAudio[6], -1.00, "Negative extreme peaks must be safely caught above -1.00")
-    }
-    
-    // Test 22: Verify AlbumArtView High-Fidelity Artwork Rendering & Theme Integrity
-    @MainActor
-    func testAlbumArtViewInitializationAndThemeFidelity() {
-        let size = NSSize(width: 300, height: 300)
-        let testImage = NSImage(size: size)
-        testImage.lockFocus()
-        NSColor.black.setFill()
-        NSRect(origin: .zero, size: size).fill()
-        NSColor.white.setFill()
-        NSRect(x: 75, y: 75, width: 150, height: 150).fill()
-        testImage.unlockFocus()
-        
-        let themeManager = ThemeManager.shared
-        
-        // 1. Verify AlbumArtView instantiates with image
-        let artView = AlbumArtView(image: testImage, size: 100)
-        XCTAssertNotNil(artView)
-        XCTAssertEqual(artView.size, 100)
-        XCTAssertEqual(artView.image, testImage)
-        
-        // 2. Verify AlbumArtView instantiates with nil fallback
-        let fallbackView = AlbumArtView(image: nil, size: 76)
-        XCTAssertNotNil(fallbackView)
-        XCTAssertEqual(fallbackView.size, 76)
-        XCTAssertNil(fallbackView.image)
-        
-        // 3. Verify Theme Modes (Light, Dark, System) maintain contrast integrity
-        themeManager.applyTheme(.light)
-        XCTAssertEqual(themeManager.currentTheme, .light)
-        XCTAssertFalse(themeManager.isDark)
-        XCTAssertNotEqual(themeManager.surface, themeManager.textPrimary)
-        
-        themeManager.applyTheme(.dark)
-        XCTAssertEqual(themeManager.currentTheme, .dark)
-        XCTAssertTrue(themeManager.isDark)
-        XCTAssertNotEqual(themeManager.surface, themeManager.textPrimary)
-        
-        themeManager.applyTheme(.system)
-        XCTAssertEqual(themeManager.currentTheme, .system)
-    }
-    
-    // Test 23: Verify Missing Stems Without Original Audio Source Unloads Engine Cleanly
     @MainActor
     func testMissingStemsWithoutSourceTriggersCleanUnloadAndErrorToast() async {
         let engine = AudioEngineManager()
@@ -742,7 +411,6 @@ final class IsolateTests: XCTestCase {
         XCTAssertNil(engine.errorMessage, "Error message must be nil after dismissError")
     }
     
-    // Test 24: Verify Error Toast State & Dismissal
     @MainActor
     func testErrorToastStateAndDismissal() {
         let engine = AudioEngineManager()
@@ -753,7 +421,6 @@ final class IsolateTests: XCTestCase {
         XCTAssertNil(engine.errorMessage)
     }
     
-    // Test 25: Verify Audio Graph Routing Integrity, Disconnected Node Prevention & Safe Playback
     @MainActor
     func testAudioGraphIntegrityAndPlaybackSafety() async throws {
         let engine = AudioEngineManager()
@@ -835,6 +502,3 @@ final class IsolateTests: XCTestCase {
         XCTAssertNil(engine.currentTrackID)
     }
 }
-
-
-

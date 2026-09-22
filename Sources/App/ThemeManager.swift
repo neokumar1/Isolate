@@ -17,17 +17,23 @@ public enum HardwareTheme: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor
 @Observable
 public final class ThemeManager {
     public static let shared = ThemeManager()
     
-    public var currentTheme: HardwareTheme = .system
+    public var currentTheme: HardwareTheme = .system {
+        didSet {
+            AppPreferences.defaults.set(currentTheme.rawValue, forKey: "hardwareTheme")
+            updateWindowAppearance()
+        }
+    }
     
     /// Tracks system dark/light appearance changes
     public var systemIsDark: Bool = true
     
     private init() {
-        let saved = UserDefaults.standard.string(forKey: "hardwareTheme") ?? "system"
+        let saved = AppPreferences.defaults.string(forKey: "hardwareTheme") ?? "system"
         self.currentTheme = HardwareTheme(rawValue: saved) ?? .system
         self.systemIsDark = checkSystemIsDark()
         setupAppearanceObserver()
@@ -35,11 +41,10 @@ public final class ThemeManager {
     
     public func applyTheme(_ theme: HardwareTheme) {
         currentTheme = theme
-        updateWindowAppearance()
     }
     
     private func checkSystemIsDark() -> Bool {
-        if let best = NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) {
+        if let best = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) {
             return best == .darkAqua
         }
         return true
@@ -51,9 +56,11 @@ public final class ThemeManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
-            self.systemIsDark = self.checkSystemIsDark()
-            self.updateWindowAppearance()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.systemIsDark = self.checkSystemIsDark()
+                self.updateWindowAppearance()
+            }
         }
     }
     
@@ -74,18 +81,15 @@ public final class ThemeManager {
     }
     
     public func updateWindowAppearance() {
-        Task { @MainActor in
-            self.systemIsDark = self.checkSystemIsDark()
-            for window in NSApp?.windows ?? [] {
-                if self.isDark {
-                    window.appearance = NSAppearance(named: .darkAqua)
-                } else {
-                    window.appearance = NSAppearance(named: .aqua)
-                }
-            }
+        systemIsDark = checkSystemIsDark()
+        let appearance: NSAppearance? = switch currentTheme {
+        case .system: nil
+        case .dark: NSAppearance(named: .darkAqua)
+        case .light: NSAppearance(named: .aqua)
         }
+        for window in NSApp?.windows ?? [] { window.appearance = appearance }
     }
-    
+
     // MARK: - Semantic Nothing Hardware Design Tokens
     
     // Backgrounds

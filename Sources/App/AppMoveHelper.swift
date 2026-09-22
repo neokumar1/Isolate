@@ -13,7 +13,7 @@ public final class AppMoveHelper: ObservableObject {
     
     public var isRunningFromApplications: Bool {
         let bundlePath = Bundle.main.bundlePath
-        return bundlePath.hasPrefix("/Applications/") || bundlePath.hasPrefix("/Applications") || bundlePath.hasPrefix(NSHomeDirectory() + "/Applications/")
+        return bundlePath.hasPrefix("/Applications/") || bundlePath.hasPrefix(NSHomeDirectory() + "/Applications/")
     }
     
     public var isRunningFromDiskImage: Bool {
@@ -23,7 +23,7 @@ public final class AppMoveHelper: ObservableObject {
     
     public func checkLocationOnStartup() {
         #if !DEBUG
-        if UserDefaults.standard.bool(forKey: "hasDeclinedMoveToApplications") {
+        if AppPreferences.defaults.bool(forKey: "hasDeclinedMoveToApplications") {
             return
         }
         
@@ -37,57 +37,34 @@ public final class AppMoveHelper: ObservableObject {
     }
     
     public func moveToApplications() {
+        guard !isMoving else { return }
         isMoving = true
         moveErrorMessage = nil
-        
-        Task.detached(priority: .userInitiated) {
-            let fileManager = FileManager.default
-            let sourceURL = Bundle.main.bundleURL
-            let destURL = URL(fileURLWithPath: "/Applications/Isolate.app")
-            
+        let source = Bundle.main.bundleURL
+        let destination = URL(filePath: "/Applications/Isolate.app")
+        Task {
             do {
-                if fileManager.fileExists(atPath: destURL.path) {
-                    try fileManager.removeItem(at: destURL)
-                }
-                
-                try fileManager.copyItem(at: sourceURL, to: destURL)
-                
-                // Strip macOS Gatekeeper quarantine from installed app
-                let xattrProcess = Process()
-                xattrProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
-                xattrProcess.arguments = ["-dr", "com.apple.quarantine", destURL.path]
-                try? xattrProcess.run()
-                xattrProcess.waitUntilExit()
-                
-                await MainActor.run {
-                    let config = NSWorkspace.OpenConfiguration()
-                    config.createsNewApplicationInstance = true
-                    
-                    NSWorkspace.shared.openApplication(at: destURL, configuration: config) { _, error in
-                        if let error = error {
-                            print("Error launching moved app: \(error)")
-                        }
+                try await Task.detached(priority: .userInitiated) {
+                    let fm = FileManager.default
+                    let staging = destination.deletingLastPathComponent()
+                        .appending(path: ".Isolate-install-\(UUID().uuidString).app")
+                    defer { try? fm.removeItem(at: staging) }
+                    // Finish copying before replacing an existing installation.
+                    try fm.copyItem(at: source, to: staging)
+                    if fm.fileExists(atPath: destination.path) {
+                        _ = try fm.replaceItemAt(destination, withItemAt: staging)
+                    } else {
+                        try fm.moveItem(at: staging, to: destination)
                     }
-                    
-                    let bundlePath = Bundle.main.bundlePath
-                    if bundlePath.hasPrefix("/Volumes/") {
-                        let components = bundlePath.split(separator: "/")
-                        if components.count >= 2 {
-                            let volumePath = "/Volumes/\(components[1])"
-                            let process = Process()
-                            process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-                            process.arguments = ["detach", volumePath, "-quiet", "-force"]
-                            try? process.run()
-                        }
-                    }
-                    
-                    NSApp.terminate(nil)
-                }
+                }.value
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.createsNewApplicationInstance = true
+                _ = try await NSWorkspace.shared.openApplication(at: destination, configuration: configuration)
+                // Keep this instance alive if macOS cannot launch the installed copy.
+                NSApp.terminate(nil)
             } catch {
-                await MainActor.run {
-                    self.isMoving = false
-                    self.moveErrorMessage = error.localizedDescription
-                }
+                isMoving = false
+                moveErrorMessage = "Could not install or open Isolate. \(error.localizedDescription) You can also drag Isolate into Applications in Finder."
             }
         }
     }

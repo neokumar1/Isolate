@@ -30,7 +30,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         
         if !isConfigured {
             isConfigured = true
-            setupStatusItem()
+            if !AppPreferences.defaults.bool(forKey: "isMenuBarDisabled") { setupStatusItem() }
         }
     }
     
@@ -67,7 +67,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         animationTimer?.invalidate()
         animationTimer = nil
         
-        if isPlaying {
+        guard statusItem != nil else { return }
+        if isPlaying && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             animationTimer = Timer.scheduledTimer(withTimeInterval: 0.14, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
@@ -80,7 +81,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         } else {
             animationFrame = 0
             if let button = statusItem?.button {
-                button.image = createMenuBarIcon(frame: 0, isPlaying: false)
+                button.image = createMenuBarIcon(frame: 0, isPlaying: isPlaying)
             }
         }
     }
@@ -128,7 +129,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 let content = UNMutableNotificationContent()
                 content.title = "Stems Ready (\(count) Tracks)"
                 content.subtitle = lastTitle
-                content.body = "Neural Engine 4-stem separation complete. Ready to play & mix."
+                content.body = "Four-stem separation complete. Ready to play and mix."
                 content.sound = .default
                 
                 let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
@@ -167,6 +168,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         // 2. Play / Pause & Navigation
         let playTitle = engine.isPlaying ? "Pause" : "Play"
         let playItem = NSMenuItem(title: playTitle, action: #selector(togglePlayPause), keyEquivalent: " ")
+        playItem.isEnabled = engine.hasLoadedTrack && !engine.isSplitting
         playItem.target = self
         menu.addItem(playItem)
         

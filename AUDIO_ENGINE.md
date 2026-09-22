@@ -1,49 +1,41 @@
-# Isolate - Audio Engine & CoreML Pipeline
+# Audio engine
 
-## 1. High-Fidelity Stem Separation Pipeline (`DemucsEngine`)
-Isolate uses the Hybrid Transformer Demucs (HTDemucs) model compiled to Apple Silicon CoreML (`MLProgram`), running natively on the Apple Neural Engine (`ANE`) and GPU with zero Python dependencies.
+## Separation
 
-### Mathematical & DSP Architecture:
-1. **Mastering Resampler (`AVAudioConverter`)**:
-   - Decodes any format (`MP3`, `FLAC`, `ALAC`, `WAV`, `M4A`, `AAC`, `OGG`) at any sample rate (`44.1k`, `48k`, `96k`, `192k`).
-   - Resamples using `AVSampleRateConverterAlgorithm_Mastering` with `AVAudioQuality.max` to 44.1kHz 32-bit Float Stereo with zero aliasing.
-2. **Audio Energy & Dynamic Range Standardization**:
-   - Calculates track-wide mean $\mu$ and standard deviation $\sigma$ using Accelerate `vDSP`.
-   - Normalizes audio prior to inference: $x_{\text{norm}} = (x - \mu) / \sigma$.
-   - Restores exact natural dynamics upon reconstruction: $s_{\text{actual}} = s_{\text{model}} \cdot \sigma + \mu$.
-3. **Mirror / Reflection Padding**:
-   - Center-aligns the start ($t=0$) and end ($t=L$) by reflection-padding by $hopSize = 220500$ samples (5.0 seconds).
-   - Eliminates all onset/fade transients, boundary clicks, and edge attenuation.
-4. **Normalized Overlap-Add (COLA) with Weight Accumulation**:
-   - 10.0s Chunk duration ($N = 441000$) with 50% overlap ($H = 220500$).
-   - Periodic Hann window $w[n] = 0.5 \cdot (1 - \cos(2\pi n / N))$ via `vDSP_hann_window`.
-   - Accumulates stem energy: $A[s, t + n] += s_k[s, n] \cdot w[n]$.
-   - Accumulates window weights: $W[t + n] += w[n]$.
-   - Final normalization: $s[s, t] = A[s, t] / \max(10^{-5}, W[t])$.
-   - Flat frequency response ($W[t] \equiv 1.0$) across the entire song.
-5. **Lossless Stem Export**:
-   - Outputs 4 separate 32-bit Float PCM Stereo WAV files:
-     - `vocals.wav` (Stem Index 0)
-     - `drums.wav` (Stem Index 1)
-     - `bass.wav` (Stem Index 2)
-     - `other.wav` (Stem Index 3)
+`ExtAudioFile` decodes supported input into stereo Float32 at 44.1 kHz in 16,384-frame blocks. Normalization uses a mono reference mean and standard deviation. Reflection repeats correctly at both ends even for sources shorter than one model window.
 
----
+HTDemucs accepts 441,000 frames. Isolate runs sequential predictions with a 220,500-frame hop, applies a Hann window, divides overlap sums by accumulated weights, and writes completed hops to four Float32 WAV files. Returned tensor strides and Float16/Float32 types are respected. Non-finite source/model samples fail the import. The decoded original is preserved for comparison; no automatic filtering or limiting is applied to cached source audio.
 
-## 2. Playback Architecture (`AudioEngineManager`)
-```
-[Vocals Player] ---> [Vocals Mixer] ---\
-[Drums Player]  ---> [Drums Mixer]   ---\
-                                          ---> [Stems Sum Mixer] ---> [Main Engine Mixer]
-[Bass Player]   ---> [Bass Mixer]    ---/
-[Other Player]  ---> [Other Mixer]   ---/
-[Original Master Player] --------------------------------------------/ (Bypass Toggle)
+Model order is vocals, drums, bass, other. See [MODEL.md](MODEL.md) before replacing the model.
+
+## Playback graph
+
+```text
+Vocals → EQ → gain/pan mixer ┐
+Drums  → EQ → gain/pan mixer ├→ stem sum ┐
+Bass   → EQ → gain/pan mixer ┤          ├→ time/pitch → master EQ → peak limiter → output
+Other  → EQ → gain/pan mixer ┘ Original ┘
 ```
 
-### Key Capabilities:
-- **Sample-Accurate Multi-Node Synchronization**: Stems and Original Master are scheduled simultaneously on a shared `mach_absolute_time()` host time boundary.
-- **Master Bypass (Instant A/B Comparison)**: Seamless zero-latency toggling between unseparated master audio and the 4 isolated stems.
-- **Live Visualizers**:
-  - Live Master & Stem RMS Waveform analysis via `vDSP_rmsqv`.
-  - 32-Band FFT Master Spectrum and per-stem 16-Band mini EQ spectrum visualizers running at 30 fps via `vDSP_fft_zrip`.
-- **Persistent Caching**: Cached stems stored in `~/Library/Application Support/Isolate/Stems/` and indexed in `SwiftData`. Previously isolated tracks load instantaneously in 0.0s.
+All five players schedule against the same host time. The original and stem sum enter the shared effects path, keeping comparison playback under the same tempo/pitch controls. Original comparison mutes the stem sum. Each channel's audible gain is determined by mute/solo state; solo selection takes priority when any solo is active.
+
+Seeking clamps to the source range, invalidates old completion callbacks, and reschedules all players. Seeking to exactly the end does not schedule a zero-frame segment. Playback stops at completion unless looping is enabled. Playback progress uses the player clock; the UI timer does not generate audio timing.
+
+A–B looping reschedules at the loop start when the player clock reaches the end marker. It is a practice feature, with scheduling latency at the boundary; no seamless/sample-accurate looping guarantee is made.
+
+## Controls and metering
+
+- Faders: −60…+6 dB logarithmic scale, exact unity tick, zero amplitude at the bottom.
+- EQ: 100 Hz shelf / 1 kHz parametric / 10 kHz shelf, ±12 dB. Flat EQ and unchanged time/pitch bypass their DSP nodes.
+- Pitch: −12…+12 semitones. UI speed presets: 0.5×…1.5×.
+- Master output uses Apple's peak limiter. It is not a loudness normalizer or a true-peak mastering guarantee.
+- Per-tap processors reuse FFT working buffers and throttle UI readings. Spectrum and waveform readings include both stereo channels, including right-only and opposite-phase signals. The display is a live level visualization, not a stored full-track waveform.
+
+## Exports
+
+| Export | Container | Included controls |
+| --- | --- | --- |
+| Individual stems | ZIP containing four 24-bit WAV or FLAC files | Optional per-stem EQ; unity gain, centered pan, original timing |
+| Current mix | Stereo 44.1 kHz 24-bit WAV | Mute/solo, gain, pan, channel/master EQ, tempo, pitch, limiter; original comparison when selected |
+
+Mix export covers the full track. A fresh AVAudioEngine renders in blocks of up to 4,096 frames with bounded retry handling. Expected duration follows playback rate. The regression suite checks encoding headers, length, audible signal, final transients, mute/pan behavior, and failed-export preservation. No MP3 encoder is implemented.
