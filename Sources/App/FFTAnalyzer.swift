@@ -1,6 +1,26 @@
 import Foundation
 import Accelerate
 
+/// Accelerate FFT setups are immutable and may be shared by analyzers with the
+/// same transform size. Keep them alive for the process instead of repeatedly
+/// creating and destroying opaque setup handles as short-lived audio graphs
+/// are rebuilt.
+private final class FFTSetupCache: @unchecked Sendable {
+    static let shared = FFTSetupCache()
+
+    private let lock = NSLock()
+    private var setups: [vDSP_Length: FFTSetup] = [:]
+
+    func setup(for log2n: vDSP_Length) -> FFTSetup {
+        lock.lock()
+        defer { lock.unlock() }
+        if let setup = setups[log2n] { return setup }
+        let setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))!
+        setups[log2n] = setup
+        return setup
+    }
+}
+
 /// Reuses FFT working buffers. Confine each instance to one audio tap or caller.
 public final class FFTAnalyzer {
     public let fftSize: Int
@@ -23,7 +43,7 @@ public final class FFTAnalyzer {
         self.halfSize = half
         self.log2n = vDSP_Length(log2(Float(fftSize)))
         self.windowSize = vDSP_Length(fftSize)
-        self.fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))!
+        self.fftSetup = FFTSetupCache.shared.setup(for: log2n)
         
         self.window = [Float](repeating: 0, count: fftSize)
         self.windowedBuffer = [Float](repeating: 0, count: fftSize)
@@ -33,10 +53,6 @@ public final class FFTAnalyzer {
         self.scale = Float(1.0 / Float(fftSize))
         
         vDSP_hann_window(&window, windowSize, Int32(vDSP_HANN_NORM))
-    }
-    
-    deinit {
-        vDSP_destroy_fftsetup(fftSetup)
     }
     
     /// Transform at most frameCount samples, zero-padding short buffers.

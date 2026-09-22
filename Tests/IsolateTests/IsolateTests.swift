@@ -42,6 +42,16 @@ final class IsolateTests: XCTestCase {
         let maxMagnitude = magnitudes.max() ?? 0
         XCTAssertGreaterThan(maxMagnitude, 0.0, "FFT magnitude for sine wave must be greater than zero")
     }
+
+    func testShortLivedFFTAnalyzersShareSafeSetupOwnership() {
+        autoreleasepool {
+            let analyzers = (0..<5).map { _ in FFTAnalyzer(fftSize: 1024) }
+            var samples = [Float](repeating: 0.5, count: 1024)
+            for analyzer in analyzers {
+                XCTAssertEqual(analyzer.computeFFT(buffer: &samples).count, 512)
+            }
+        }
+    }
     
     func testEndToEndStemSplittingWithSyntheticAudio() async throws {
         let sampleRate: Double = 44100.0
