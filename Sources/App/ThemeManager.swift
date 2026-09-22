@@ -44,10 +44,17 @@ public final class ThemeManager {
     }
     
     private func checkSystemIsDark() -> Bool {
-        if let best = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) {
-            return best == .darkAqua
+        Self.systemAppearanceIsDark(NSApp?.effectiveAppearance)
+    }
+
+    /// `ThemeManager.shared` is initialized before an `NSApplication` exists in
+    /// some test-host and command-line launch paths. Treat an unavailable
+    /// appearance as dark until AppKit has finished creating the application.
+    static func systemAppearanceIsDark(_ appearance: NSAppearance?) -> Bool {
+        guard let best = appearance?.bestMatch(from: [.aqua, .darkAqua]) else {
+            return true
         }
-        return true
+        return best == .darkAqua
     }
     
     private func setupAppearanceObserver() {

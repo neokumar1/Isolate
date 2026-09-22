@@ -335,6 +335,13 @@ final class IsolateTests: XCTestCase {
         XCTAssertEqual(themeManager.isDark, themeManager.systemIsDark)
         XCTAssertNil(themeManager.preferredColorScheme, "System theme must allow SwiftUI to follow system color scheme")
     }
+
+    func testThemeManagerUsesSafeDefaultBeforeAppKitApplicationExists() {
+        XCTAssertTrue(
+            ThemeManager.systemAppearanceIsDark(nil),
+            "Theme initialization must not require NSApp to exist."
+        )
+    }
     
 
     
