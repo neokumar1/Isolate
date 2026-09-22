@@ -566,6 +566,13 @@ public final class AudioEngineManager {
         timer?.invalidate()
         activeSplitTask?.cancel()
         engine.stop()
+        // AVAudioEngine does not remove node taps when it stops. Release the
+        // tap closures (and their FFT state) before the graph nodes are torn
+        // down, which is essential for short-lived managers in test hosts.
+        for node in [engine.mainMixerNode, vocalMixer, drumMixer, bassMixer, otherMixer] {
+            node.removeTap(onBus: 0)
+        }
+        engine.reset()
     }
 
     private func configureEQNode(_ eq: AVAudioUnitEQ) {

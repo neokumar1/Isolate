@@ -342,6 +342,15 @@ final class IsolateTests: XCTestCase {
             "Theme initialization must not require NSApp to exist."
         )
     }
+
+    func testAudioEngineManagerReleasesMeterTapsDuringTeardown() {
+        weak var releasedManager: AudioEngineManager?
+        autoreleasepool {
+            let manager = AudioEngineManager()
+            releasedManager = manager
+        }
+        XCTAssertNil(releasedManager, "Audio engine teardown must release meter tap processors.")
+    }
     
 
     
