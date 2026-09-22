@@ -375,6 +375,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				OTHER_SWIFT_FLAGS = "-enable-experimental-feature IsolatedDeinit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.isolate.Isolate;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
@@ -503,6 +504,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				OTHER_SWIFT_FLAGS = "-enable-experimental-feature IsolatedDeinit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.isolate.Isolate;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
