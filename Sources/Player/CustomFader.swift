@@ -132,7 +132,7 @@ struct CustomFader: View {
                 
                 // 3. Vertical Track Slot & Active Level Meter with Peak-Hold Clip LED
                 ZStack(alignment: .top) {
-                    let isLit = isClippingHeld
+                    let isLit = peak >= 1 || isClippingHeld
                     Circle()
                         .fill(isLit ? Color.red : Color.red.opacity(0.18))
                         .frame(width: 4.5, height: 4.5)
@@ -232,8 +232,18 @@ struct CustomFader: View {
         .onKeyPress(.downArrow) { adjust(-0.02); return .handled }
         .contextMenu { Button("Reset to 0 dB") { value = 1 } }
         .simultaneousGesture(TapGesture(count: 2).onEnded { value = 1; Haptics.playAlignment() })
-        .onChange(of: peak) { _, peak in if peak >= 1 { triggerClipHold() } }
-        .onDisappear { clipHoldTask?.cancel() }
+        .onChange(of: peak) { oldPeak, newPeak in
+            if newPeak >= 1 {
+                clipHoldTask?.cancel()
+                isClippingHeld = true
+            } else if oldPeak >= 1 {
+                triggerClipHold()
+            }
+        }
+        .onDisappear {
+            clipHoldTask?.cancel()
+            isClippingHeld = false
+        }
 
     }
     
@@ -247,10 +257,10 @@ struct CustomFader: View {
         clipHoldTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
-            if peak < 1 {
-                withAnimation(.easeOut(duration: 0.35)) {
-                    isClippingHeld = false
-                }
+            // This task starts when the peak falls below clipping. A new clip
+            // cancels it; avoid reading the stale peak captured with this view.
+            withAnimation(.easeOut(duration: 0.35)) {
+                isClippingHeld = false
             }
         }
     }

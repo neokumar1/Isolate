@@ -1,6 +1,7 @@
 import XCTest
 import AVFoundation
 import SwiftData
+import MediaPlayer
 @testable import Isolate
 
 @MainActor
@@ -386,7 +387,51 @@ final class ProductionRegressionTests: XCTestCase {
         await engine.loadTrack(saved)
         XCTAssertTrue(engine.hasLoadedTrack)
         XCTAssertEqual(engine.currentTrackName, "RENAMED TRACK")
+        XCTAssertEqual(engine.trackTitle, "Renamed track")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(engine.trackTitle, "Renamed track", "Metadata fallback must preserve the library title")
         XCTAssertNil(engine.errorMessage)
         engine.unloadTrack()
+    }
+
+    func testRenameUpdatesNowPlayingAndSurvivesPendingMetadata() async throws {
+        let source = try track()
+        let engine = AudioEngineManager()
+        await engine.loadTrack(source)
+        engine.updateTrackTitle(id: source.id, newTitle: "My rehearsal")
+        XCTAssertEqual(engine.trackTitle, "My rehearsal")
+        XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "My rehearsal")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(engine.trackTitle, "My rehearsal")
+        XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "My rehearsal")
+        engine.updateTrackTitle(id: "another track", newTitle: "Unrelated")
+        XCTAssertEqual(engine.trackTitle, "My rehearsal")
+        engine.unloadTrack()
+        await engine.loadTrack(source)
+        XCTAssertEqual(engine.trackTitle, source.title, "A previous title override must not leak into the next load")
+        engine.unloadTrack()
+    }
+
+    func testDetailedPlaybackTimeUsesConsistentRemainingDuration() {
+        let times = AudioEngineManager.playbackTimecodes(elapsed: 3.7, duration: 10.2)
+        XCTAssertEqual(times.detailed, "00:03.700 / -00:06.500")
+        XCTAssertEqual(times.compact, "00:03 / -00:07")
+        XCTAssertEqual(AudioEngineManager.playbackTimecodes(elapsed: 59.9996, duration: 60).detailed,
+                       "01:00.000 / -00:00.000")
+        XCTAssertEqual(AudioEngineManager.playbackTimecodes(elapsed: 11, duration: 10.2).detailed,
+                       "00:10.200 / -00:00.000")
+    }
+
+    func testPitchTransposesCompactAndSpacedMusicalKeys() {
+        let engine = AudioEngineManager()
+        engine.pitchShiftSemitones = 2
+        for (source, expected) in [("Am", "Bm"), ("F#m", "G#m"), ("Bb minor", "C minor"),
+                                   ("E♭ major", "F major"), ("KEY UNKNOWN", "KEY UNKNOWN")] {
+            engine.trackMusicalKey = source
+            XCTAssertEqual(engine.effectiveMusicalKey, expected)
+        }
+        engine.pitchShiftSemitones = -2
+        engine.trackMusicalKey = "C minor"
+        XCTAssertEqual(engine.effectiveMusicalKey, "A# minor")
     }
 }

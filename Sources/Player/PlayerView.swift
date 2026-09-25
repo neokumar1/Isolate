@@ -449,13 +449,7 @@ struct StemChannelView: View {
     }
     
     private var isDimmed: Bool {
-        if isAnySoloed {
-            return !isSoloed
-        } else if isAnyMuted {
-            return isMuted || volume <= 0.001
-        } else {
-            return false
-        }
+        effectiveVolume <= 0.001
     }
     
     var body: some View {
@@ -500,7 +494,7 @@ struct StemChannelView: View {
             .frame(height: isCompactHeight ? 22 : 30)
             
             // Bipolar Stereo Panning Control
-            PanKnobView(pan: $pan, isCompactHeight: isCompactHeight)
+            PanKnobView(pan: $pan, channelName: title, isCompactHeight: isCompactHeight)
             
             // 3-Band Rotary EQ Section (Modular strip with hairlines)
             StemEQChannelStripView(
@@ -508,6 +502,7 @@ struct StemChannelView: View {
                 mid: $midGain,
                 high: $highGain,
                 isBypassed: $isEQBypassed,
+                channelName: title,
                 isCompactHeight: isCompactHeight,
                 onReset: onResetEQ
             )
@@ -557,7 +552,15 @@ struct StemChannelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surfaceSecondary.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .opacity(isDimmed ? 0.35 : 1.0)
+        // Keep controls readable while a channel is silent so it remains easy to
+        // unmute it or move the solo to another stem.
+        .overlay(alignment: .top) {
+            if isDimmed {
+                Rectangle().fill(theme.textMuted).frame(height: 2)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
         .animation(.easeInOut(duration: 0.15), value: isDimmed)
     }
     
@@ -632,6 +635,7 @@ struct StemChannelView: View {
 struct PanKnobView: View {
     @Environment(\.isEnabled) private var isEnabled
     @Binding var pan: Float // -1.0 to +1.0
+    var channelName: String = ""
     var isCompactHeight: Bool = false
     @State private var theme = ThemeManager.shared
     @State private var isHovered = false
@@ -740,7 +744,7 @@ struct PanKnobView: View {
         .padding(.horizontal, 4)
         .padding(.vertical, isCompactHeight ? 1 : 2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Pan")
+        .accessibilityLabel(channelName.isEmpty ? "Pan" : "\(channelName) pan")
         .accessibilityValue(panLabel)
         .accessibilityAdjustableAction { pan = max(-1, min(1, pan + ($0 == .increment ? 0.05 : -0.05))) }
         .focusable(isEnabled)
@@ -757,6 +761,7 @@ struct RotaryEQKnobView: View {
     let freqLabel: String
     @Binding var gain: Float // -12.0 ... +12.0
     var isBypassed: Bool = false
+    var channelName: String = ""
     var isCompactHeight: Bool = false
     
     @State private var theme = ThemeManager.shared
@@ -910,7 +915,7 @@ struct RotaryEQKnobView: View {
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(bandName) EQ")
+        .accessibilityLabel("\(channelName) \(bandName) EQ".trimmingCharacters(in: .whitespaces))
         .accessibilityValue(gainString)
         .accessibilityAdjustableAction { gain = max(-12, min(12, gain + ($0 == .increment ? 0.5 : -0.5))) }
         .focusable(isEnabled)
@@ -926,6 +931,7 @@ struct StemEQChannelStripView: View {
     @Binding var mid: Float
     @Binding var high: Float
     @Binding var isBypassed: Bool
+    var channelName: String = ""
     var isCompactHeight: Bool = false
     var onReset: (() -> Void)? = nil
     @State private var theme = ThemeManager.shared
@@ -969,7 +975,9 @@ struct StemEQChannelStripView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help(isBypassed ? "Unbypass EQ (⌘E)" : "Bypass EQ (⌘E)")
+                .accessibilityLabel("\(channelName) EQ bypass")
+                .accessibilityValue(isBypassed ? "On" : "Off")
+                .help(isBypassed ? "Enable this channel's EQ" : "Bypass this channel's EQ")
                 
                 Spacer()
                 
@@ -992,6 +1000,7 @@ struct StemEQChannelStripView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 2))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Reset \(channelName) EQ")
                     .help("Reset EQ to Flat 0.0 dB")
                 }
             }
@@ -999,9 +1008,9 @@ struct StemEQChannelStripView: View {
             
             // 3 Rotary Knobs Row: LOW (100Hz), MID (1kHz), HIGH (10kHz)
             HStack(spacing: 2) {
-                RotaryEQKnobView(bandName: "LOW", freqLabel: "100Hz", gain: $low, isBypassed: isBypassed, isCompactHeight: isCompactHeight)
-                RotaryEQKnobView(bandName: "MID", freqLabel: "1.0kHz", gain: $mid, isBypassed: isBypassed, isCompactHeight: isCompactHeight)
-                RotaryEQKnobView(bandName: "HIGH", freqLabel: "10kHz", gain: $high, isBypassed: isBypassed, isCompactHeight: isCompactHeight)
+                RotaryEQKnobView(bandName: "LOW", freqLabel: "100Hz", gain: $low, isBypassed: isBypassed, channelName: channelName, isCompactHeight: isCompactHeight)
+                RotaryEQKnobView(bandName: "MID", freqLabel: "1.0kHz", gain: $mid, isBypassed: isBypassed, channelName: channelName, isCompactHeight: isCompactHeight)
+                RotaryEQKnobView(bandName: "HIGH", freqLabel: "10kHz", gain: $high, isBypassed: isBypassed, channelName: channelName, isCompactHeight: isCompactHeight)
             }
             
             // Hairline Boundary Bottom
@@ -1580,6 +1589,8 @@ struct TransportBar: View {
         }
         .buttonStyle(.plain)
         .onHover { isLoopHovered = $0 }
+        .accessibilityLabel("Loop")
+        .accessibilityValue(engineManager.isLooping ? "On" : "Off")
     }
     
     private func pitchControl(isCompact: Bool) -> some View {
@@ -1594,6 +1605,8 @@ struct TransportBar: View {
                     .frame(width: 14, height: 28)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Decrease pitch")
+            .disabled(engineManager.pitchShiftSemitones <= -12)
             
             let st = Int(engineManager.pitchShiftSemitones)
             let absSt = abs(st)
@@ -1626,6 +1639,8 @@ struct TransportBar: View {
                     .frame(width: 14, height: 28)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Increase pitch")
+            .disabled(engineManager.pitchShiftSemitones >= 12)
         }
         .padding(.horizontal, 3)
         .frame(height: 32)
@@ -1635,6 +1650,9 @@ struct TransportBar: View {
                 .stroke(engineManager.pitchShiftSemitones != 0 ? Color.red.opacity(0.6) : theme.hairline, lineWidth: 1)
         )
         .onHover { isPitchHovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pitch")
+        .accessibilityValue("\(Int(engineManager.pitchShiftSemitones)) semitones")
     }
     
     private func speedControl(isCompact: Bool) -> some View {
@@ -1654,6 +1672,8 @@ struct TransportBar: View {
                     .frame(width: 12, height: 28)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Decrease playback speed")
+            .disabled(engineManager.playbackRate <= 0.5)
             
             Text(String(format: "%.2fx", engineManager.playbackRate))
                 .font(.custom("DotGothic16-Regular", size: isCompact ? 10 : 11))
@@ -1681,6 +1701,8 @@ struct TransportBar: View {
                     .frame(width: 12, height: 28)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Increase playback speed")
+            .disabled(engineManager.playbackRate >= 1.5)
         }
         .padding(.horizontal, 3)
         .frame(height: 32)
@@ -1690,6 +1712,9 @@ struct TransportBar: View {
                 .stroke(engineManager.playbackRate != 1.0 ? Color.red.opacity(0.6) : theme.hairline, lineWidth: 1)
         )
         .onHover { isSpeedHovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Playback speed")
+        .accessibilityValue(String(format: "%.2f times", engineManager.playbackRate))
     }
     
     private var playButton: some View {
@@ -2134,25 +2159,29 @@ struct FFT32BarColumn: View {
 struct StemMacroPresetsView: View {
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
+
+    private var anySolo: Bool {
+        engineManager.vocalSolo || engineManager.drumSolo || engineManager.bassSolo || engineManager.otherSolo
+    }
     
     private var isAcapellaActive: Bool {
         engineManager.vocalSolo && !engineManager.vocalMuted && !engineManager.drumSolo && !engineManager.bassSolo && !engineManager.otherSolo
     }
     
     private var isInstrumentalActive: Bool {
-        engineManager.vocalMuted && !engineManager.drumMuted && !engineManager.bassMuted && !engineManager.otherMuted && !engineManager.vocalSolo
+        engineManager.vocalMuted && !engineManager.drumMuted && !engineManager.bassMuted && !engineManager.otherMuted && !anySolo
     }
     
     private var isDrumlessActive: Bool {
-        engineManager.drumMuted && !engineManager.vocalMuted && !engineManager.bassMuted && !engineManager.otherMuted && !engineManager.drumSolo
+        engineManager.drumMuted && !engineManager.vocalMuted && !engineManager.bassMuted && !engineManager.otherMuted && !anySolo
     }
     
     private var isKaraokeActive: Bool {
-        abs(engineManager.vocalVolume - 0.25) < 0.05 && !engineManager.vocalMuted && !engineManager.drumMuted && !engineManager.bassMuted && !engineManager.otherMuted
+        abs(engineManager.vocalVolume - 0.25) < 0.05 && !engineManager.vocalMuted && !engineManager.drumMuted && !engineManager.bassMuted && !engineManager.otherMuted && !anySolo
     }
     
     private var isDnBActive: Bool {
-        engineManager.vocalMuted && engineManager.otherMuted && !engineManager.drumMuted && !engineManager.bassMuted
+        engineManager.vocalMuted && engineManager.otherMuted && !engineManager.drumMuted && !engineManager.bassMuted && !anySolo
     }
     
     var body: some View {
@@ -2194,12 +2223,18 @@ struct StemMacroPresetsView: View {
     }
     
     private var activePresetDescription: String {
+        if engineManager.isBypassed { return "STATUS: ORIGINAL MASTER • STEM MIX BYPASSED" }
         if isAcapellaActive { return "STATUS: VOCAL ISOLATION • BACKING STEMS MUTED" }
         if isInstrumentalActive { return "STATUS: INSTRUMENTAL • LEAD VOCALS MUTED" }
         if isDrumlessActive { return "STATUS: DRUMLESS PRACTICE • DRUMS MUTED" }
         if isKaraokeActive { return "STATUS: KARAOKE MODE • -12dB LEAD VOCALS" }
         if isDnBActive { return "STATUS: DRUM & BASS • VOCALS & OTHER MUTED" }
-        return "STATUS: BALANCED 4-STEM MASTER • 0.0 dB UNITY GAIN"
+        let volumes = [engineManager.vocalVolume, engineManager.drumVolume, engineManager.bassVolume, engineManager.otherVolume]
+        let anyMuted = engineManager.vocalMuted || engineManager.drumMuted || engineManager.bassMuted || engineManager.otherMuted
+        if !anySolo && !anyMuted && volumes.allSatisfy({ abs($0 - 1) < 0.001 }) {
+            return "STATUS: ALL STEMS ACTIVE • 0.0 dB UNITY GAIN"
+        }
+        return "STATUS: CUSTOM STEM MIX"
     }
     
     private func macroButton(title: String, desc: String, isActive: Bool, action: @escaping () -> Void) -> some View {

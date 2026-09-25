@@ -64,7 +64,7 @@ public final class AudioEngineManager {
     private let otherMixer = AVAudioMixerNode()
     private let stemsSumMixer = AVAudioMixerNode()
     private let comparisonMixer = AVAudioMixerNode()
-    private var configurationObserver: NSObjectProtocol?
+    @ObservationIgnored private var configurationObserver: NSObjectProtocol?
     public var importRequested = false
     public var hasLoadedTrack: Bool { fileVocals != nil }
     public var canBypass: Bool { audioFile != nil }
@@ -107,9 +107,15 @@ public final class AudioEngineManager {
         let chromaticScaleSharp = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
         let chromaticScaleFlat = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
         
-        let parts = trackMusicalKey.components(separatedBy: " ")
-        guard let root = parts.first else { return trackMusicalKey }
-        let mode = parts.dropFirst().joined(separator: " ")
+        let key = trackMusicalKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "♯", with: "#")
+            .replacingOccurrences(of: "♭", with: "b")
+        guard let first = key.first, "ABCDEFG".contains(first.uppercased()) else { return trackMusicalKey }
+        let rootLength = key.count > 1 && ["#", "b", "B"].contains(String(key.dropFirst().first!)) ? 2 : 1
+        let root = String(key.prefix(rootLength))
+        let suffix = String(key.dropFirst(rootLength))
+        let mode = suffix.trimmingCharacters(in: .whitespaces)
+        guard ["", "m", "min", "minor", "maj", "major"].contains(mode.lowercased()) else { return trackMusicalKey }
         
         var currentIndex = chromaticScaleSharp.firstIndex(of: root.uppercased())
         if currentIndex == nil {
@@ -121,7 +127,7 @@ public final class AudioEngineManager {
         if newIdx < 0 { newIdx += 12 }
         
         let newRoot = chromaticScaleSharp[newIdx]
-        return mode.isEmpty ? newRoot : "\(newRoot) \(mode)"
+        return newRoot + suffix
     }
     
     // Dynamic real-time scaled BPM based on playbackRate
@@ -456,7 +462,7 @@ public final class AudioEngineManager {
     private var fileDrums: AVAudioFile?
     private var fileBass: AVAudioFile?
     private var fileOther: AVAudioFile?
-    private var timer: Timer?
+    private let playbackClock = PlaybackClock()
     
     // MARK: - Initialization
     public init() {
@@ -534,7 +540,7 @@ public final class AudioEngineManager {
                 guard let self, self.hasLoadedTrack else { return }
                 let resume = self.isPlaying
                 self.isPlaying = false
-                self.timer?.invalidate()
+                self.playbackClock.timer?.invalidate()
                 self.seek(toPercentage: self.playbackProgress)
                 if resume { self.playSynced() }
             }
@@ -561,18 +567,24 @@ public final class AudioEngineManager {
         }
     }
 
-    isolated deinit {
+    deinit {
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
-        timer?.invalidate()
         activeSplitTask?.cancel()
-        engine.stop()
-        // AVAudioEngine does not remove node taps when it stops. Release the
-        // tap closures (and their FFT state) before the graph nodes are torn
-        // down, which is essential for short-lived managers in test hosts.
-        for node in [engine.mainMixerNode, vocalMixer, drumMixer, bassMixer, otherMixer] {
-            node.removeTap(onBus: 0)
+        metadataTask?.cancel()
+        let nodes = [engine.mainMixerNode, vocalMixer, drumMixer, bassMixer, otherMixer]
+        let teardown: @MainActor @Sendable () -> Void = { [engine, playbackClock] in
+            playbackClock.timer?.invalidate()
+            engine.stop()
+            for node in nodes { node.removeTap(onBus: 0) }
+            engine.reset()
         }
-        engine.reset()
+        // Keep graph/timer cleanup on their owning thread without the isolated
+        // deinit back-deployment runtime, which crashes on macOS 15 test hosts.
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { teardown() }
+        } else {
+            DispatchQueue.main.async(execute: teardown)
+        }
     }
 
     private func configureEQNode(_ eq: AVAudioUnitEQ) {
@@ -819,7 +831,10 @@ public final class AudioEngineManager {
     @MainActor
     public func updateTrackTitle(id: String, newTitle: String) {
         if currentTrackID == id {
+            titleOverride = newTitle
             currentTrackName = newTitle.uppercased()
+            trackTitle = newTitle
+            publishNowPlayingMetadata()
         }
     }
     
@@ -830,7 +845,7 @@ public final class AudioEngineManager {
         do {
             try installFiles(urls)
             currentTrackID = track.id
-            currentTrackName = track.title.uppercased()
+            updateTrackTitle(id: track.id, newTitle: track.title)
             extractMetadata(url: track.originalURL)
             if !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled") { playSynced() }
         } catch {
@@ -845,7 +860,7 @@ public final class AudioEngineManager {
                 track.bassStemURL = data.bassStemURL
                 track.otherStemURL = data.otherStemURL
                 currentTrackID = track.id
-                currentTrackName = track.title.uppercased()
+                updateTrackTitle(id: track.id, newTitle: track.title)
                 do { try track.modelContext?.save() }
                 catch { showError("Could not save the recovered track: \(error.localizedDescription)") }
             }
@@ -884,8 +899,8 @@ public final class AudioEngineManager {
         otherPlayer.stop()
         originalPlayer.stop()
         isPlaying = false
-        timer?.invalidate()
-        timer = nil
+        playbackClock.timer?.invalidate()
+        playbackClock.timer = nil
         
         // 2. Clear all audio file references
         fileVocals = nil
@@ -897,6 +912,7 @@ public final class AudioEngineManager {
         // 3. Reset all playback state and metadata to default standby
         currentTrackID = nil
         currentTrackName = "NO TRACK LOADED"
+        titleOverride = nil
         trackTitle = ""
         trackArtist = "Isolate"
         trackAlbum = "4-Stem Neural Audio"
@@ -928,7 +944,7 @@ public final class AudioEngineManager {
     }
     
     // MARK: - Import lifecycle
-    private var activeSplitTask: Task<[URL], Error>?
+    @ObservationIgnored private var activeSplitTask: Task<[URL], Error>?
     private var splitRequestID = UUID()
     public private(set) var lastImportCancelled = false
 
@@ -989,6 +1005,7 @@ public final class AudioEngineManager {
             currentTrackID = url.path
             let title = url.deletingPathExtension().lastPathComponent
             currentTrackName = title.uppercased()
+            trackTitle = title
             extractMetadata(url: url)
             splitProgress = 1
             if !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled") { playSynced() }
@@ -1012,7 +1029,8 @@ public final class AudioEngineManager {
         errorMessage = nil
     }
 
-    private var metadataTask: Task<Void, Never>?
+    @ObservationIgnored private var metadataTask: Task<Void, Never>?
+    @ObservationIgnored private var titleOverride: String?
     private var metadataRequestID = UUID()
 
     private func extractMetadata(url: URL) {
@@ -1020,7 +1038,7 @@ public final class AudioEngineManager {
         let requestID = UUID()
         metadataRequestID = requestID
         let asset = AVURLAsset(url: url)
-        metadataTask = Task {
+        metadataTask = Task { [weak self] in
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             var foundBPM: String?
@@ -1062,7 +1080,7 @@ public final class AudioEngineManager {
                         if let number, number.isFinite, number > 0 { foundBPM = String(format: "%.1f BPM", number) }
                     }
                     if identifier.contains("tkey"), let value = try? await item.load(.stringValue), !value.isEmpty {
-                        foundKey = value.uppercased()
+                        foundKey = value.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
 
                     if foundArt == nil && (item.commonKey == .commonKeyArtwork || item.identifier?.rawValue.contains("APIC") == true || item.identifier?.rawValue.contains("artwork") == true) {
@@ -1113,9 +1131,9 @@ public final class AudioEngineManager {
             let finalBitDepth = computedBitDepth
             
             await MainActor.run {
-                guard !Task.isCancelled, self.metadataRequestID == requestID else { return }
+                guard !Task.isCancelled, let self, self.metadataRequestID == requestID else { return }
                 self.albumArt = finalArt
-                self.trackTitle = finalTitle
+                self.trackTitle = self.titleOverride ?? finalTitle
                 self.trackArtist = finalArtist
                 self.trackAlbum = finalAlbum
                 self.trackAudioFormat = finalFormat
@@ -1124,19 +1142,17 @@ public final class AudioEngineManager {
                 self.trackSampleRate = finalSampleRate
                 self.trackBitDepth = finalBitDepth
                 
-                let duration = self.totalTrackDuration ?? 0.0
-                let elapsed = self.currentPlaybackTimeSeconds ?? 0.0
-                NowPlayingManager.shared.updateNowPlayingInfo(
-                    title: self.trackTitle,
-                    artist: self.trackArtist,
-                    album: self.trackAlbum,
-                    artwork: self.albumArt,
-                    duration: duration,
-                    elapsed: elapsed,
-                    isPlaying: self.isPlaying
-                )
+                self.publishNowPlayingMetadata()
             }
         }
+    }
+
+    private func publishNowPlayingMetadata() {
+        NowPlayingManager.shared.updateNowPlayingInfo(
+            title: trackTitle, artist: trackArtist, album: trackAlbum, artwork: albumArt,
+            duration: totalTrackDuration ?? 0, elapsed: currentPlaybackTimeSeconds ?? 0,
+            isPlaying: isPlaying
+        )
     }
     
     // MARK: - Export
@@ -1246,8 +1262,8 @@ public final class AudioEngineManager {
         otherPlayer.stop()
         originalPlayer.stop()
         isPlaying = false
-        timer?.invalidate()
-        timer = nil
+        playbackClock.timer?.invalidate()
+        playbackClock.timer = nil
         clearVisualizers()
     }
 
@@ -1285,7 +1301,7 @@ public final class AudioEngineManager {
             bassPlayer.pause()
             otherPlayer.pause()
             originalPlayer.pause()
-            timer?.invalidate()
+            playbackClock.timer?.invalidate()
             isPlaying = false
             clearVisualizers()
             NowPlayingManager.shared.updateNowPlayingPlaybackState()
@@ -1297,7 +1313,7 @@ public final class AudioEngineManager {
     
     // High-precision 60Hz Playback Timer (16.6ms) for Instantaneous Time & Progress Sync (Active in Common RunLoop Modes)
     private func startPlaybackTimer() {
-        timer?.invalidate()
+        playbackClock.timer?.invalidate()
         let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
             guard let self = self, self.isPlaying,
@@ -1319,21 +1335,9 @@ public final class AudioEngineManager {
                 
                 self.playbackProgress = progress
                 
-                let totalDurationSecs = Int(round(duration))
-                let elapsedSecs = min(totalDurationSecs, Int(floor(elapsed)))
-                let remainingSecs = max(0, totalDurationSecs - elapsedSecs)
+                self.updateTimeDisplay(elapsed: elapsed, duration: duration)
                 
-                let mins = elapsedSecs / 60
-                let secs = elapsedSecs % 60
-                let rMins = remainingSecs / 60
-                let rSecs = remainingSecs % 60
-                self.currentTimeString = String(format: "%02d:%02d / -%02d:%02d", mins, secs, rMins, rSecs)
-                
-                let elapsedMs = Int((elapsed.truncatingRemainder(dividingBy: 1.0)) * 1000)
-                let remExact = max(0.0, duration - elapsed)
-                let remMs = Int((remExact.truncatingRemainder(dividingBy: 1.0)) * 1000)
-                self.detailedTimecode = String(format: "%02d:%02d.%03d / -%02d:%02d.%03d", mins, secs, elapsedMs, rMins, rSecs, remMs)
-                
+                let elapsedSecs = Int(min(duration, elapsed))
                 if elapsedSecs != self.lastSyncedNowPlayingSec {
                     self.lastSyncedNowPlayingSec = elapsedSecs
                     NowPlayingManager.shared.updateNowPlayingProgress(elapsed: elapsed, duration: duration)
@@ -1341,29 +1345,34 @@ public final class AudioEngineManager {
             }
         }
         RunLoop.main.add(t, forMode: .common)
-        self.timer = t
+        playbackClock.timer = t
     }
     
     @MainActor
     public func updateTimeString(for progress: Double) {
         guard let fVocals = fileVocals else { return }
         let duration = Double(fVocals.length) / fVocals.processingFormat.sampleRate
-        guard duration > 0 else { return }
-        let totalDurationSecs = Int(round(duration))
-        let elapsedSecs = min(totalDurationSecs, Int(floor(duration * progress)))
-        let remainingSecs = max(0, totalDurationSecs - elapsedSecs)
-        
-        let mins = elapsedSecs / 60
-        let secs = elapsedSecs % 60
-        let rMins = remainingSecs / 60
-        let rSecs = remainingSecs % 60
-        currentTimeString = String(format: "%02d:%02d / -%02d:%02d", mins, secs, rMins, rSecs)
-        
-        let exactElapsed = duration * progress
-        let elapsedMs = Int((exactElapsed.truncatingRemainder(dividingBy: 1.0)) * 1000)
-        let remExact = max(0.0, duration - exactElapsed)
-        let remMs = Int((remExact.truncatingRemainder(dividingBy: 1.0)) * 1000)
-        detailedTimecode = String(format: "%02d:%02d.%03d / -%02d:%02d.%03d", mins, secs, elapsedMs, rMins, rSecs, remMs)
+        guard duration > 0, progress.isFinite else { return }
+        updateTimeDisplay(elapsed: duration * max(0, min(1, progress)), duration: duration)
+    }
+
+    private func updateTimeDisplay(elapsed: Double, duration: Double) {
+        let times = Self.playbackTimecodes(elapsed: elapsed, duration: duration)
+        currentTimeString = times.compact
+        detailedTimecode = times.detailed
+    }
+
+    nonisolated static func playbackTimecodes(elapsed: Double, duration: Double) -> (compact: String, detailed: String) {
+        let current = min(duration, max(0, elapsed))
+        let remaining = max(0, duration - current)
+        let elapsedMS = Int((current * 1000).rounded())
+        let remainingMS = Int((remaining * 1000).rounded())
+        let compact = String(format: "%02d:%02d / -%02d:%02d",
+            Int(current) / 60, Int(current) % 60, Int(ceil(remaining)) / 60, Int(ceil(remaining)) % 60)
+        let detailed = String(format: "%02d:%02d.%03d / -%02d:%02d.%03d",
+            elapsedMS / 60_000, elapsedMS / 1000 % 60, elapsedMS % 1000,
+            remainingMS / 60_000, remainingMS / 1000 % 60, remainingMS % 1000)
+        return (compact, detailed)
     }
     
     public func seek(toPercentage percentage: Double) {

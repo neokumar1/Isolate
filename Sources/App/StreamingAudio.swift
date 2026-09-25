@@ -35,6 +35,7 @@ enum StreamingAudio {
         var count = 0
         var sum = 0.0
         var sumSquares = 0.0
+        var stereoSumSquares = 0.0
         while true {
             try Task.checkCancellation()
             buffer.frameLength = buffer.frameCapacity
@@ -50,6 +51,8 @@ enum StreamingAudio {
                 let mono = (Double(channels[0][i]) + Double(channels[1][i])) * 0.5
                 sum += mono
                 sumSquares += mono * mono
+                stereoSumSquares += (Double(channels[0][i]) * Double(channels[0][i])
+                    + Double(channels[1][i]) * Double(channels[1][i])) * 0.5
             }
             count += Int(frames)
             try writer.write(from: buffer)
@@ -57,7 +60,11 @@ enum StreamingAudio {
         guard count > 0 else { throw DemucsError.invalidAudioFormat }
         let mean = sum / Double(count)
         let variance = max(0, sumSquares / Double(count) - mean * mean)
-        return Statistics(frames: count, mean: Float(mean), standardDeviation: max(1e-4, Float(sqrt(variance))))
+        // Opposite-phase stereo can have a silent mono reference while both
+        // channels remain loud. Do not amplify it by 10,000x before inference.
+        let stereoVariance = max(0, stereoSumSquares / Double(count) - mean * mean)
+        let normalizationVariance = variance < 1e-8 ? stereoVariance : variance
+        return Statistics(frames: count, mean: Float(mean), standardDeviation: max(1e-4, Float(sqrt(normalizationVariance))))
     }
 
     static func reflectedIndex(_ index: Int, count: Int) -> Int {
@@ -69,7 +76,15 @@ enum StreamingAudio {
 
     static func readWindow(file: AVAudioFile, start: Int, count: Int, into buffer: AVAudioPCMBuffer) throws {
         let length = Int(file.length)
-        guard length > 0, count <= buffer.frameCapacity else { throw DemucsError.invalidAudioFormat }
+        guard length > 0, count > 0, count <= buffer.frameCapacity else { throw DemucsError.invalidAudioFormat }
+        // Most windows are entirely inside the track. Read them directly into
+        // the reusable model buffer; only edge windows need reflection.
+        if start >= 0, start <= length - count {
+            file.framePosition = AVAudioFramePosition(start)
+            try file.read(into: buffer, frameCount: AVAudioFrameCount(count))
+            guard buffer.frameLength == AVAudioFrameCount(count) else { throw DemucsError.invalidAudioFormat }
+            return
+        }
         var lower = length - 1
         var upper = 0
         for i in 0..<count {

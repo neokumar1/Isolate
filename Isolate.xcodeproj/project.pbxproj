@@ -20,8 +20,10 @@
 		64DAA5BF14FB75131FF30C78 /* TrackModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E404CB7871E1A45DE1242859 /* TrackModel.swift */; };
 		669642CCDE25B6636D369197 /* AppMoveHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8902F75890A1D02F662A2C4 /* AppMoveHelper.swift */; };
 		6CBEC0DDE108EA06515F8B93 /* AudioEngineManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F162949F185EF2FA9835DE2C /* AudioEngineManager.swift */; };
+		6E2D4D823F3A717CBBB8088D /* ImportSeparationRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2EBC811F849DA5036CFC1B /* ImportSeparationRegressionTests.swift */; };
 		792E9F6C4E56359D456DDA0F /* MenuBarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CF938C23122BA151FB3DFCE /* MenuBarManager.swift */; };
 		8795659D14EB49E0487CF201 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B0F1BF366285DF7ED96856 /* PlayerView.swift */; };
+		8BD92F3394B42C1A0AD566FC /* PlaybackClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF8F78D393965984025C15BF /* PlaybackClock.swift */; };
 		95C2E3DA7EFB59D971F2F6E1 /* DotGothic16-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 65D4E52007621CC6578509E0 /* DotGothic16-Regular.ttf */; };
 		9B785A6BE884B7DEB4B68D29 /* FaderScale.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F482B1CF7D3861CF9CB7BE9 /* FaderScale.swift */; };
 		A07EF38BF93598B2A4702404 /* ImportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85EA9B80B1D07CE0BC012A6 /* ImportCoordinator.swift */; };
@@ -59,6 +61,7 @@
 		08F2813A8F193935CAA240FC /* StemCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StemCache.swift; sourceTree = "<group>"; };
 		0CA8A3AD0C499BC470D746C2 /* AudioExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioExporter.swift; sourceTree = "<group>"; };
 		3B32BB7E1AA2EC3946E2671E /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		3C2EBC811F849DA5036CFC1B /* ImportSeparationRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportSeparationRegressionTests.swift; sourceTree = "<group>"; };
 		49A8F54BCDFECE3713F6E918 /* FFTAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTAnalyzer.swift; sourceTree = "<group>"; };
 		4CF938C23122BA151FB3DFCE /* MenuBarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManager.swift; sourceTree = "<group>"; };
 		4F482B1CF7D3861CF9CB7BE9 /* FaderScale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaderScale.swift; sourceTree = "<group>"; };
@@ -79,6 +82,7 @@
 		AC1A0F01EE97D0951555E052 /* IsolateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IsolateApp.swift; sourceTree = "<group>"; };
 		B807A91D83D445402D9CAF99 /* ProductionRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionRegressionTests.swift; sourceTree = "<group>"; };
 		BDB33D51AF84015B27BDB60D /* AudioMeterProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMeterProcessor.swift; sourceTree = "<group>"; };
+		CF8F78D393965984025C15BF /* PlaybackClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackClock.swift; sourceTree = "<group>"; };
 		D39417E3CC1D1DF6CF0E4656 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		D7C71DE2440945DF04ED48AA /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		D9F18A0F03B33726F0C3D41F /* Isolate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Isolate.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -124,6 +128,7 @@
 				AC1A0F01EE97D0951555E052 /* IsolateApp.swift */,
 				4CF938C23122BA151FB3DFCE /* MenuBarManager.swift */,
 				A696B7978AB11ACA46D7592E /* NowPlayingManager.swift */,
+				CF8F78D393965984025C15BF /* PlaybackClock.swift */,
 				D39417E3CC1D1DF6CF0E4656 /* SettingsView.swift */,
 				08F2813A8F193935CAA240FC /* StemCache.swift */,
 				80C4F1BEA2CBC91B8FB4637C /* StreamingAudio.swift */,
@@ -166,6 +171,7 @@
 		B1EA22E3D283A7BD3EAC64FC /* IsolateTests */ = {
 			isa = PBXGroup;
 			children = (
+				3C2EBC811F849DA5036CFC1B /* ImportSeparationRegressionTests.swift */,
 				9B54412E9E3F71B00BF34FB0 /* IsolateTests.swift */,
 				B807A91D83D445402D9CAF99 /* ProductionRegressionTests.swift */,
 			);
@@ -318,6 +324,7 @@
 				49F7C5966BB4966F7B02CE38 /* LibraryView.swift in Sources */,
 				792E9F6C4E56359D456DDA0F /* MenuBarManager.swift in Sources */,
 				BD13B32036CBA957B6A8FB50 /* NowPlayingManager.swift in Sources */,
+				8BD92F3394B42C1A0AD566FC /* PlaybackClock.swift in Sources */,
 				8795659D14EB49E0487CF201 /* PlayerView.swift in Sources */,
 				EF40587C88F3A21DCBED178E /* SettingsView.swift in Sources */,
 				1CA50B3B9305F340E86C09ED /* StemCache.swift in Sources */,
@@ -331,6 +338,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6E2D4D823F3A717CBBB8088D /* ImportSeparationRegressionTests.swift in Sources */,
 				CCA10CCFD58840F597E21121 /* IsolateTests.swift in Sources */,
 				161B67E13457763752062DE1 /* ProductionRegressionTests.swift in Sources */,
 			);
@@ -375,7 +383,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				OTHER_SWIFT_FLAGS = "-enable-experimental-feature IsolatedDeinit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.isolate.Isolate;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
@@ -504,7 +511,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				OTHER_SWIFT_FLAGS = "-enable-experimental-feature IsolatedDeinit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.isolate.Isolate;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;

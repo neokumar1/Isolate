@@ -122,7 +122,7 @@ public final class NowPlayingManager: NSObject {
         if let art = artwork {
             let mpArtwork = MPMediaItemArtwork(boundsSize: art.size) { _ in art }
             info[MPMediaItemPropertyArtwork] = mpArtwork
-        } else if let appIcon = NSApp.applicationIconImage {
+        } else if let appIcon = NSApp?.applicationIconImage {
             let mpArtwork = MPMediaItemArtwork(boundsSize: appIcon.size) { _ in appIcon }
             info[MPMediaItemPropertyArtwork] = mpArtwork
         }

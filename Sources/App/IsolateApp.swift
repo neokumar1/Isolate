@@ -24,14 +24,27 @@ struct IsolateApp: App {
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Isolate") { isShowingAboutModal = true }
+                Button("About Isolate") {
+                    isShowingSettingsModal = false
+                    isShowingAboutModal = true
+                    openWindow(id: "main", value: "main")
+                }
             }
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { isShowingSettingsModal = true }
+                Button("Settings…") {
+                    isShowingAboutModal = false
+                    isShowingSettingsModal = true
+                    openWindow(id: "main", value: "main")
+                }
                     .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
-                Button("Import Audio…") { engineManager.importRequested = true }
+                Button("Import Audio…") {
+                    isShowingAboutModal = false
+                    isShowingSettingsModal = false
+                    engineManager.importRequested = true
+                    openWindow(id: "main", value: "main")
+                }
                     .keyboardShortcut("o", modifiers: .command)
                     .disabled(engineManager.isSplitting)
                 Button("Export Stems…") { engineManager.exportStems() }
@@ -199,10 +212,19 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
             importer.acceptDrop(providers, context: modelContext, engine: engineManager)
         }
-        .onChange(of: engineManager.importRequested) { _, requested in
+        .onChange(of: engineManager.importRequested, initial: true) { _, requested in
             if requested {
                 engineManager.importRequested = false
-                importer.chooseFiles(context: modelContext, engine: engineManager)
+                activeMenuTrackID = nil
+                isShowingRenameModal = false
+                isShowingDeleteModal = false
+                isShowingSettingsModal = false
+                isShowingAboutModal = false
+                Task { @MainActor in
+                    // Let any existing sheet close before presenting the file picker.
+                    await Task.yield()
+                    importer.chooseFiles(context: modelContext, engine: engineManager)
+                }
             }
         }
         .overlay {
@@ -366,6 +388,7 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            theme.updateWindowAppearance()
             appMoveHelper.checkLocationOnStartup()
             NowPlayingManager.shared.configure(
                 engineManager: engineManager,

@@ -82,20 +82,31 @@ struct LibraryView: View {
     private func recalculateTotalDuration() {
         let urlPairs: [(vocal: URL, original: URL)] = tracks.map { ($0.vocalStemURL, $0.originalURL) }
         statisticsTask?.cancel()
+        guard !urlPairs.isEmpty else {
+            totalDurationSeconds = 0
+            totalOriginalBytes = 0
+            return
+        }
         statisticsTask = Task {
-            let statistics = await Task.detached(priority: .utility) {
-            var totalBytes: Int64 = 0
-            var totalSecs: Double = 0.0
-            for pair in urlPairs {
-                totalBytes += (try? FileManager.default.attributesOfItem(atPath: pair.original.path)[.size] as? Int64) ?? 0
-                if let file = try? AVAudioFile(forReading: pair.vocal) {
-                    totalSecs += Double(file.length) / file.processingFormat.sampleRate
-                } else if let file = try? AVAudioFile(forReading: pair.original) {
-                    totalSecs += Double(file.length) / file.processingFormat.sampleRate
+            let calculation = Task.detached(priority: .utility) {
+                var totalBytes: Int64 = 0
+                var totalSecs: Double = 0.0
+                for pair in urlPairs {
+                    guard !Task.isCancelled else { break }
+                    totalBytes += (try? FileManager.default.attributesOfItem(atPath: pair.original.path)[.size] as? Int64) ?? 0
+                    if let file = try? AVAudioFile(forReading: pair.vocal) {
+                        totalSecs += Double(file.length) / file.processingFormat.sampleRate
+                    } else if let file = try? AVAudioFile(forReading: pair.original) {
+                        totalSecs += Double(file.length) / file.processingFormat.sampleRate
+                    }
                 }
+                return (totalSecs, totalBytes)
             }
-            return (totalSecs, totalBytes)
-            }.value
+            let statistics = await withTaskCancellationHandler {
+                await calculation.value
+            } onCancel: {
+                calculation.cancel()
+            }
             guard !Task.isCancelled else { return }
             totalDurationSeconds = statistics.0
             totalOriginalBytes = statistics.1
@@ -169,6 +180,11 @@ struct LibraryView: View {
             }
             .background(theme.surface)
         }
+        .onAppear { recalculateTotalDuration() }
+        .onDisappear { statisticsTask?.cancel() }
+        .onChange(of: tracks.map(\.id)) { _, _ in
+            recalculateTotalDuration()
+        }
     }
     
     private var headerView: some View {
@@ -210,6 +226,7 @@ struct LibraryView: View {
                 .foregroundColor(isSearchFocused ? .red : theme.textSecondary)
             
             TextField("SEARCH STEMS...", text: $searchText)
+                .accessibilityLabel("Search library")
                 .textFieldStyle(.plain)
                 .font(.custom("DotGothic16-Regular", size: 11.5))
                 .foregroundColor(theme.textPrimary)
@@ -237,6 +254,7 @@ struct LibraryView: View {
                         .foregroundColor(theme.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear library search")
             }
         }
         .padding(.horizontal, 8)
@@ -343,13 +361,6 @@ struct LibraryView: View {
             .padding(.vertical, 8)
             .background(CustomScrollerModifier())
         }
-        .onAppear {
-            recalculateTotalDuration()
-        }
-        .onDisappear { statisticsTask?.cancel() }
-        .onChange(of: tracks.count) { _, _ in
-            recalculateTotalDuration()
-        }
         .contentShape(Rectangle())
         .onTapGesture {
             isSearchFocused = false
@@ -373,6 +384,13 @@ struct LibraryView: View {
         .background(theme.surface)
     }
     
+    private var librarySummary: String {
+        var parts = ["\(tracks.count) \(tracks.count == 1 ? "track" : "tracks")"]
+        if totalOriginalBytes > 0 { parts.append(formattedTotalSize) }
+        if totalDurationSeconds > 0 { parts.append(formattedTotalDuration) }
+        return parts.joined(separator: ", ")
+    }
+
     private var telemetryView: some View {
         HStack(spacing: 4) {
             Text("\(tracks.count) \(tracks.count == 1 ? "TRACK" : "TRACKS")")
@@ -401,6 +419,9 @@ struct LibraryView: View {
         }
         .lineLimit(1)
         .minimumScaleFactor(0.85)
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("library-summary")
+        .accessibilityLabel(librarySummary)
     }
     
     private var settingsButton: some View {
@@ -469,6 +490,8 @@ struct TrackRowView: View {
                 dotsMenuButton
             }
             .opacity(isMenuOpen ? 0.0 : 1.0)
+            .allowsHitTesting(!isMenuOpen)
+            .accessibilityHidden(isMenuOpen)
             
             if isMenuOpen {
                 inlineActionsView
@@ -532,6 +555,8 @@ struct TrackRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Load \(track.title)")
+        .accessibilityValue(isActive ? "Selected" : "")
     }
     
     private var dotsMenuButton: some View {
@@ -615,6 +640,7 @@ struct TrackRowView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close track actions")
         }
     }
 }

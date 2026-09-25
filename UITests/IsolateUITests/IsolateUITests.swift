@@ -59,6 +59,20 @@ final class IsolateUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Play"].isEnabled)
     }
 
+    func testCommandsReopenClosedMainWindow() {
+        let app = launch()
+        app.typeKey("w", modifierFlags: .command)
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["SYSTEM PREFERENCES"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey("w", modifierFlags: .command)
+        app.typeKey("o", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Play"].isEnabled)
+    }
+
     func testImportPlaybackRenameExportAndDelete() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "Isolate-UI-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -78,6 +92,15 @@ final class IsolateUITests: XCTestCase {
         }
         let originalBytes = try Data(contentsOf: source)
         let app = launch()
+        // Exercise the preference and avoid racing a two-second auto-playing
+        // fixture's completion while clicking a changing Play/Pause button.
+        app.typeKey(",", modifierFlags: .command)
+        let autoPlay = app.buttons["Auto-play on select"]
+        XCTAssertTrue(autoPlay.waitForExistence(timeout: 3))
+        XCTAssertEqual(autoPlay.value as? String, "On")
+        autoPlay.click()
+        XCTAssertEqual(autoPlay.value as? String, "Off")
+        app.typeKey(.escape, modifierFlags: [])
         app.typeKey("o", modifierFlags: .command)
         let openButton = app.windows["open-panel"].buttons["Open"]
         XCTAssertTrue(openButton.waitForExistence(timeout: 5))
@@ -87,13 +110,50 @@ final class IsolateUITests: XCTestCase {
         openButton.click()
         let actions = app.buttons["Actions for UI Workflow"]
         XCTAssertTrue(actions.waitForExistence(timeout: 120), "Import must publish the track into the library")
+        let librarySummary = app.descendants(matching: .any)["library-summary"]
+        let statisticsReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "MB"), object: librarySummary)
+        XCTAssertEqual(XCTWaiter.wait(for: [statisticsReady], timeout: 5), .completed,
+                       "Library statistics should reflect the imported audio before deletion")
 
         app.activate()
-        if app.buttons["Pause"].exists { app.buttons["Pause"].click() }
+        XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 3))
         app.typeKey("l", modifierFlags: [])
         app.buttons["Play"].click()
         XCTAssertTrue(app.buttons["Pause"].waitForExistence(timeout: 3))
         app.buttons["Pause"].click()
+
+        let stems = ["VOCALS", "DRUMS", "BASS", "OTHER"]
+        for selectedStem in stems {
+            app.buttons["Solo \(selectedStem)"].click()
+            for stem in stems {
+                XCTAssertEqual(app.buttons["Solo \(stem)"].value as? String,
+                               stem == selectedStem ? "On" : "Off",
+                               "Solo should make only the selected stem active")
+            }
+        }
+        app.buttons["Solo OTHER"].click()
+        for stem in stems {
+            XCTAssertEqual(app.buttons["Solo \(stem)"].value as? String, "Off")
+            app.buttons["Mute \(stem)"].click()
+            XCTAssertEqual(app.buttons["Mute \(stem)"].value as? String, "On")
+            app.buttons["Mute \(stem)"].click()
+            XCTAssertEqual(app.buttons["Mute \(stem)"].value as? String, "Off")
+        }
+
+        // Text entry must not accidentally invoke the mixer's unmodified shortcuts.
+        let search = app.textFields["Search library"]
+        search.click()
+        search.typeText("vadbo1234")
+        XCTAssertTrue(app.staticTexts["NO MATCHING TRACKS"].exists)
+        for stem in stems {
+            XCTAssertEqual(app.buttons["Solo \(stem)"].value as? String, "Off")
+            XCTAssertEqual(app.buttons["Mute \(stem)"].value as? String, "Off")
+        }
+        app.buttons["Clear library search"].click()
+        search.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.buttons["Actions for UI Workflow"].exists)
+
         app.typeKey("v", modifierFlags: [])
         XCTAssertEqual(app.buttons["Mute VOCALS"].value as? String, "On")
         app.typeKey("r", modifierFlags: [])
@@ -144,6 +204,8 @@ final class IsolateUITests: XCTestCase {
         app.buttons["DELETE"].click()
         XCTAssertFalse(app.buttons["Play"].isEnabled)
         XCTAssertFalse(app.buttons["Actions for Renamed UI Track"].exists)
+        XCTAssertEqual(librarySummary.label, "0 tracks",
+                       "Deleting the final track must clear its displayed size and duration")
         XCTAssertEqual(try Data(contentsOf: source), originalBytes, "Deleting a library track must preserve source audio")
         capture(app, name: "Library after safe deletion")
     }

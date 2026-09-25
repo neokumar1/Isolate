@@ -2,7 +2,7 @@
 
 ## Separation
 
-`ExtAudioFile` decodes supported input into stereo Float32 at 44.1 kHz in 16,384-frame blocks. Normalization uses a mono reference mean and standard deviation. Reflection repeats correctly at both ends even for sources shorter than one model window.
+`ExtAudioFile` decodes supported input into stereo Float32 at 44.1 kHz in 16,384-frame blocks. Normalization uses a mono reference mean and standard deviation, with stereo energy as a fallback when opposite-phase channels cancel the mono reference. Interior windows read directly into the reused buffer. Reflection repeats correctly at both ends even for sources shorter than one model window.
 
 HTDemucs accepts 441,000 frames. Isolate runs sequential predictions with a 220,500-frame hop, applies a Hann window, divides overlap sums by accumulated weights, and writes completed hops to four Float32 WAV files. Returned tensor strides and Float16/Float32 types are respected. Non-finite source/model samples fail the import. The decoded original is preserved for comparison; no automatic filtering or limiting is applied to cached source audio.
 
@@ -20,6 +20,8 @@ Other  → EQ → gain/pan mixer ┘ Original ┘
 All five players schedule against the same host time. The original and stem sum enter the shared effects path, keeping comparison playback under the same tempo/pitch controls. Original comparison mutes the stem sum. Each channel's audible gain is determined by mute/solo state; solo selection takes priority when any solo is active.
 
 Seeking clamps to the source range, invalidates old completion callbacks, and reschedules all players. Seeking to exactly the end does not schedule a zero-frame segment. Playback stops at completion unless looping is enabled. Playback progress uses the player clock; the UI timer does not generate audio timing.
+
+Engine teardown cancels pending work, removes its configuration observer, and releases taps and the graph on the main thread. The playback clock owns its timer on the main actor. This avoids the isolated-deinitializer back-deployment runtime that crashed synchronous tests on macOS 15.
 
 A–B looping reschedules at the loop start when the player clock reaches the end marker. It is a practice feature, with scheduling latency at the boundary; no seamless/sample-accurate looping guarantee is made.
 

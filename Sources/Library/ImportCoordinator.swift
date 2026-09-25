@@ -79,11 +79,16 @@ final class ImportCoordinator {
     }
 
     func acceptDrop(_ providers: [NSItemProvider], context: ModelContext, engine: AudioEngineManager) -> Bool {
-        guard !isImporting else { return false }
+        guard !isImporting, !engine.isSplitting, openPanel == nil else { return false }
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else { return false }
+        // Reserve the import slot before loading asynchronous item providers.
+        // Otherwise a second drop is accepted and discarded once the first starts.
+        isImporting = true
         Task {
             // Sequential collection preserves Finder order and avoids a shared-array data race.
             var urls: [URL] = []
-            for provider in providers {
+            for provider in fileProviders {
                 let url: URL? = await withCheckedContinuation { continuation in
                     provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                         if let data = item as? Data {
@@ -93,6 +98,7 @@ final class ImportCoordinator {
                 }
                 if let url { urls.append(url) }
             }
+            isImporting = false
             importFiles(urls, context: context, engine: engine)
         }
         return true

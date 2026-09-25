@@ -52,7 +52,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = createMenuBarIcon(frame: 0, isPlaying: false)
+            button.image = createMenuBarIcon(frame: 0, isPlaying: engineManager?.isPlaying ?? false)
             button.imagePosition = .imageOnly
             button.toolTip = "Isolate - 4-Stem Neural Audio"
         }
@@ -61,6 +61,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         self.statusItem = item
+        updatePlaybackState(isPlaying: engineManager?.isPlaying ?? false)
     }
     
     public func updatePlaybackState(isPlaying: Bool) {
@@ -185,19 +186,20 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         
         // 3. Stem Quick Actions
+        let anySolo = engine.vocalSolo || engine.drumSolo || engine.bassSolo || engine.otherSolo
         let acapellaItem = NSMenuItem(title: "Acapella (Solo Vocals)", action: #selector(applyAcapella), keyEquivalent: "")
         acapellaItem.target = self
-        acapellaItem.state = (engine.vocalSolo && !engine.vocalMuted) ? .on : .off
+        acapellaItem.state = (engine.vocalSolo && !engine.vocalMuted && !engine.drumSolo && !engine.bassSolo && !engine.otherSolo) ? .on : .off
         menu.addItem(acapellaItem)
         
         let instrumentalItem = NSMenuItem(title: "Instrumental (Mute Vocals)", action: #selector(applyInstrumental), keyEquivalent: "")
         instrumentalItem.target = self
-        instrumentalItem.state = (engine.vocalMuted && !engine.drumMuted) ? .on : .off
+        instrumentalItem.state = (engine.vocalMuted && !engine.drumMuted && !engine.bassMuted && !engine.otherMuted && !anySolo) ? .on : .off
         menu.addItem(instrumentalItem)
         
         let drumlessItem = NSMenuItem(title: "Drumless Backing", action: #selector(applyDrumless), keyEquivalent: "")
         drumlessItem.target = self
-        drumlessItem.state = (engine.drumMuted && !engine.vocalMuted) ? .on : .off
+        drumlessItem.state = (engine.drumMuted && !engine.vocalMuted && !engine.bassMuted && !engine.otherMuted && !anySolo) ? .on : .off
         menu.addItem(drumlessItem)
         
         let resetItem = NSMenuItem(title: "Reset 4-Stem Mix", action: #selector(applyResetMix), keyEquivalent: "")
