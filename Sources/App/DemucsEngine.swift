@@ -8,6 +8,8 @@ import os
 public enum DemucsError: LocalizedError, Sendable {
     case modelNotFound(String)
     case modelLoadFailed(String)
+    /// The model loads, but this macOS computes it incorrectly on every available path.
+    case modelIncompatibleWithSystem(String)
     case compilationFailed(String)
     case assetReaderFailed(String)
     case conversionFailed(String)
@@ -21,6 +23,8 @@ public enum DemucsError: LocalizedError, Sendable {
         switch self {
         case .modelNotFound(let msg): return "CoreML Model Not Found: \(msg)"
         case .modelLoadFailed(let msg): return "Model Could Not Be Loaded: \(msg)"
+        case .modelIncompatibleWithSystem(let detail):
+            return "This version of macOS computes the separation model incorrectly on this Mac (\(detail)), so Isolate will not separate with it. Update to macOS 26 or later to separate songs."
         case .compilationFailed(let msg): return "Model Compilation Failed: \(msg)"
         case .assetReaderFailed(let msg): return "Audio Reading Failed: \(msg)"
         case .conversionFailed(let msg): return "Audio Conversion Failed: \(msg)"
@@ -206,11 +210,11 @@ public actor DemucsEngine {
         // Try loading candidate pre-compiled models
         for url in unique(compiled) {
             do {
-                let config = MLModelConfiguration()
-                config.computeUnits = .all
-                let loaded = try MLModel(contentsOf: url, configuration: config)
-                try Self.validateModel(loaded)
-                return loaded
+                return try verifiedModel(at: url).model
+            } catch let error as DemucsError {
+                if case .modelIncompatibleWithSystem = error { throw error }
+                print("Failed to load CoreML model from \(url.path): \(error)")
+                failure = failure ?? loadFailure(url, error)
             } catch {
                 print("Failed to load CoreML model from \(url.path): \(error)")
                 failure = failure ?? loadFailure(url, error)
@@ -224,15 +228,17 @@ public actor DemucsEngine {
                 let temporary = try await MLModel.compileModel(at: pkgURL)
                 defer { try? fileManager.removeItem(at: temporary) }
                 let config = MLModelConfiguration()
-                config.computeUnits = .all
-                let loaded = try MLModel(contentsOf: temporary, configuration: config)
-                try Self.validateModel(loaded)
+                config.computeUnits = try verifiedModel(at: temporary).computeUnits
                 if fileManager.fileExists(atPath: appSupportCompiledURL.path) {
                     _ = try fileManager.replaceItemAt(appSupportCompiledURL, withItemAt: temporary)
                 } else {
                     try fileManager.moveItem(at: temporary, to: appSupportCompiledURL)
                 }
                 return try MLModel(contentsOf: appSupportCompiledURL, configuration: config)
+            } catch let error as DemucsError {
+                if case .modelIncompatibleWithSystem = error { throw error }
+                print("Failed to compile mlpackage from \(pkgURL.path): \(error)")
+                failure = failure ?? loadFailure(pkgURL, error)
             } catch {
                 print("Failed to compile mlpackage from \(pkgURL.path): \(error)")
                 failure = failure ?? loadFailure(pkgURL, error)
@@ -244,6 +250,83 @@ public actor DemucsEngine {
             throw DemucsError.modelLoadFailed("\(failure) Replace it with the validated model described in MODEL.md.")
         }
         throw DemucsError.modelNotFound("Install the complete Isolate release, or follow MODEL.md to place HTDemucs.mlmodelc in ~/Library/Application Support/Isolate.")
+    }
+
+    // MARK: - Model self-test
+
+    /// Core ML's CPU implementation of an operation in this network is wrong on macOS 14
+    /// and 15: measured on hosted Macs, the stems reconstruct a test signal at about 3 dB
+    /// instead of 42 dB, while the GPU path on macOS 14 and every path on macOS 26 are
+    /// correct. Which path runs on a real Mac depends on the OS and hardware, so every
+    /// loaded model separates a built-in signal first and each compute path is tried until
+    /// one reconstructs it. A model that fails everywhere is never used.
+    static let selfTestFloorDB = 20.0
+
+    static func verifiedModel(at url: URL) throws -> (model: MLModel, computeUnits: MLComputeUnits) {
+        var measured: [String] = []
+        let paths: [(MLComputeUnits, String)] = [(.all, "all"), (.cpuAndGPU, "CPU and GPU"),
+                                                 (.cpuAndNeuralEngine, "CPU and Neural Engine"), (.cpuOnly, "CPU")]
+        for (units, name) in paths {
+            let config = MLModelConfiguration()
+            config.computeUnits = units
+            let model = try MLModel(contentsOf: url, configuration: config)
+            try validateModel(model)
+            let quality = try selfTestReconstructionDB(model)
+            if quality >= selfTestFloorDB { return (model, units) }
+            print("Model self-test on \(name): \(String(format: "%.1f", quality)) dB")
+            measured.append("\(name) \(Int(quality.rounded())) dB")
+        }
+        throw DemucsError.modelIncompatibleWithSystem("self-test: " + measured.joined(separator: ", "))
+    }
+
+    /// Separates ten seconds of a bass, melody and kick mix and returns how closely the four
+    /// stems add back up to it, in dB. HTDemucs output sums to its input; a faulty compute
+    /// path does not.
+    static func selfTestReconstructionDB(_ model: MLModel) throws -> Double {
+        let n = chunkSize
+        let input = try MLMultiArray(shape: [1, 2, NSNumber(value: n)], dataType: .float32)
+        let samples = input.dataPointer.assumingMemoryBound(to: Float.self)
+        let melody: [Double] = [440, 494, 523, 587, 659, 587, 523, 494]
+        var sum = 0.0, squares = 0.0
+        for i in 0..<n {
+            let t = Double(i) / sampleRate
+            let bass = 0.35 * sin(2 * Double.pi * 55 * t)
+            let lead = 0.2 * sin(2 * Double.pi * melody[Int(t / 0.5) % melody.count] * t) * (0.6 + 0.4 * sin(2 * Double.pi * 5 * t))
+            let beat = t.truncatingRemainder(dividingBy: 0.5)
+            let kick = 0.5 * sin(2 * Double.pi * 60 * beat) * exp(-beat * 18)
+            samples[i] = Float(bass + lead + kick)
+            samples[n + i] = Float(bass + 0.8 * lead + kick)
+            let mono = Double(samples[i] + samples[n + i]) / 2
+            sum += mono
+            squares += mono * mono
+        }
+        let mean = sum / Double(n)
+        let deviation = max(1e-4, sqrt(max(0, squares / Double(n) - mean * mean)))
+        for i in 0..<(2 * n) { samples[i] = Float((Double(samples[i]) - mean) / deviation) }
+        let provider = try MLDictionaryFeatureProvider(dictionary: ["audio": MLFeatureValue(multiArray: input)])
+        guard let output = try model.prediction(from: provider).featureValue(for: "sources")?.multiArrayValue,
+              output.shape.map(\.intValue) == [1, 4, 2, n],
+              output.dataType == .float16 || output.dataType == .float32 else { return -.infinity }
+        let strides = output.strides.map(\.intValue)
+        let isFloat32 = output.dataType == .float32
+        var signal = 0.0, error = 0.0
+        for channel in 0..<2 {
+            // The edges carry reflection padding; judge the interior.
+            for i in 44_100..<(n - 44_100) {
+                var total = 0.0
+                for stem in 0..<4 {
+                    let index = stem * strides[1] + channel * strides[2] + i * strides[3]
+                    total += isFloat32
+                        ? Double(output.dataPointer.assumingMemoryBound(to: Float.self)[index])
+                        : Double(Float(output.dataPointer.assumingMemoryBound(to: Float16.self)[index]))
+                }
+                guard total.isFinite else { return -.infinity }
+                let x = Double(samples[channel * n + i])
+                signal += x * x
+                error += (total - x) * (total - x)
+            }
+        }
+        return 10 * log10(signal / max(error, 1e-12))
     }
 
     /// Bundle lookups by name and by resource path can return the same model.

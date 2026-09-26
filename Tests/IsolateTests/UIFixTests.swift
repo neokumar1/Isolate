@@ -55,7 +55,17 @@ final class UIFixTests: XCTestCase {
     }
 
     /// Posts a double-click straight to an offscreen window; the real pointer never moves.
-    private func doubleClick<V: View>(_ view: V, size: CGSize, at point: CGPoint) {
+    /// macOS 26 does not deliver synthetic mouse events to a hosted view (a single click
+    /// on the pan bar leaves it untouched there, while macOS 15 and 27 move it). Probe once
+    /// so the double-click tests skip, rather than fail, where the harness cannot click.
+    private func requireSyntheticClicks() throws {
+        let pan = Box<Float>(0.6)
+        doubleClick(PanKnobView(pan: pan.binding, channelName: "PROBE"),
+                    size: CGSize(width: 200, height: 40), at: CGPoint(x: 40, y: 26), clicks: 1)
+        try XCTSkipIf(pan.value == 0.6, "Synthetic mouse events do not reach hosted views on this macOS")
+    }
+
+    private func doubleClick<V: View>(_ view: V, size: CGSize, at point: CGPoint, clicks: Int = 2) {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: size.width, height: size.height),
@@ -67,7 +77,7 @@ final class UIFixTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         let location = host.convert(point, to: nil)
-        for clickCount in 1...2 {
+        for clickCount in 1...clicks {
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
                                                timestamp: ProcessInfo.processInfo.systemUptime,
@@ -299,21 +309,24 @@ final class UIFixTests: XCTestCase {
 
     // MARK: - ui-5: double-click resets
 
-    func testDoubleClickResetsPanBarToCenter() {
+    func testDoubleClickResetsPanBarToCenter() throws {
+        try requireSyntheticClicks()
         let pan = Box<Float>(0.6)
         doubleClick(PanKnobView(pan: pan.binding, channelName: "VOCALS"),
                     size: CGSize(width: 200, height: 40), at: CGPoint(x: 40, y: 26))
         XCTAssertEqual(pan.value, 0, "Double-clicking the pan bar must center it, not leave it at the click point")
     }
 
-    func testDoubleClickResetsEQKnobToFlat() {
+    func testDoubleClickResetsEQKnobToFlat() throws {
+        try requireSyntheticClicks()
         let gain = Box<Float>(6)
         doubleClick(RotaryEQKnobView(bandName: "MID", freqLabel: "1.0kHz", gain: gain.binding, channelName: "VOCALS"),
                     size: CGSize(width: 80, height: 90), at: CGPoint(x: 40, y: 45))
         XCTAssertEqual(gain.value, 0, "Double-clicking an EQ knob must reset it to 0 dB")
     }
 
-    func testDoubleClickResetsHUDEqualizerNode() {
+    func testDoubleClickResetsHUDEqualizerNode() throws {
+        try requireSyntheticClicks()
         let engine = AudioEngineManager()
         engine.setStemEQ(0, low: 6, mid: 0, high: 0)
         let size = CGSize(width: 400, height: 120)

@@ -135,6 +135,9 @@ final class SeparationFixTests: XCTestCase {
     private func split(_ url: URL, progress: @escaping @Sendable (SplitProgressInfo) -> Void = { _ in }) async throws -> [URL]? {
         do {
             return try await DemucsEngine.shared.splitAudio(url: url, progressCallback: progress)
+        } catch DemucsError.modelIncompatibleWithSystem(let detail) {
+            // Isolate correctly refuses to separate here; see DemucsEngine.verifiedModel.
+            throw XCTSkip("Core ML on this macOS cannot run the model correctly: \(detail)")
         } catch DemucsError.modelNotFound(let message) {
             if ProcessInfo.processInfo.environment["ISOLATE_REQUIRE_MODEL"] == "1" { XCTFail(message); return nil }
             throw XCTSkip("Install the model to run inference: \(message)")
