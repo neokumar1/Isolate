@@ -383,6 +383,8 @@ enum AudioExporter {
             ?? folder.appending(path: ".isolate-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: replacement ?? staging) }
         try fm.copyItem(at: source, to: staging)
+        // The copy is the slow step on another volume; a cancel during it keeps the destination.
+        try Task.checkCancellation()
         if fm.fileExists(atPath: destination.path) {
             _ = try fm.replaceItemAt(destination, withItemAt: staging)
         } else {
