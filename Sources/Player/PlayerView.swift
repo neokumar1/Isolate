@@ -79,6 +79,11 @@ public struct PlayerView: View {
                 shortcutsOverlay(showsHUD: showsHUD)
             }
         }
+        .background {
+            PlayerVisibilityReporter(engine: engineManager)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
     }
     
     private func headerView(isCompactHeight: Bool) -> some View {
@@ -214,7 +219,6 @@ public struct PlayerView: View {
                 midGain: $engine.vocalEQMid,
                 highGain: $engine.vocalEQHigh,
                 isEQBypassed: $engine.vocalEQBypassed,
-                eqMagnitudes: engine.vocalEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -234,7 +238,6 @@ public struct PlayerView: View {
                 midGain: $engine.drumEQMid,
                 highGain: $engine.drumEQHigh,
                 isEQBypassed: $engine.drumEQBypassed,
-                eqMagnitudes: engine.drumEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -254,7 +257,6 @@ public struct PlayerView: View {
                 midGain: $engine.bassEQMid,
                 highGain: $engine.bassEQHigh,
                 isEQBypassed: $engine.bassEQBypassed,
-                eqMagnitudes: engine.bassEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -274,7 +276,6 @@ public struct PlayerView: View {
                 midGain: $engine.otherEQMid,
                 highGain: $engine.otherEQHigh,
                 isEQBypassed: $engine.otherEQBypassed,
-                eqMagnitudes: engine.otherEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -362,6 +363,84 @@ public struct PlayerView: View {
     }
 }
 
+/// Tells the engine whether the window showing the player can be seen. SwiftUI keeps
+/// re-rendering hidden, minimized and fully covered windows, so the engine holds back
+/// meter and timecode updates until the window is visible again.
+struct PlayerVisibilityReporter: NSViewRepresentable {
+    let engine: AudioEngineManager
+
+    func makeNSView(context: Context) -> ReporterView {
+        ReporterView(engine: engine)
+    }
+
+    func updateNSView(_ view: ReporterView, context: Context) {
+        view.engine = engine
+    }
+
+    static func dismantleNSView(_ view: ReporterView, coordinator: ()) {
+        view.observe(nil)
+    }
+
+    final class ReporterView: NSView {
+        weak var engine: AudioEngineManager?
+        private weak var observedWindow: NSWindow?
+
+        init(engine: AudioEngineManager) {
+            self.engine = engine
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) {
+            return nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observe(window)
+        }
+
+        func observe(_ window: NSWindow?) {
+            if window != nil && window === observedWindow { return }
+            let center = NotificationCenter.default
+            center.removeObserver(self)
+            observedWindow = window
+            guard let window else {
+                // Nothing of the player is on screen any more; publish as usual.
+                engine?.setUIVisible(true)
+                return
+            }
+            let windowNotifications: [Notification.Name] = [
+                NSWindow.didChangeOcclusionStateNotification,
+                NSWindow.didMiniaturizeNotification,
+                NSWindow.didDeminiaturizeNotification,
+                NSWindow.didBecomeKeyNotification
+            ]
+            for name in windowNotifications {
+                center.addObserver(self, selector: #selector(visibilityMayHaveChanged), name: name, object: window)
+            }
+            for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+                center.addObserver(self, selector: #selector(visibilityMayHaveChanged), name: name, object: nil)
+            }
+            // Report after the current SwiftUI update rather than during it.
+            DispatchQueue.main.async { [weak self] in
+                self?.reportVisibility()
+            }
+        }
+
+        @objc private func visibilityMayHaveChanged(_ notification: Notification) {
+            reportVisibility()
+        }
+
+        private func reportVisibility() {
+            guard let window = observedWindow else { return }
+            // Hiding the app or minimizing also clears .visible; checking them too keeps
+            // the result right if their notifications arrive first.
+            let isVisible = NSApp?.isHidden != true && !window.isMiniaturized && window.occlusionState.contains(.visible)
+            engine?.setUIVisible(isVisible)
+        }
+    }
+}
+
 struct StemChannelView: View {
     @Environment(AudioEngineManager.self) private var engineManager
     var channelIndex: Int = 0
@@ -374,7 +453,6 @@ struct StemChannelView: View {
     @Binding var midGain: Float
     @Binding var highGain: Float
     @Binding var isEQBypassed: Bool
-    let eqMagnitudes: [Float]
     let isAnySoloed: Bool
     let isAnyMuted: Bool
     let isPlaying: Bool
@@ -463,9 +541,9 @@ struct StemChannelView: View {
             .padding(.top, isCompactHeight ? 1 : 2)
             
             // Dynamic Island Symmetrical Dot-Matrix Waveform per stem
-            StemDynamicWaveformView(
+            StemMeterWaveformView(
+                meter: engineManager.stemMeters[channelIndex],
                 title: title,
-                magnitudes: eqMagnitudes,
                 effectiveVolume: effectiveVolume,
                 isPlaying: isPlaying
             )
@@ -517,7 +595,7 @@ struct StemChannelView: View {
             .padding(.top, isCompactHeight ? 0 : 2)
             
             // Hardware Fader with Decibel Scale & Machined Thumb
-            CustomFader(value: $volume, label: title, peak: engineManager.stemPeaks[channelIndex])
+            MeteredFader(meter: engineManager.stemMeters[channelIndex], value: $volume, label: title)
                 .frame(minHeight: isCompactHeight ? 75 : 120, maxHeight: .infinity)
             
             // Mute & Solo Hardware Switches
@@ -1041,6 +1119,37 @@ struct StemEQChannelStripView: View {
     }
 }
 
+// MARK: - Meter Leaf Views
+// Only these read a stem's meter, so a tap reading re-renders the waveform or clip LED
+// that shows it instead of the channel strip around it.
+
+struct StemMeterWaveformView: View {
+    let meter: StemMeter
+    let title: String
+    let effectiveVolume: Double
+    let isPlaying: Bool
+
+    var body: some View {
+        StemDynamicWaveformView(
+            title: title,
+            magnitudes: meter.spectrum,
+            effectiveVolume: effectiveVolume,
+            isPlaying: isPlaying
+        )
+    }
+}
+
+/// Reads only the clip state, so peak readings below full scale leave the fader alone.
+struct MeteredFader: View {
+    let meter: StemMeter
+    @Binding var value: Double
+    let label: String
+
+    var body: some View {
+        CustomFader(value: $value, label: label, isClipping: meter.isClipping)
+    }
+}
+
 // MARK: - Dynamic Island Symmetrical Dot-Matrix Stem Waveform View
 struct StemDynamicWaveformView: View {
     let title: String
@@ -1184,7 +1293,8 @@ struct AlbumArtView: View {
     var size: CGFloat = 100
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
-    @State private var dotMatrix: [[DotMatrixCell]]? = nil
+    /// Dot colours, built once per artwork rather than on every redraw.
+    @State private var dotColors: [[Color]]? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHighRes = false
     
@@ -1204,23 +1314,24 @@ struct AlbumArtView: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: size, height: size)
                         .clipped()
-                } else if let matrix = dotMatrix {
+                } else if let colors = dotColors {
+                    // The dots swell slightly with the music. The engine rounds the level, so
+                    // changes of a small fraction of a pixel do not redraw all 2,500 dots.
+                    let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterMeter.artworkEnergy) : 0.0
+                    let pulse = engineManager.isPlaying && !reduceMotion ? 1.0 + (audioEnergy * 0.05) : 1.0
+
                     // Real-Time 50x50 Full-Color RGB Dot-Matrix LED Screen
                     Canvas { context, sz in
                         let gridSize = 50
                         let cellWidth = sz.width / CGFloat(gridSize)
                         let cellHeight = sz.height / CGFloat(gridSize)
-                        
-                        let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterWaveformAmplitudes.reduce(0, +) / Float(max(1, engineManager.masterWaveformAmplitudes.count))) : 0.0
-                        let pulse = engineManager.isPlaying && !reduceMotion ? 1.0 + (audioEnergy * 0.05) : 1.0
-                        
+
                         // Uniform, crisp circular LED dot radius across all luminance levels (fill ratio 0.90)
                         let baseDotRadius = (cellWidth * 0.5) * 0.90
                         let dotRadius = min(cellWidth * 0.48, baseDotRadius * CGFloat(pulse))
                         
                         for y in 0..<gridSize {
                             for x in 0..<gridSize {
-                                let cell = matrix[y][x]
                                 let centerX = CGFloat(x) * cellWidth + (cellWidth * 0.5)
                                 let centerY = CGFloat(y) * cellHeight + (cellHeight * 0.5)
                                 
@@ -1230,13 +1341,7 @@ struct AlbumArtView: View {
                                     width: dotRadius * 2,
                                     height: dotRadius * 2
                                 )
-                                
-                                let dotColor = Color(
-                                    red: Double(cell.r),
-                                    green: Double(cell.g),
-                                    blue: Double(cell.b)
-                                )
-                                context.fill(Path(ellipseIn: dotRect), with: .color(dotColor))
+                                context.fill(Path(ellipseIn: dotRect), with: .color(colors[y][x]))
                             }
                         }
                     }
@@ -1311,11 +1416,14 @@ struct AlbumArtView: View {
     }
     
     private func updateMatrix(for img: NSImage?) {
-        guard let img = img else {
-            dotMatrix = nil
+        guard let img = img,
+              let matrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50) else {
+            dotColors = nil
             return
         }
-        dotMatrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50)
+        dotColors = matrix.map { row in
+            row.map { cell in Color(red: Double(cell.r), green: Double(cell.g), blue: Double(cell.b)) }
+        }
     }
 }
 
@@ -2343,83 +2451,102 @@ struct HUDTopBar: View {
 }
 
 // MARK: - 32-Band Dot-Matrix FFT Spectrum Visualizer
+/// 32 bars of 14 blocks drawn in one Canvas rather than 448 shape views. Block edges are
+/// rounded to device pixels in window coordinates, the way SwiftUI placed the former
+/// per-block views, so the output matches them.
 struct Spectrum32BandView: View {
     @Environment(AudioEngineManager.self) private var engineManager
-    
-    private var magnitudes: [Float] {
-        engineManager.masterEQMagnitudes
+    @Environment(\.displayScale) private var displayScale
+    @State private var theme = ThemeManager.shared
+
+    private static let barCount = 32
+    private static let blockCount = 14
+    private static let barSpacing: CGFloat = 2.0
+    private static let blockSpacing: CGFloat = 1.5
+
+    /// Items plus the gaps between them, added in the order a stack adds them. Summing
+    /// differently can flip an edge that lands exactly on a half pixel.
+    private static func stackLength(count: Int, item: CGFloat, spacing: CGFloat) -> CGFloat {
+        var length: CGFloat = 0
+        for index in 0..<count {
+            length += item
+            if index < count - 1 { length += spacing }
+        }
+        return length
     }
-    
+
     var body: some View {
+        // Read observable state here rather than in the renderer so each reading redraws.
+        let magnitudes = engineManager.masterMeter.spectrum
+        let barColor = theme.spectrumBarDefault
+        let peakColor = theme.accentRed
+        let unlitOpacity = theme.isDark ? 0.05 : 0.08
+        let scale = max(1, displayScale)
+
         GeometryReader { geo in
-            let totalWidth = geo.size.width
-            let totalHeight = geo.size.height
-            let barCount = 32
-            let spacing: CGFloat = 2.0
-            let totalSpacing = spacing * CGFloat(barCount - 1)
-            let barWidth = max(2.0, (totalWidth - totalSpacing) / CGFloat(barCount))
-            
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    let mag = index < magnitudes.count ? CGFloat(magnitudes[index]) : 0.0
-                    FFT32BarColumn(magnitude: mag, height: totalHeight, width: barWidth, barIndex: index)
+            let size = geo.size
+            let origin = geo.frame(in: .global).origin
+            Canvas { context, _ in
+                let barCount = Self.barCount
+                let blockCount = Self.blockCount
+                let barWidth = max(2.0, (size.width - Self.barSpacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+                let blockHeight = max(1.5, (size.height - Self.blockSpacing * CGFloat(blockCount - 1)) / CGFloat(blockCount))
+                // Bars are centered and blocks bottom-aligned, as in the former HStack and VStacks.
+                let rowWidth = Self.stackLength(count: barCount, item: barWidth, spacing: Self.barSpacing)
+                let columnHeight = Self.stackLength(count: blockCount, item: blockHeight, spacing: Self.blockSpacing)
+                // Positions accumulate in window space as the stacks laid them out, then round
+                // to device pixels; the canvas itself sits at its rounded origin.
+                func snapped(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+                let canvasX = snapped(origin.x), canvasY = snapped(origin.y)
+                let block = RoundedRectangle(cornerRadius: 0.5)
+
+                var x = origin.x + (size.width - rowWidth) / 2
+                for index in 0..<barCount {
+                    let magnitude = index < magnitudes.count ? CGFloat(magnitudes[index]) : 0.0
+                    let activeBlocksFloat = max(0.0, min(CGFloat(blockCount), magnitude * CGFloat(blockCount)))
+                    let minX = snapped(x) - canvasX
+                    let maxX = snapped(x + barWidth) - canvasX
+
+                    // Top block first, as the VStack listed them.
+                    var y = origin.y + (size.height - columnHeight)
+                    for blockIdx in (0..<blockCount).reversed() {
+                        let blockBottomLevel = CGFloat(blockIdx)
+                        let fillFraction: CGFloat = {
+                            if activeBlocksFloat >= blockBottomLevel + 1 {
+                                return 1.0
+                            } else if activeBlocksFloat <= blockBottomLevel {
+                                return 0.0
+                            } else {
+                                return activeBlocksFloat - blockBottomLevel
+                            }
+                        }()
+
+                        let isTopTwoBlocks = blockIdx >= (blockCount - 2)
+                        let isUpperMidBlock = blockIdx >= (blockCount - 5)
+                        let activeColor: Color = {
+                            if isTopTwoBlocks {
+                                // Peak blocks light red only while signal reaches them.
+                                return fillFraction > 0 ? peakColor : barColor
+                            } else if isUpperMidBlock {
+                                return barColor
+                            } else {
+                                return barColor.opacity(0.88)
+                            }
+                        }()
+
+                        let minY = snapped(y) - canvasY
+                        let maxY = snapped(y + blockHeight) - canvasY
+                        let rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                        context.fill(
+                            block.path(in: rect),
+                            with: .color(activeColor.opacity(fillFraction > 0 ? max(0.2, fillFraction) : unlitOpacity))
+                        )
+                        y = y + blockHeight + Self.blockSpacing
+                    }
+                    x = x + barWidth + Self.barSpacing
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-    }
-}
-
-struct FFT32BarColumn: View {
-    @State private var theme = ThemeManager.shared
-    let magnitude: CGFloat
-    let height: CGFloat
-    let width: CGFloat
-    let barIndex: Int
-    
-    private let blockCount = 14
-    private let blockSpacing: CGFloat = 1.5
-    
-    var body: some View {
-        let totalSpacing = blockSpacing * CGFloat(blockCount - 1)
-        let blockHeight = max(1.5, (height - totalSpacing) / CGFloat(blockCount))
-        let activeBlocksFloat = max(0.0, min(CGFloat(blockCount), magnitude * CGFloat(blockCount)))
-        
-        VStack(spacing: blockSpacing) {
-            ForEach((0..<blockCount).reversed(), id: \.self) { blockIdx in
-                let blockBottomLevel = CGFloat(blockIdx)
-                let blockTopLevel = CGFloat(blockIdx + 1)
-                
-                let fillFraction: CGFloat = {
-                    if activeBlocksFloat >= blockTopLevel {
-                        return 1.0
-                    } else if activeBlocksFloat <= blockBottomLevel {
-                        return 0.0
-                    } else {
-                        return activeBlocksFloat - blockBottomLevel
-                    }
-                }()
-                
-                let isTopTwoBlocks = blockIdx >= (blockCount - 2)
-                let isUpperMidBlock = blockIdx >= (blockCount - 5)
-                
-                let activeColor: Color = {
-                    if isTopTwoBlocks {
-                        // Peak blocks light red only while signal reaches them.
-                        return fillFraction > 0 ? theme.accentRed : theme.spectrumBarDefault
-                    } else if isUpperMidBlock {
-                        return theme.spectrumBarDefault
-                    } else {
-                        return theme.spectrumBarDefault.opacity(0.88)
-                    }
-                }()
-                
-                RoundedRectangle(cornerRadius: 0.5)
-                    .fill(activeColor.opacity(fillFraction > 0 ? max(0.2, fillFraction) : (theme.isDark ? 0.05 : 0.08)))
-                    .frame(width: width, height: blockHeight)
-            }
-        }
-        .frame(width: width, height: height, alignment: .bottom)
     }
 }
 
@@ -2567,7 +2694,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.vocalPan,
                 isMuted: engineManager.vocalMuted,
                 isSolo: engineManager.vocalSolo,
-                magnitudes: engineManager.vocalEQMagnitudes,
+                meter: engineManager.stemMeters[0],
                 accentColor: theme.textPrimary
             )
             StemChannelCardView(
@@ -2577,7 +2704,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.drumPan,
                 isMuted: engineManager.drumMuted,
                 isSolo: engineManager.drumSolo,
-                magnitudes: engineManager.drumEQMagnitudes,
+                meter: engineManager.stemMeters[1],
                 accentColor: theme.textPrimary
             )
             StemChannelCardView(
@@ -2587,7 +2714,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.bassPan,
                 isMuted: engineManager.bassMuted,
                 isSolo: engineManager.bassSolo,
-                magnitudes: engineManager.bassEQMagnitudes,
+                meter: engineManager.stemMeters[2],
                 accentColor: theme.textPrimary
             )
             StemChannelCardView(
@@ -2597,7 +2724,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.otherPan,
                 isMuted: engineManager.otherMuted,
                 isSolo: engineManager.otherSolo,
-                magnitudes: engineManager.otherEQMagnitudes,
+                meter: engineManager.stemMeters[3],
                 accentColor: theme.textPrimary
             )
         }
@@ -2615,7 +2742,7 @@ struct StemChannelCardView: View {
     let pan: Float
     let isMuted: Bool
     let isSolo: Bool
-    let magnitudes: [Float]
+    let meter: StemMeter
     let accentColor: Color
     
     private var isAudible: Bool {
@@ -2623,17 +2750,10 @@ struct StemChannelCardView: View {
         return !isMuted && (!anySolo || isSolo)
     }
     
-    private var clampedEnergy: CGFloat {
-        guard engineManager.isPlaying && isAudible else { return 0.0 }
-        let avg = magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))
-        let energy = CGFloat(avg) * 2.8
-        return max(0.0, min(1.0, energy))
-    }
-    
     var body: some View {
         VStack(spacing: 3) {
             headerRow
-            vuMeterRow
+            StemVUMeterRow(meter: meter, isActive: engineManager.isPlaying && isAudible)
             actionsRow
         }
         .frame(maxWidth: .infinity)
@@ -2658,22 +2778,6 @@ struct StemChannelCardView: View {
                 .font(.custom("DotGothic16-Regular", size: 8.0))
                 .foregroundColor(isMuted || isSolo ? theme.accentRed : theme.textMuted)
         }
-    }
-    
-    private var vuMeterRow: some View {
-        HStack(spacing: 1.5) {
-            ForEach(0..<10, id: \.self) { seg in
-                let segThreshold = CGFloat(seg + 1) / 10.0
-                let isLit = clampedEnergy >= segThreshold
-                let isPeak = seg >= 8
-                let segColor: Color = isPeak ? theme.accentRed : theme.spectrumBarDefault
-                
-                Rectangle()
-                    .fill(isLit ? segColor : theme.knobArcTrack)
-                    .frame(height: 5)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 1))
     }
     
     private var actionsRow: some View {
@@ -2725,6 +2829,38 @@ struct StemChannelCardView: View {
             .accessibilityValue(isSolo ? "On" : "Off")
             .help("Solo \(name.capitalized)")
         }
+    }
+}
+
+/// The balance card's 10-segment VU row. It reads the stem meter itself, so readings
+/// re-render this row and not the card's labels and buttons.
+struct StemVUMeterRow: View {
+    let meter: StemMeter
+    let isActive: Bool
+    @State private var theme = ThemeManager.shared
+    
+    private var clampedEnergy: CGFloat {
+        guard isActive else { return 0.0 }
+        let magnitudes = meter.spectrum
+        let avg = magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))
+        let energy = CGFloat(avg) * 2.8
+        return max(0.0, min(1.0, energy))
+    }
+    
+    var body: some View {
+        HStack(spacing: 1.5) {
+            ForEach(0..<10, id: \.self) { seg in
+                let segThreshold = CGFloat(seg + 1) / 10.0
+                let isLit = clampedEnergy >= segThreshold
+                let isPeak = seg >= 8
+                let segColor: Color = isPeak ? theme.accentRed : theme.spectrumBarDefault
+                
+                Rectangle()
+                    .fill(isLit ? segColor : theme.knobArcTrack)
+                    .frame(height: 5)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 1))
     }
 }
 
@@ -2895,7 +3031,7 @@ struct HUDEqualizerCurveView: View {
                     gridLines(w: w, h: h, midY: midY, x100: x100, x1k: x1k, x10k: x10k)
                     
                     // 2. Real-time FFT Backdrop
-                    fftBackdrop(w: w, h: h)
+                    HUDSpectrumBackdrop(stemIndex: selectedStemIndex, height: h)
                     
                     // 3. Mathematical Biquad Curve Path
                     curvePath(w: w, h: h, midY: midY)
@@ -3136,31 +3272,6 @@ struct HUDEqualizerCurveView: View {
             .position(x: x10k, y: h - 5)
     }
     
-    @ViewBuilder
-    private func fftBackdrop(w: CGFloat, h: CGFloat) -> some View {
-        let mags: [Float] = {
-            switch selectedStemIndex {
-            case 0: return engineManager.vocalEQMagnitudes
-            case 1: return engineManager.drumEQMagnitudes
-            case 2: return engineManager.bassEQMagnitudes
-            case 3: return engineManager.otherEQMagnitudes
-            default: return engineManager.masterEQMagnitudes
-            }
-        }()
-        
-        HStack(alignment: .bottom, spacing: 2) {
-            ForEach(0..<min(24, mags.count), id: \.self) { i in
-                let mag = CGFloat(mags[i])
-                let barH = max(2.0, min(h, mag * h * 1.5))
-                Rectangle()
-                    .fill(theme.spectrumBarDefault.opacity(0.10))
-                    .frame(height: barH)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .opacity(engineManager.isPlaying ? 1.0 : 0.0)
-    }
-    
     private func curvePath(w: CGFloat, h: CGFloat, midY: CGFloat) -> Path {
         let low = currentLow
         let mid = currentMid
@@ -3275,6 +3386,34 @@ struct HUDEqualizerCurveView: View {
         default:
             break
         }
+    }
+}
+
+/// Live spectrum behind the HUD EQ curve (index 4 is the master). Reading the meter here
+/// re-renders only these bars on each tap reading, not the curve, grid and nodes.
+struct HUDSpectrumBackdrop: View {
+    @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
+    let stemIndex: Int
+    let height: CGFloat
+    
+    var body: some View {
+        let h = height
+        let mags = engineManager.stemMeters.indices.contains(stemIndex)
+            ? engineManager.stemMeters[stemIndex].spectrum
+            : engineManager.masterMeter.spectrum
+        
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<min(24, mags.count), id: \.self) { i in
+                let mag = CGFloat(mags[i])
+                let barH = max(2.0, min(h, mag * h * 1.5))
+                Rectangle()
+                    .fill(theme.spectrumBarDefault.opacity(0.10))
+                    .frame(height: barH)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .opacity(engineManager.isPlaying ? 1.0 : 0.0)
     }
 }
 

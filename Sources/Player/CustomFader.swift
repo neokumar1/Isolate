@@ -5,7 +5,8 @@ struct CustomFader: View {
     @Environment(\.isEnabled) private var isEnabled
     @Binding var value: Double
     let label: String
-    var peak: Float = 0
+    /// True while the channel's latest peak is at or above full scale.
+    var isClipping = false
     
     @Bindable private var theme = ThemeManager.shared
     @State private var startValue: Double? = nil
@@ -143,7 +144,7 @@ struct CustomFader: View {
                 
                 // 3. Vertical Track Slot & Active Level Meter with Peak-Hold Clip LED
                 ZStack(alignment: .top) {
-                    let isLit = peak >= 1 || isClippingHeld
+                    let isLit = isClipping || isClippingHeld
                     Circle()
                         .fill(isLit ? theme.accentRed : theme.knobArcTrack)
                         .frame(width: 4.5, height: 4.5)
@@ -235,11 +236,12 @@ struct CustomFader: View {
         .onKeyPress(.downArrow) { adjust(-0.02); return .handled }
         .contextMenu { Button("Reset to 0 dB") { value = 1 } }
         .simultaneousGesture(TapGesture(count: 2).onEnded { value = 1; Haptics.playAlignment() })
-        .onChange(of: peak) { oldPeak, newPeak in
-            if newPeak >= 1 {
+        .onChange(of: isClipping) { _, clipping in
+            if clipping {
                 clipHoldTask?.cancel()
                 isClippingHeld = true
-            } else if oldPeak >= 1 {
+            } else {
+                // The peak just fell below full scale: hold the LED for 1.2 s.
                 triggerClipHold()
             }
         }
@@ -267,7 +269,7 @@ struct CustomFader: View {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
             // This task starts when the peak falls below clipping. A new clip
-            // cancels it; avoid reading the stale peak captured with this view.
+            // cancels it; avoid reading the stale clip state captured with this view.
             withAnimation(.easeOut(duration: 0.35)) {
                 isClippingHeld = false
             }

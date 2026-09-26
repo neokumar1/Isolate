@@ -59,8 +59,8 @@ final class EngineFixTests: XCTestCase {
         let end = clock.now + duration
         while clock.now < end {
             try await Task.sleep(for: .milliseconds(15))
-            master = max(master, engine.masterWaveformAmplitudes.max() ?? 0)
-            for index in stems.indices { stems[index] = max(stems[index], engine.stemPeaks[index]) }
+            master = max(master, engine.masterMeter.waveform.max() ?? 0)
+            for index in stems.indices { stems[index] = max(stems[index], engine.stemMeters[index].peak) }
         }
         return (master, stems)
     }
@@ -250,7 +250,7 @@ final class EngineFixTests: XCTestCase {
         let stems = try await observeMeters(engine, for: .milliseconds(400)).stems
         XCTAssertTrue(stems.allSatisfy { $0 > 0.05 })
         engine.isBypassed = true
-        XCTAssertEqual(engine.stemPeaks, [0, 0, 0, 0])
+        XCTAssertEqual(engine.stemMeters.map(\.peak), [0, 0, 0, 0])
         let bypassed = try await observeMeters(engine)
         XCTAssertEqual(bypassed.stems, [0, 0, 0, 0], "Silenced stems must not show activity")
         XCTAssertGreaterThan(bypassed.master, 0.1, "The original is audible and metered")
