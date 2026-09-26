@@ -203,7 +203,13 @@ enum AudioExporter {
         // Store entries: PCM and FLAC barely deflate, and compressing them was the slowest export step.
         process.arguments = ["-q", "-0", archive.path, "--"] + names
         try process.run()
+        // Poll so a cancelled export also stops zip.
+        while process.isRunning {
+            if Task.isCancelled { process.terminate() }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         process.waitUntilExit()
+        try Task.checkCancellation()
         guard process.terminationStatus == 0 else { throw DemucsError.conversionFailed("Could not create the stem archive.") }
         // Best effort: an unflagged name still extracts correctly on macOS.
         try? markUTF8Names(in: archive)
@@ -325,9 +331,15 @@ enum AudioExporter {
 
     static func publish(_ source: URL, to destination: URL) throws {
         let fm = FileManager.default
-        // Copy alongside the destination first, including when exporting to another volume.
-        let staging = destination.deletingLastPathComponent().appending(path: ".isolate-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: staging) }
+        let folder = destination.deletingLastPathComponent()
+        // Copy onto the destination volume first, including when exporting to another volume. The system's
+        // replacement directory keeps a copy interrupted by quitting out of the user's folder; volumes that
+        // cannot provide one fall back to a hidden file beside the destination.
+        let replacement = try? fm.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                      appropriateFor: folder, create: true)
+        let staging = replacement?.appending(path: destination.lastPathComponent)
+            ?? folder.appending(path: ".isolate-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: replacement ?? staging) }
         try fm.copyItem(at: source, to: staging)
         if fm.fileExists(atPath: destination.path) {
             _ = try fm.replaceItemAt(destination, withItemAt: staging)

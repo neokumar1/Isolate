@@ -252,6 +252,55 @@ final class ExporterFixTests: XCTestCase {
         XCTAssertEqual(values.last, 1)
     }
 
+    func testCancellationStopsExportsBeforeAnythingIsPublished() async throws {
+        let sources = try stems(amplitudes: [0.2, 0.2, 0.2, 0.2])
+        // Cancel while the first stem renders, then just before zip runs.
+        for threshold in [0.0, 0.8] {
+            let destination = directory.appending(path: "cancelled-\(threshold).zip")
+            let task = Task.detached {
+                try AudioExporter.archive(sources: sources, title: "Cancel", format: .wav, to: destination) { value in
+                    if value >= threshold { withUnsafeCurrentTask { $0?.cancel() } }
+                }
+            }
+            do {
+                _ = try await task.value
+                XCTFail("A cancelled stem export must not complete (threshold \(threshold))")
+            } catch is CancellationError {}
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        }
+        let long = try audio("long.wav", frames: 441_000) { self.tone($0) }
+        let mix = directory.appending(path: "cancelled-mix.wav")
+        let log = ProgressLog()
+        let task = Task.detached {
+            try AudioExporter.render(sources: [.init(url: long)], to: mix, limitPeak: true) { value in
+                log.append(value)
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+        }
+        do {
+            try await task.value
+            XCTFail("A cancelled mix render must not complete")
+        } catch is CancellationError {}
+        XCTAssertEqual(log.values.count, 1, "Rendering stops at the next block")
+    }
+
+    func testPublishLeavesOnlyTheDestinationInItsFolder() throws {
+        let fm = FileManager.default
+        let folder = directory.appending(path: "Exports")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let source = directory.appending(path: "rendered.bin")
+        let destination = folder.appending(path: "Song_Mix.wav")
+        try Data("first".utf8).write(to: source)
+        try AudioExporter.publish(source, to: destination)
+        try Data("second".utf8).write(to: source)
+        try AudioExporter.publish(source, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), Data("second".utf8))
+        XCTAssertTrue(fm.fileExists(atPath: source.path), "Publishing copies; the caller removes its rendered file")
+        XCTAssertThrowsError(try AudioExporter.publish(directory.appending(path: "missing.bin"), to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), Data("second".utf8), "A failed publish keeps the previous export")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: folder.path), ["Song_Mix.wav"], "No staging files are left behind")
+    }
+
     func testLimitedMixIsSampleAlignedAndKeepsItsLastFrames() throws {
         // An impulse at a known frame and a tone filling the final 200 frames.
         let source = try audio("aligned.wav", frames: 44_100) { frame in
