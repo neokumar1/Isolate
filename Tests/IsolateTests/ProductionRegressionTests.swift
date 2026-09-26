@@ -11,6 +11,8 @@ final class ProductionRegressionTests: XCTestCase {
     override func setUpWithError() throws {
         directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Loading a track must not play through the speakers; playback tests start it themselves.
+        addTeardownBlock(Hardening.disableAutoPlay())
     }
 
     override func tearDownWithError() throws {
@@ -19,7 +21,7 @@ final class ProductionRegressionTests: XCTestCase {
 
     private func audio(_ name: String = "source.wav", seconds: Double = 0.2,
                        sampleRate: Double = 44_100, channels: AVAudioChannelCount = 2,
-                       amplitude: Float = 0.2) throws -> URL {
+                       amplitude: Float = 0.2, frequency: Float = 440) throws -> URL {
         let url = directory.appending(path: name)
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
                                    channels: channels, interleaved: false)!
@@ -27,7 +29,7 @@ final class ProductionRegressionTests: XCTestCase {
         buffer.frameLength = buffer.frameCapacity
         for channel in 0..<Int(channels) {
             for frame in 0..<Int(buffer.frameLength) {
-                buffer.floatChannelData![channel][frame] = amplitude * sin(Float(frame) * 2 * .pi * 440 / Float(sampleRate))
+                buffer.floatChannelData![channel][frame] = amplitude * sin(Float(frame) * 2 * .pi * frequency / Float(sampleRate))
             }
         }
         let writer = try AVAudioFile(forWriting: url, settings: format.settings)
@@ -44,7 +46,10 @@ final class ProductionRegressionTests: XCTestCase {
 
     private func track(seconds: Double = 0.2) throws -> TrackModel {
         let original = try audio("original.wav", seconds: seconds)
-        let urls = try DemucsEngine.stemNames.map { try audio("\($0).wav", seconds: seconds) }
+        // A different tone per stem, so a swapped stem label changes the audio a test reads.
+        let urls = try zip(DemucsEngine.stemNames, Hardening.stemFrequencies).map {
+            try audio("\($0).wav", seconds: seconds, frequency: Float($1))
+        }
         return TrackModel(id: original.path, title: "Regression", originalURL: original,
                           vocalStemURL: urls[0], bassStemURL: urls[2], drumStemURL: urls[1], otherStemURL: urls[3])
     }
@@ -286,9 +291,10 @@ final class ProductionRegressionTests: XCTestCase {
     func testPlaybackStopsAtEndAndSeekingClampsSafely() async throws {
         let engine = AudioEngineManager()
         await engine.loadTrack(try track())
-        if !engine.isPlaying { engine.togglePlayback() }
-        try await Task.sleep(for: .seconds(1))
-        XCTAssertFalse(engine.isPlaying)
+        try Hardening.requirePlayback(engine)
+        // The end arrives after the output device's latency, which varies by device (AirPlay adds seconds).
+        let ended = await Hardening.wait(timeout: .seconds(8)) { !engine.isPlaying }
+        XCTAssertTrue(ended, "A 0.2 s track must stop at its end")
         XCTAssertEqual(engine.playbackProgress, 1)
         engine.seek(toPercentage: -1)
         XCTAssertEqual(engine.playbackProgress, 0)
@@ -308,13 +314,18 @@ final class ProductionRegressionTests: XCTestCase {
     func testUnknownMetadataIsNotFabricatedAndCannotArriveAfterUnload() async throws {
         let engine = AudioEngineManager()
         await engine.loadTrack(try track())
-        try await Task.sleep(for: .milliseconds(100))
+        // The defaults equal the expected values, so first wait until the metadata read has
+        // finished: the probed bit depth replaces the "24-BIT PCM" placeholder.
+        let read = await Hardening.wait { engine.trackBitDepth == "32-BIT" }
+        XCTAssertTrue(read, "The metadata read never finished")
         XCTAssertEqual(engine.trackBPM, "BPM UNKNOWN")
         XCTAssertEqual(engine.trackMusicalKey, "KEY UNKNOWN")
+        XCTAssertEqual(engine.trackArtist, "Isolate")
+        XCTAssertNil(engine.albumArt)
         engine.unloadTrack()
-        try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(engine.trackTitle, "")
         XCTAssertNil(engine.albumArt)
+        // SuiteHardeningTests covers tags that are still loading when the track is unloaded.
     }
 
     func testImportPersistsInProvidedSwiftDataContext() async throws {
@@ -331,11 +342,16 @@ final class ProductionRegressionTests: XCTestCase {
         try context.save()
         let importer = ImportCoordinator()
         let engine = AudioEngineManager()
+        // An existing entry takes the reimport branch; SuiteHardeningTests covers new entries.
         importer.importFiles([model.originalURL], context: context, engine: engine)
-        while importer.isImporting { try await Task.sleep(for: .milliseconds(20)) }
+        await Hardening.finish(importer)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<TrackModel>()), 1)
         XCTAssertEqual(engine.currentTrackID, model.id)
         XCTAssertEqual(model.vocalStemURL, cache.appending(path: "vocals.wav"))
+        XCTAssertEqual(model.drumStemURL, cache.appending(path: "drums.wav"))
+        XCTAssertEqual(model.bassStemURL, cache.appending(path: "bass.wav"))
+        XCTAssertEqual(model.otherStemURL, cache.appending(path: "other.wav"))
+        XCTAssertEqual(try Hardening.dominantFrequency(of: model.drumStemURL), Hardening.stemFrequencies[1])
         engine.unloadTrack()
     }
 
@@ -389,7 +405,9 @@ final class ProductionRegressionTests: XCTestCase {
         XCTAssertTrue(engine.hasLoadedTrack)
         XCTAssertEqual(engine.currentTrackName, "RENAMED TRACK")
         XCTAssertEqual(engine.trackTitle, "Renamed track")
-        try await Task.sleep(for: .milliseconds(200))
+        // The source was moved, so the read ends on fallbacks that equal the defaults. Repeat
+        // that read here so the engine's own request has had as long as it needs.
+        await Hardening.settleMetadata(for: originalURL)
         XCTAssertEqual(engine.trackTitle, "Renamed track", "Metadata fallback must preserve the library title")
         XCTAssertNil(engine.errorMessage)
         engine.unloadTrack()
@@ -402,7 +420,9 @@ final class ProductionRegressionTests: XCTestCase {
         engine.updateTrackTitle(id: source.id, newTitle: "My rehearsal")
         XCTAssertEqual(engine.trackTitle, "My rehearsal")
         XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "My rehearsal")
-        try await Task.sleep(for: .milliseconds(200))
+        // Wait for the pending metadata read to land: its probe replaces the bit-depth placeholder.
+        let read = await Hardening.wait { engine.trackBitDepth == "32-BIT" }
+        XCTAssertTrue(read, "The metadata read never finished")
         XCTAssertEqual(engine.trackTitle, "My rehearsal")
         XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "My rehearsal")
         engine.updateTrackTitle(id: "another track", newTitle: "Unrelated")

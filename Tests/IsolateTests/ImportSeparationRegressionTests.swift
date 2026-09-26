@@ -56,21 +56,9 @@ final class ImportSeparationRegressionTests: XCTestCase {
 
     func testOppositePhaseStereoSeparatesIntoFiniteAudibleStems() async throws {
         let source = try audio(rightGain: -1)
-        let stems: [URL]
-        do {
-            stems = try await DemucsEngine.shared.splitAudio(url: source) { _ in }
-        } catch DemucsError.modelNotFound(let message) {
-            if ProcessInfo.processInfo.environment["ISOLATE_REQUIRE_MODEL"] == "1" {
-                XCTFail(message)
-                return
-            }
-            throw XCTSkip("Install the model to run inference: \(message)")
-        }
-        defer {
-            if let directory = stems.first?.deletingLastPathComponent(), StemCache.owns(directory) {
-                try? FileManager.default.removeItem(at: directory)
-            }
-        }
+        // Skips only when no model is installed; a model that fails to load fails the test.
+        let stems = try await Hardening.splitRequiringModel(source)
+        defer { Hardening.removeCache(stems) }
         XCTAssertEqual(stems.count, 4)
         var peak: Float = 0
         for url in stems {
@@ -116,11 +104,7 @@ final class ImportSeparationRegressionTests: XCTestCase {
         XCTAssertTrue(importer.acceptDrop([provider], context: container.mainContext, engine: engine))
         XCTAssertTrue(importer.isImporting)
         XCTAssertFalse(importer.acceptDrop([provider], context: container.mainContext, engine: engine))
-        let deadline = Date.now.addingTimeInterval(5)
-        while importer.isImporting, Date.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertFalse(importer.isImporting)
+        await Hardening.finish(importer, timeout: .seconds(5))
         XCTAssertNotNil(engine.errorMessage)
         XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<TrackModel>()), 0)
         XCTAssertFalse(importer.acceptDrop([NSItemProvider(object: "text" as NSString)], context: container.mainContext, engine: engine))
