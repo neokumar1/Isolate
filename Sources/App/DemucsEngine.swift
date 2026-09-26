@@ -13,6 +13,7 @@ public enum DemucsError: LocalizedError, Sendable {
     case conversionFailed(String)
     /// A source file that cannot be read; the message is already user-facing.
     case unreadableSource(String)
+    case insufficientDiskSpace(needed: Int64, available: Int64)
     case invalidAudioFormat
     case cancelled
 
@@ -24,6 +25,9 @@ public enum DemucsError: LocalizedError, Sendable {
         case .assetReaderFailed(let msg): return "Audio Reading Failed: \(msg)"
         case .conversionFailed(let msg): return "Audio Conversion Failed: \(msg)"
         case .unreadableSource(let msg): return msg
+        case .insufficientDiskSpace(let needed, let available):
+            let size = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            return "Not enough disk space: separating this track needs about \(size(needed)) free, and \(size(available)) is available."
         case .invalidAudioFormat: return "Invalid Audio Format"
         case .cancelled: return "Operation Cancelled"
         }
@@ -257,6 +261,12 @@ public actor DemucsEngine {
 
     private var isSeparating = false
 
+    /// Launch-time cache cleanup that cannot race a separation this process starts.
+    public func removeAbandonedStaging() {
+        guard !isSeparating else { return }
+        StemCache.removeAbandonedStaging()
+    }
+
     /// Uses a rolling ten-second overlap accumulator and writes completed hops to disk.
     public func splitAudio(
         url: URL,
@@ -271,6 +281,8 @@ public actor DemucsEngine {
             isSeparating = false
             scheduleModelRelease()
         }
+        // Holding the only separation slot means no other staging folder is live.
+        StemCache.removeAbandonedStaging()
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let startTime = CACurrentMediaTime()
@@ -285,6 +297,7 @@ public actor DemucsEngine {
             ))
         }
         try Task.checkCancellation()
+        try await StreamingAudio.downloadIfNeeded(url) { report(0, "DOWNLOADING FROM ICLOUD...") }
         report(0, "CHECKING AUDIO CACHE...")
         let key = try StemCache.key(for: url)
         let destination = StemCache.root.appending(path: key, directoryHint: .isDirectory)
@@ -292,12 +305,13 @@ public actor DemucsEngine {
             report(1, "LOADED FROM CACHE")
             return cached
         }
+        let fm = FileManager.default
+        try fm.createDirectory(at: StemCache.root, withIntermediateDirectories: true)
+        try StemCache.ensureSpace(forFrames: StreamingAudio.declaredFrames(of: url))
         report(0.01, "LOADING SEPARATION MODEL...")
         let model = try await loadedModel()
         try Task.checkCancellation()
         try Self.validateModel(model)
-        let fm = FileManager.default
-        try fm.createDirectory(at: StemCache.root, withIntermediateDirectories: true)
         let staging = StemCache.root.appending(path: ".partial-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }

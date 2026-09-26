@@ -373,4 +373,99 @@ final class SeparationFixTests: XCTestCase {
         let loadedAgain = await engine.isModelLoaded
         XCTAssertTrue(loadedAgain)
     }
+
+    // MARK: - Abandoned staging (separation-3)
+
+    func testAbandonedStagingSweepKeepsPublishedCaches() throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: StemCache.root, withIntermediateDirectories: true)
+        let partial = StemCache.root.appending(path: ".partial-\(UUID().uuidString)")
+        let backup = StemCache.root.appending(path: ".backup-\(UUID().uuidString)")
+        let published = StemCache.root.appending(path: "published-\(UUID().uuidString)")
+        for folder in [partial, backup, published] {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("audio".utf8).write(to: folder.appending(path: "original.wav"))
+        }
+        defer { try? fm.removeItem(at: published) }
+        StemCache.removeAbandonedStaging()
+        XCTAssertFalse(fm.fileExists(atPath: partial.path))
+        XCTAssertFalse(fm.fileExists(atPath: backup.path))
+        XCTAssertTrue(fm.fileExists(atPath: published.appending(path: "original.wav").path))
+    }
+
+    func testSeparationStartSweepsAbandonedStaging() async throws {
+        let source = try stereo("sweep.wav", amplitude: 0.21)
+        let cache = try cache(for: source)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let partial = StemCache.root.appending(path: ".partial-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
+        let stems = try await DemucsEngine.shared.splitAudio(url: source) { _ in }
+        XCTAssertEqual(stems.first?.deletingLastPathComponent().standardizedFileURL, cache.standardizedFileURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+    }
+
+    // MARK: - iCloud Drive (separation-4)
+
+    func testLocalFilesSkipTheICloudDownload() async throws {
+        let source = try stereo("local.wav")
+        XCTAssertFalse(StreamingAudio.isCloudPlaceholder(source))
+        var started = false
+        try await StreamingAudio.downloadIfNeeded(source) { started = true }
+        XCTAssertFalse(started)
+    }
+
+    func testICloudWaitFinishesFailsOfflineAndHonoursCancel() async throws {
+        var polls = 0
+        try await StreamingAudio.waitForDownload(named: "a.flac", interval: .milliseconds(1), isOffline: { false }) {
+            polls += 1
+            return polls == 3
+        }
+        XCTAssertEqual(polls, 3)
+
+        do {
+            try await StreamingAudio.waitForDownload(named: "a.flac", interval: .milliseconds(1), isOffline: { true }) { false }
+            XCTFail("An offline wait must fail")
+        } catch DemucsError.unreadableSource(let message) {
+            XCTAssertTrue(message.contains("iCloud Drive") && message.contains("internet"), message)
+        }
+
+        do {
+            try await StreamingAudio.waitForDownload(named: "a.flac", interval: .milliseconds(1), isOffline: { false }) {
+                throw CocoaError(.ubiquitousFileUnavailable)
+            }
+            XCTFail("A download error must fail the wait")
+        } catch DemucsError.unreadableSource(let message) {
+            XCTAssertTrue(message.contains("could not be downloaded"), message)
+        }
+
+        let waiting = Task {
+            try await StreamingAudio.waitForDownload(named: "a.flac", interval: .milliseconds(20), isOffline: { false }) { false }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let cancelled = Date.now
+        waiting.cancel()
+        do {
+            try await waiting.value
+            XCTFail("Cancelling must end the wait")
+        } catch is CancellationError {
+            XCTAssertLessThan(Date.now.timeIntervalSince(cancelled), 1)
+        }
+    }
+
+    // MARK: - Disk space (separation-7)
+
+    func testDiskSpacePreflightExplainsTheShortfall() throws {
+        let minute = 44_100 * 60
+        // Five Float32 stereo files: the original and four stems.
+        XCTAssertEqual(StemCache.requiredBytes(forFrames: minute), Int64(minute) * 8 * 5 + (64 << 20))
+        XCTAssertNoThrow(try StemCache.ensureSpace(needed: 1_000, available: nil))
+        XCTAssertNoThrow(try StemCache.ensureSpace(needed: 1_000, available: 1_000))
+        XCTAssertThrowsError(try StemCache.ensureSpace(needed: 6_000_000_000, available: 4_000_000_000)) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.hasPrefix("Not enough disk space"), message)
+            XCTAssertTrue(message.contains("6 GB") && message.contains("4 GB"), message)
+        }
+        XCTAssertNoThrow(try StemCache.ensureSpace(forFrames: nil))
+        XCTAssertNoThrow(try StemCache.ensureSpace(forFrames: 44_100))
+    }
 }

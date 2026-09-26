@@ -1,5 +1,7 @@
 import AVFoundation
 import AudioToolbox
+import Network
+import os
 
 /// Disk-backed audio preparation keeps memory independent of track duration.
 enum StreamingAudio {
@@ -198,6 +200,50 @@ enum StreamingAudio {
         }
     }
 
+    // MARK: - iCloud Drive
+
+    /// True for an iCloud Drive file whose contents have been evicted from this Mac.
+    static func isCloudPlaceholder(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
+        return values?.isUbiquitousItem == true && values?.ubiquitousItemDownloadingStatus == .notDownloaded
+    }
+
+    /// Reading an evicted file blocks inside the kernel until iCloud delivers it,
+    /// with no status and no way to cancel. Download it explicitly and wait instead.
+    static func downloadIfNeeded(_ url: URL, onStart: () -> Void) async throws {
+        guard isCloudPlaceholder(url) else { return }
+        onStart()
+        let name = url.lastPathComponent
+        do { try FileManager.default.startDownloadingUbiquitousItem(at: url) }
+        catch { throw DemucsError.unreadableSource("'\(name)' is in iCloud Drive and could not be downloaded: \(error.localizedDescription)") }
+        let network = NetworkPath()
+        defer { network.stop() }
+        try await waitForDownload(named: name, isOffline: { network.isOffline }) {
+            var item = url
+            item.removeAllCachedResourceValues()
+            let values = try item.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey, .ubiquitousItemDownloadingErrorKey])
+            if let error = values.ubiquitousItemDownloadingError { throw error }
+            return values.ubiquitousItemDownloadingStatus != .notDownloaded
+        }
+    }
+
+    static func waitForDownload(named name: String, interval: Duration = .milliseconds(250),
+                                isOffline: () -> Bool, isDownloaded: () throws -> Bool) async throws {
+        var offlineChecks = 0
+        while true {
+            let downloaded: Bool
+            do { downloaded = try isDownloaded() }
+            catch { throw DemucsError.unreadableSource("'\(name)' is in iCloud Drive and could not be downloaded: \(error.localizedDescription)") }
+            if downloaded { return }
+            // Tolerate a brief network change before reporting that the Mac is offline.
+            offlineChecks = isOffline() ? offlineChecks + 1 : 0
+            if offlineChecks >= 8 {
+                throw DemucsError.unreadableSource("'\(name)' is in iCloud Drive and has not been downloaded to this Mac. Connect to the internet and import it again.")
+            }
+            try await Task.sleep(for: interval)
+        }
+    }
+
     // MARK: - Errors
 
     private static func check(_ status: OSStatus) throws {
@@ -236,3 +282,17 @@ enum StreamingAudio {
     }
 }
 
+/// Latest network reachability, observed only while an iCloud download is pending.
+private final class NetworkPath: @unchecked Sendable {
+    private let monitor = NWPathMonitor()
+    private let status = OSAllocatedUnfairLock<NWPath.Status?>(initialState: nil)
+
+    init() {
+        monitor.pathUpdateHandler = { [status] path in status.withLock { $0 = path.status } }
+        monitor.start(queue: DispatchQueue(label: "Isolate.StreamingAudio.network"))
+    }
+
+    var isOffline: Bool { status.withLock { $0 } == .unsatisfied }
+
+    func stop() { monitor.cancel() }
+}

@@ -42,6 +42,38 @@ enum StemCache {
         return parent == root.resolvingSymlinksInPath().standardizedFileURL
     }
 
+    /// Removes staging and backup folders left behind when the app quit or crashed
+    /// mid-separation. Call only while no separation is running: at launch, or from
+    /// DemucsEngine once it holds the single separation slot. A backup exists only
+    /// while an invalid cache is being replaced, so it never holds usable stems.
+    static func removeAbandonedStaging() {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
+        for entry in entries where entry.lastPathComponent.hasPrefix(".partial-") || entry.lastPathComponent.hasPrefix(".backup-") {
+            try? fm.removeItem(at: entry)
+        }
+    }
+
+    /// Float32 stereo WAVs for the decoded original and four stems, plus headroom.
+    static func requiredBytes(forFrames frames: Int) -> Int64 {
+        Int64(frames) * Int64(MemoryLayout<Float>.size * 2) * 5 + (64 << 20)
+    }
+
+    /// Fails before decoding and inference when the cache volume cannot hold the result.
+    static func ensureSpace(forFrames frames: Int?) throws {
+        guard let frames else { return }
+        var volume = root
+        volume.removeAllCachedResourceValues()
+        let available = try? volume.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage
+        try ensureSpace(needed: requiredBytes(forFrames: frames), available: available)
+    }
+
+    static func ensureSpace(needed: Int64, available: Int64?) throws {
+        guard let available, available < needed else { return }
+        throw DemucsError.insufficientDiskSpace(needed: needed, available: available)
+    }
+
     static func publish(_ staging: URL, to destination: URL) throws {
         let fm = FileManager.default
         guard validFiles(in: staging) != nil else {
