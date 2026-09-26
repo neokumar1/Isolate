@@ -10,7 +10,8 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 
 ### Playback
 
-- All five players (four stems and the original) now start on the same audio frame after play, seek, loop wrap, song changes and output-device changes. Previously stems could start 9–42 ms apart, and about one seek in five came out of sync. Starting also no longer stalls the window for about 50 ms.
+- All five players (four stems and the original) now start on the same audio frame after play, seek, loop wrap, song changes and output-device changes. Previously stems could start 9–42 ms apart, and about one seek in five came out of sync. Starting also no longer stalls the window for about 50 ms, and the silence at each A–B loop wrap is down to roughly 30–40 ms.
+- Selecting a song that has finished plays it again from the start (or from the loop start), keeping its mix.
 - Pause and resume keep the stems aligned and resume instantly. Pausing, unloading a song and the end of a song (after 0.5 s) release the audio device.
 - Seeking no longer plays a moment of audio from the old position through the speed and pitch processor.
 - The shortest A–B loop is now 0.5 seconds rather than 2% of the song, so short phrases in long songs can be looped. Setting A after B, or B before A, starts a new loop instead of snapping back into the old one.
@@ -38,8 +39,8 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 ### Library
 
 - The library now has its own file at `~/Library/Application Support/Isolate/Library.store`. Earlier versions kept it in the shared `default.store`, which other apps can open and rewrite, emptying the library. On first launch, 1.3.0 copies your songs from a temporary copy of the old file; the old file itself is never changed or deleted.
-- If the library cannot be opened, it is moved into `Library Backups` with a timestamp, you are told where it went, and a new library starts. It is never deleted.
-- Search matches the title, file name and folder only, so common words no longer match every song.
+- If the library file is damaged, it is moved into `Library Backups` with a timestamp, you are told where it went until you dismiss the notice, and a new library starts. It is never deleted. Other open failures leave the file untouched and retry at the next launch.
+- Search matches the title, the file name and the folders shown in the sidebar (such as artist and album folders), but no longer the parts of the path every song shares, so common words don't match every song.
 - Folder headers show enough of the path to tell folders with the same name apart.
 - Next and Previous, from media keys or the menu bar, follow the sidebar's folder order.
 - Songs cannot be deleted while a separation is running.
@@ -50,7 +51,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 
 - 24-bit stem exports no longer clip. If any stem would go over full scale, all four are lowered by the same amount to −0.1 dBFS, which keeps their balance and their sum. Stems that don't need it are exported unchanged.
 - Mix exports line up sample for sample with the source, and keep their full ending when speed or pitch is changed.
-- Exports show their progress and can be cancelled from the EXPORT button or its menu. A cancelled export leaves the destination untouched, and quitting mid-export no longer leaves partial files in the export folder.
+- Exports show their progress and can be cancelled from the EXPORT button, its menu or File › Cancel Export. A cancelled export leaves the destination untouched, and quitting mid-export no longer leaves partial files in the export folder.
 - File names keep the library title's capitalization. Names that begin with dots are no longer hidden, characters that Windows cannot extract are replaced, and non-ASCII names in stem ZIPs extract correctly on Windows.
 - The save panel says whether channel EQ is included. With Compare Original on, a mix export is named `_Original.wav` and says it contains the original recording.
 - If the song changes while the save panel is open, nothing is exported and Isolate says why.
@@ -72,6 +73,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 
 ### Reliability
 
+- Separating and exporting keep the Mac from idle-sleeping until they finish.
 - Quitting during a separation or an export asks first. Quitting during a separation cleans up its temporary files before Isolate closes.
 - Opening Isolate from the downloaded disk image offers to move it to Applications, including when macOS runs it from a temporary location. Replacing an installed copy asks first and moves the old copy to the Trash.
 - Decoding artwork and reading a song's format no longer freeze the window on large images or sleeping network drives. Oversized artwork is skipped.

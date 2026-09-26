@@ -67,6 +67,9 @@ struct IsolateApp: App {
                 Button("Export Mix…") { engineManager.exportMix() }
                     .keyboardShortcut("m", modifiers: [.command, .shift])
                     .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting || engineManager.isExporting)
+                // Reachable even while an overlay covers the EXPORT control.
+                Button("Cancel Export") { engineManager.cancelExport() }
+                    .disabled({ if case .exporting = engineManager.exportState { return false }; return true }())
             }
             CommandGroup(after: .windowArrangement) {
                 Button("Show Isolate") { openWindow(id: "main", value: "main") }

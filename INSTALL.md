@@ -63,7 +63,7 @@ The app needs no Python runtime and no third-party Swift packages. The Core ML m
 
 Your original audio files stay where they are; Isolate only reads them. Each separated song uses about 106 MB per minute of audio in the stems folder: 32-bit float copies of the four stems and of the decoded original.
 
-Versions before 1.3 kept the library in the shared `~/Library/Application Support/default.store`. On its first launch, 1.3 copies your songs out of a temporary copy of that file into `Library.store`. It never opens, changes or deletes `default.store` itself, because other apps can use the same file. If `Library.store` ever cannot be opened, Isolate moves it into `Library Backups` and starts a new library; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-library-is-empty-or-was-moved-to-library-backups).
+Versions before 1.3 kept the library in the shared `~/Library/Application Support/default.store`. On its first launch, 1.3 copies your songs out of a temporary copy of that file into `Library.store`. It never opens, changes or deletes `default.store` itself, because other apps can use the same file. If `Library.store` is ever damaged, Isolate moves it into `Library Backups` and starts a new library; if it cannot be opened for another reason, Isolate leaves it untouched and tries again at the next launch; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-library-is-empty-or-was-moved-to-library-backups).
 
 Deleting a song in Isolate removes only the stem folder it owns, and only when no other library entry uses it. Quit Isolate and back up `~/Library/Application Support/Isolate` before changing anything in it by hand.
 

@@ -54,8 +54,9 @@ If a separation really stops moving, quit Isolate. It asks first, cancels the im
 
 The library is `~/Library/Application Support/Isolate/Library.store`.
 
-- **After updating from a version before 1.3:** on its first launch, 1.3 copies your songs from a temporary copy of the old shared `~/Library/Application Support/default.store`. If that fails, Isolate says so and leaves the old file unchanged.
-- **"Isolate could not open its library and started a new one":** the old library files were moved, not deleted, into `~/Library/Application Support/Isolate/Library Backups/<date and time>/`, and the message gives the exact folder.
+- **After updating from a version before 1.3:** on its first launch, 1.3 copies your songs from a temporary copy of the old shared `~/Library/Application Support/default.store`. If that fails, Isolate says so, leaves the old file unchanged and tries again at the next launch, up to three times.
+- **"Isolate could not open its library and started a new one":** SQLite reported the library file as damaged, so it was moved, not deleted, into `~/Library/Application Support/Isolate/Library Backups/<date and time>/`. The message gives the exact folder and appears at each launch until you close it.
+- **The library opened in memory and changes won't be saved:** the file could not be opened for another reason (for example a full disk or missing permissions). It was left untouched; free some space or fix the permissions, and Isolate tries again at the next launch.
 
 To restore a backup, quit Isolate, move `Library.store`, `Library.store-wal` and `Library.store-shm` out of `~/Library/Application Support/Isolate`, copy the files from the backup folder in their place, and open Isolate. If it still can't be opened, the backup may have been written by a newer version of Isolate; install that version and try again.
 

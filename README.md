@@ -79,7 +79,7 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 
 **Library**
 
-- Songs are grouped by the folder they came from and can be searched by title, file name or folder. Next and Previous follow the sidebar order.
+- Songs are grouped by the folder they came from and can be searched by title, file name, or the artist and album folders they sit in. Next and Previous follow the sidebar order.
 - Artist, album, artwork, BPM and key come from the file's own tags. Isolate doesn't estimate BPM or key, and shows them as unknown when the tags don't have them.
 - Rename songs in the library. Deleting a song removes only the stems Isolate made; your original file is never changed or deleted.
 
@@ -87,7 +87,7 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 
 - **Stems:** a ZIP of four 24-bit WAV or FLAC files at 44.1 kHz. Channel EQ is included unless it is bypassed; levels, pan, speed and pitch are not. If any stem would clip, all four are lowered by the same amount so they still add up to the same mix.
 - **Mix:** a 24-bit WAV of the whole track with your current levels, mutes, solos, pan, EQ, speed and pitch. With Compare Original on, it exports the original recording instead and names the file `_Original.wav`.
-- Exports show their progress and can be cancelled. An existing file is replaced only after the new one is complete.
+- Exports show their progress and can be cancelled (EXPORT button or File › Cancel Export). An existing file is replaced only after the new one is complete.
 
 **On your Mac**
 
