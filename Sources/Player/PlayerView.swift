@@ -31,7 +31,8 @@ public struct PlayerView: View {
     var isSidebarVisible: Binding<Bool>?
 
     @State private var isShowingShortcutCard = false
-    
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     public init(isSidebarVisible: Binding<Bool>? = nil) {
         self.isSidebarVisible = isSidebarVisible
     }
@@ -71,7 +72,7 @@ public struct PlayerView: View {
                             isShowingShortcutCard = false
                         }
                     })
-                    .transition(.scale(scale: 0.95).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.95).combined(with: .opacity))
                 }
             }
             .animation(.easeInOut(duration: 0.15), value: isShowingShortcutCard)
@@ -167,7 +168,8 @@ public struct PlayerView: View {
                 let artistAlbum = "\(engineManager.trackArtist.uppercased()) • \(engineManager.trackAlbum.uppercased())"
                 MarqueeText(
                     text: artistAlbum,
-                    fontSize: isCompactHeight ? 9.5 : 10.5,
+                    // macOS 27 already drew the old 10.5/9.5 sizes at 11/10 pt.
+                    fontSize: isCompactHeight ? 10 : 11,
                     color: theme.textSecondary,
                     height: isCompactHeight ? 14 : 16
                 )
@@ -1204,7 +1206,7 @@ struct StemDynamicWaveformView: View {
                             if isLit {
                                 return distance == spread && distance > 1 ? theme.accentRed : theme.textPrimary
                             } else if isRestingCenter {
-                                return effectiveVolume <= 0.001 ? theme.knobArcTrack : theme.textDisabled
+                                return Self.restingCenterColor(theme: theme, effectiveVolume: effectiveVolume)
                             } else {
                                 return theme.knobArcTrack // Faint unlit physical LED dot
                             }
@@ -1219,6 +1221,13 @@ struct StemDynamicWaveformView: View {
             }
         }
         .frame(height: 30)
+    }
+
+    /// The idle center row of an audible channel. It must stay brighter than the unlit
+    /// dots, which Increase Contrast raises above textDisabled.
+    static func restingCenterColor(theme: ThemeManager, effectiveVolume: Double) -> Color {
+        guard effectiveVolume > 0.001 else { return theme.knobArcTrack }
+        return theme.increaseContrast ? theme.border : theme.textDisabled
     }
 }
 
@@ -2006,9 +2015,23 @@ struct TransportBar: View {
         .help(isBypassed ? "Return to the stem mix (⌥⌘B)" : "Compare with the original (⌥⌘B)")
     }
     
+    /// VoiceOver name and value, and the tooltip, for the EXPORT control. The label
+    /// replaces the visible text, so the render progress is carried in the value.
+    static func exportAccessibility(for state: ExportState) -> (label: String, value: String, help: String) {
+        switch state {
+        case .idle:
+            return ("Export stems", "", "Export four stems as a ZIP (⇧⌘E)")
+        case .exporting(_, let percent):
+            return ("Cancel export", "\(Int(percent * 100)) percent", "Cancel the export in progress")
+        case .completed:
+            return ("Export complete", "", "Export complete")
+        }
+    }
+
     private func exportButton(_ metrics: Metrics) -> some View {
         let state = engineManager.exportState
         let isExporting = engineManager.isExporting
+        let accessibility = Self.exportAccessibility(for: state)
         return Button(action: {
             Haptics.playClick()
             // While exporting, the same control cancels the render.
@@ -2060,12 +2083,14 @@ struct TransportBar: View {
             .contentShape(Rectangle())
         }
         .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting)
-        .accessibilityLabel(isExporting ? "Cancel export" : "Export stems")
-        .help(isExporting ? "Cancel the export in progress" : "Export four stems as a ZIP (⇧⌘E)")
+        .accessibilityLabel(accessibility.label)
+        .accessibilityValue(accessibility.value)
+        .help(accessibility.help)
         .contextMenu {
             Button("Export Mix…") { engineManager.exportMix() }
                 .disabled(isExporting)
-            if isExporting {
+            // COMPLETED is only the brief confirmation; there is nothing left to cancel.
+            if case .exporting = state {
                 Button("Cancel Export") { engineManager.cancelExport() }
             }
         }
@@ -2096,7 +2121,7 @@ struct MarqueeText: View {
             ZStack(alignment: .leading) {
                 if scrolls {
                     Text(text)
-                        .font(.custom("DotGothic16-Regular", size: fontSize))
+                        .font(Self.font(size: fontSize))
                         .foregroundColor(color)
                         .fixedSize(horizontal: true, vertical: false)
                         .offset(x: offset)
@@ -2104,7 +2129,7 @@ struct MarqueeText: View {
                     // Without scrolling (Reduce Motion or a tiny overflow), end with an
                     // ellipsis rather than clipping mid-glyph; the tooltip has the rest.
                     Text(text)
-                        .font(.custom("DotGothic16-Regular", size: fontSize))
+                        .font(Self.font(size: fontSize))
                         .foregroundColor(color)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -2160,6 +2185,12 @@ struct MarqueeText: View {
     
     static func scrolls(overflow: CGFloat, containerWidth: CGFloat, reduceMotion: Bool) -> Bool {
         !reduceMotion && overflow > 6 && containerWidth > 40
+    }
+    
+    /// Drawn at exactly `size` points, the size `measureTextWidth` measures, so the
+    /// scroll distance and tooltip match the rendered width.
+    static func font(size: CGFloat) -> Font {
+        .custom("DotGothic16-Regular", fixedSize: size)
     }
     
     static func measureTextWidth(_ string: String, size: CGFloat) -> CGFloat {
@@ -3258,18 +3289,28 @@ struct HUDEqualizerCurveView: View {
         }
         .stroke(theme.hairline, style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
         
-        Text("100Hz")
-            .font(.custom("DotGothic16-Regular", size: 6.5))
-            .foregroundColor(theme.textMuted)
-            .position(x: x100, y: h - 5)
-        Text("1kHz")
-            .font(.custom("DotGothic16-Regular", size: 6.5))
-            .foregroundColor(theme.textMuted)
-            .position(x: x1k, y: h - 5)
-        Text("10kHz")
-            .font(.custom("DotGothic16-Regular", size: 6.5))
-            .foregroundColor(theme.textMuted)
-            .position(x: x10k, y: h - 5)
+        // The compact HUD's curve is too short for these under the band nodes and their
+        // names; the nodes' VoiceOver labels still give each frequency.
+        if Self.showsFrequencyLabels(canvasHeight: h) {
+            Text("100Hz")
+                .font(.custom("DotGothic16-Regular", size: 6.5))
+                .foregroundColor(theme.textMuted)
+                .position(x: x100, y: h - 5)
+            Text("1kHz")
+                .font(.custom("DotGothic16-Regular", size: 6.5))
+                .foregroundColor(theme.textMuted)
+                .position(x: x1k, y: h - 5)
+            Text("10kHz")
+                .font(.custom("DotGothic16-Regular", size: 6.5))
+                .foregroundColor(theme.textMuted)
+                .position(x: x10k, y: h - 5)
+        }
+    }
+    
+    /// Room for the Hz captions below the band nodes: the regular HUD's curve, not the
+    /// compact one.
+    static func showsFrequencyLabels(canvasHeight: CGFloat) -> Bool {
+        canvasHeight >= 36
     }
     
     private func curvePath(w: CGFloat, h: CGFloat, midY: CGFloat) -> Path {
