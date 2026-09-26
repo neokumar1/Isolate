@@ -133,8 +133,11 @@ final class FinalUITests: XCTestCase {
     func testHUDEqualizerHidesFrequencyCaptionsOnlyInTheCompactHUD() {
         // HUD height, minus its top bar, divider and the EQ view's vertical padding,
         // then the 16 pt toolbar and 4 pt gap above the curve.
-        let compactCanvas: CGFloat = 76 - 24 - 1 - 2 * 2 - (16 + 4)
-        let regularCanvas: CGFloat = 100 - 28 - 1 - 4 * 2 - (16 + 4)
+        // Integer arithmetic keeps these quick for older compilers to type-check.
+        let compactHeight: Int = 76 - 24 - 1 - 2 * 2 - (16 + 4)
+        let regularHeight: Int = 100 - 28 - 1 - 4 * 2 - (16 + 4)
+        let compactCanvas = CGFloat(compactHeight)
+        let regularCanvas = CGFloat(regularHeight)
         XCTAssertFalse(HUDEqualizerCurveView.showsFrequencyLabels(canvasHeight: compactCanvas),
                        "The compact curve is too short for captions under the band nodes")
         XCTAssertTrue(HUDEqualizerCurveView.showsFrequencyLabels(canvasHeight: regularCanvas))
