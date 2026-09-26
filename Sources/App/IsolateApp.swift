@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 @main
 struct IsolateApp: App {
+    @NSApplicationDelegateAdaptor(IsolateAppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
     @State private var engineManager = AudioEngineManager()
     @State private var theme = ThemeManager.shared
@@ -12,6 +13,8 @@ struct IsolateApp: App {
     private let libraryContainer: ModelContainer
 
     init() {
+        // One logical main window: without this, the tab bar's "+" opens more.
+        NSWindow.allowsAutomaticWindowTabbing = false
         libraryContainer = LibraryStore.makeContainer()
     }
 
@@ -24,6 +27,12 @@ struct IsolateApp: App {
                 .frame(minWidth: 960, minHeight: 580)
                 .background(WindowAccessor())
                 .environment(engineManager)
+                .onAppear {
+                    appDelegate.engineManager = engineManager
+                    // The status menu has no SwiftUI environment; hand it the
+                    // scene's action so it can reopen a closed window.
+                    MenuBarManager.shared.openMainWindow = { openWindow(id: "main", value: "main") }
+                }
         } defaultValue: {
             "main"
         }
@@ -76,6 +85,57 @@ struct IsolateApp: App {
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
 
+    }
+}
+
+/// Asks before quitting while work that cannot resume is running.
+@MainActor
+final class IsolateAppDelegate: NSObject, NSApplicationDelegate {
+    weak var engineManager: AudioEngineManager?
+
+    enum PendingWork: Equatable {
+        case separation
+        case export
+    }
+
+    /// A finished export only shows COMPLETED briefly and needs no confirmation.
+    static func pendingWork(isSplitting: Bool, exportState: ExportState) -> PendingWork? {
+        if isSplitting { return .separation }
+        if case .exporting = exportState { return .export }
+        return nil
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let engine = engineManager,
+              let work = Self.pendingWork(isSplitting: engine.isSplitting, exportState: engine.exportState) else {
+            return .terminateNow
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch work {
+        case .separation:
+            alert.messageText = "Quit while a track is being separated?"
+            alert.informativeText = "Quitting cancels the import, and its separation progress is lost."
+            alert.addButton(withTitle: "Keep Separating")
+            alert.addButton(withTitle: "Cancel Import & Quit")
+        case .export:
+            alert.messageText = "Quit while an export is running?"
+            alert.informativeText = "The export stops and its file is not saved."
+            alert.addButton(withTitle: "Keep Exporting")
+            alert.addButton(withTitle: "Quit")
+        }
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        guard work == .separation else { return .terminateNow }
+        // Quit once the cancelled separation has removed its temporary files.
+        engine.cancelSplitAudio()
+        Task { @MainActor in
+            let deadline = ContinuousClock.now + .seconds(15)
+            while engine.isSplitting && ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
@@ -955,6 +1015,7 @@ struct WindowAccessor: NSViewRepresentable {
         window.appearance = ThemeManager.shared.currentTheme == .system ? nil : NSAppearance(named: isDark ? .darkAqua : .aqua)
         window.minSize = NSSize(width: 960, height: 580)
         window.isMovableByWindowBackground = false
+        window.tabbingMode = .disallowed
         
         if window.toolbar == nil {
             let toolbar = NSToolbar(identifier: "IsolateMainWindowToolbar")
