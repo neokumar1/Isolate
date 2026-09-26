@@ -121,8 +121,8 @@ The full list is also in **Settings › Shortcuts**.
 ## Speed, quality and limits
 
 - **Speed depends on your Mac.** On an M-series MacBook Pro running macOS 27, real songs separated at about 2.5× realtime during v1.3.0 testing: a 4:37 ALAC track in 1:49 and an 8:24 MP3 in 3:17. Those runs were measured before a later optimization and haven't been re-timed. Your speed will vary with the Mac, the macOS version and what else is running; the progress screen shows the measured speed for each song.
-- **The first separation after installing or updating is slower** while macOS prepares the model for your Mac. On the test Mac that took about 17 seconds once, and about 3 to 4 seconds on later loads.
-- **Memory:** on the test Mac, Core ML used about 1.6 to 2.7 GB during separation. Isolate releases the model after 60 seconds without a separation.
+- **The first separation after installing or updating is slower** while macOS prepares the model for your Mac. On the test Mac that took about 17 seconds once; later model loads took 3 to 4 seconds.
+- **Memory:** on the test Mac, Isolate's memory footprint was about 1.6 to 2.7 GB after a separation, while the model was loaded. Isolate releases the model after 60 seconds without a separation.
 - **Disk:** separated songs use about 106 MB per minute of audio. Isolate checks for enough free space before it starts.
 - **Quality depends on the recording.** Expect some bleed between stems and some artifacts, especially on dense mixes. Isolate makes no guarantee about separation quality.
 - **Looping is for practice.** Playback that starts from a stop waits a fraction of a second so all four stems start together, and the A–B loop is not a sample-accurate DAW loop.
