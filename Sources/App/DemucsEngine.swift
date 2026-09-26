@@ -283,27 +283,37 @@ public actor DemucsEngine {
         }
     }
 
-    private static func accumulate(_ output: MLMultiArray, into accumulators: inout [[Float]],
-                                   weights: inout [Float], window: [Float], mean: Float,
-                                   standardDeviation: Float) throws {
+    static func accumulate(_ output: MLMultiArray, into accumulators: inout [[Float]],
+                           weights: inout [Float], window: [Float], mean: Float,
+                           standardDeviation: Float) throws {
         guard output.shape.map(\.intValue) == [1, 4, 2, chunkSize],
               output.dataType == .float16 || output.dataType == .float32 else {
             throw DemucsError.conversionFailed("The model returned an unsupported audio tensor.")
         }
         let strides = output.strides.map(\.intValue)
-        for stem in 0..<4 {
-            for channel in 0..<2 {
-                let offset = stem * strides[1] + channel * strides[2]
-                let target = stem * 2 + channel
-                for i in 0..<chunkSize {
-                    let index = offset + i * strides[3]
-                    let sample: Float
-                    if output.dataType == .float32 {
-                        sample = output.dataPointer.assumingMemoryBound(to: Float.self)[index]
-                    } else {
-                        sample = Float(output.dataPointer.assumingMemoryBound(to: Float16.self)[index])
+        let step = strides[3]
+        let isFloat32 = output.dataType == .float32
+        // Resolve the tensor type and storage once; per-sample Objective-C
+        // property reads dominated this loop. Arithmetic order is unchanged.
+        output.withUnsafeBytes { raw in
+            window.withUnsafeBufferPointer { window in
+                for stem in 0..<4 {
+                    for channel in 0..<2 {
+                        let offset = stem * strides[1] + channel * strides[2]
+                        accumulators[stem * 2 + channel].withUnsafeMutableBufferPointer { target in
+                            if isFloat32 {
+                                let samples = raw.baseAddress!.assumingMemoryBound(to: Float.self)
+                                for i in 0..<chunkSize {
+                                    target[i] += (samples[offset + i * step] * standardDeviation + mean) * window[i]
+                                }
+                            } else {
+                                let samples = raw.baseAddress!.assumingMemoryBound(to: Float16.self)
+                                for i in 0..<chunkSize {
+                                    target[i] += (Float(samples[offset + i * step]) * standardDeviation + mean) * window[i]
+                                }
+                            }
+                        }
                     }
-                    accumulators[target][i] += (sample * standardDeviation + mean) * window[i]
                 }
             }
         }
