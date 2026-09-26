@@ -1552,8 +1552,13 @@ public final class AudioEngineManager {
         var lead: TimeInterval
         var callDuration: TimeInterval
         var startedTogether: Bool
+        var usedRenderTimeline: Bool
+        var watchdogRestarts: Int
     }
     private(set) var lastStartReport: StartReport?
+    /// Set when a render-timeline start never took effect on this output; later starts use host time.
+    @ObservationIgnored private var renderTimelineStartUnreliable = false
+    @ObservationIgnored private var watchdogRestarts = 0
 
     /// Starts all players on one frame of the engine's render timeline. A host-time start
     /// makes each play(at:) wait about one IO cycle and, measured on a real Mac, still
@@ -1571,15 +1576,20 @@ public final class AudioEngineManager {
         for attempt in 1...attempts {
             let issued = mach_absolute_time()
             let startHostTime = issued + AVAudioTime.hostTime(forSeconds: lead)
-            let startTime = renderTimelineStart(after: lead) ?? AVAudioTime(hostTime: startHostTime)
+            let timelineStart = renderTimelineStartUnreliable ? nil : renderTimelineStart(at: startHostTime)
+            let startTime = timelineStart ?? AVAudioTime(hostTime: startHostTime)
             for player in players { player.play(at: startTime) }
             let finished = mach_absolute_time()
             let took = AVAudioTime.seconds(forHostTime: finished - issued)
             cycle = max(cycle, took / Double(players.count))
             margin = 4 * cycle + engine.outputNode.presentationLatency + 0.005
             let startedTogether = finished + AVAudioTime.hostTime(forSeconds: margin) <= startHostTime
-            lastStartReport = StartReport(attempts: attempt, lead: lead, callDuration: took, startedTogether: startedTogether)
-            guard !startedTogether, attempt < attempts else { return }
+            lastStartReport = StartReport(attempts: attempt, lead: lead, callDuration: took, startedTogether: startedTogether,
+                                          usedRenderTimeline: timelineStart != nil, watchdogRestarts: watchdogRestarts)
+            if startedTogether || attempt == attempts {
+                verifyStartTookEffect(session: playbackSessionID, after: lead)
+                return
+            }
             stopPlayers()
             timePitchNode.reset()
             schedulePlayers(from: seekFrameOffset)
@@ -1587,19 +1597,49 @@ public final class AudioEngineManager {
         }
     }
 
-    /// A start `lead` seconds ahead in the players' own render timeline (44.1 kHz), waiting
+    /// The host-time start mapped onto the players' own render timeline (44.1 kHz) through
+    /// the last render timestamp. Every player receives the same frame, and that frame is a
+    /// real future moment even when the timestamp is stale or rendering runs far ahead. Waits
     /// briefly for the first render after the engine starts. The output node runs at the
     /// device rate, so its timeline must never be used for the players.
-    private func renderTimelineStart(after lead: TimeInterval) -> AVAudioTime? {
-        var now = vocalPlayer.lastRenderTime
-        let deadline = Date().addingTimeInterval(0.1)
-        while !(now?.isSampleTimeValid ?? false), engine.isRunning, Date() < deadline {
-            usleep(2_000)
-            now = vocalPlayer.lastRenderTime
+    private func renderTimelineStart(at hostTime: UInt64) -> AVAudioTime? {
+        func usable(_ time: AVAudioTime?) -> Bool {
+            guard let time else { return false }
+            return time.isSampleTimeValid && time.isHostTimeValid && time.sampleRate > 0
         }
-        guard let now, now.isSampleTimeValid, now.sampleRate > 0 else { return nil }
-        return AVAudioTime(sampleTime: now.sampleTime + AVAudioFramePosition((lead * now.sampleRate).rounded()),
-                           atRate: now.sampleRate)
+        var anchor = vocalPlayer.lastRenderTime
+        let deadline = Date().addingTimeInterval(0.1)
+        while !usable(anchor), engine.isRunning, Date() < deadline {
+            usleep(2_000)
+            anchor = vocalPlayer.lastRenderTime
+        }
+        guard usable(anchor), let anchor else { return nil }
+        let offset = hostTime >= anchor.hostTime
+            ? AVAudioTime.seconds(forHostTime: hostTime - anchor.hostTime)
+            : -AVAudioTime.seconds(forHostTime: anchor.hostTime - hostTime)
+        return AVAudioTime(sampleTime: anchor.sampleTime + AVAudioFramePosition((offset * anchor.sampleRate).rounded()),
+                           atRate: anchor.sampleRate)
+    }
+
+    /// A start that never takes effect leaves every player silent. Once the start time has
+    /// passed, confirm the players moved; if not, restart from the same frame through the
+    /// host-time path and keep using it on this output.
+    private func verifyStartTookEffect(session: UUID, after lead: TimeInterval) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(lead + 0.25))
+            guard let self, self.isPlaying, self.playbackSessionID == session,
+                  self.lastStartReport?.usedRenderTimeline == true else { return }
+            if let nodeTime = self.vocalPlayer.lastRenderTime,
+               let playerTime = self.vocalPlayer.playerTime(forNodeTime: nodeTime), playerTime.sampleTime > 0 { return }
+            self.renderTimelineStartUnreliable = true
+            self.watchdogRestarts += 1
+            let frame = self.seekFrameOffset
+            self.stopPlayers()
+            self.timePitchNode.reset()
+            self.seekFrameOffset = frame
+            self.schedulePlayers(from: frame)
+            self.playSynced()
+        }
     }
 
     /// One output IO cycle, never taken as shorter than 512 frames.

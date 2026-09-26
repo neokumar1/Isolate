@@ -68,14 +68,14 @@ final class EngineFixTests: XCTestCase {
     private func assertStemsAligned(_ engine: AudioEngineManager, _ label: String,
                                     file: StaticString = #filePath, line: UInt = #line) async throws {
         let reading = try await observeMeters(engine)
+        let report = engine.lastStartReport.map {
+            "attempts \($0.attempts), lead \(String(format: "%.3f", $0.lead)) s, calls \(String(format: "%.3f", $0.callDuration)) s, together \($0.startedTogether), timeline \($0.usedRenderTimeline), watchdog restarts \($0.watchdogRestarts)"
+        } ?? "no start report"
         // Every stem must be audible on its own, or silence would prove nothing.
         for (index, peak) in reading.stems.enumerated() {
-            XCTAssertGreaterThan(peak, 0.05, "\(label): stem \(index) did not play", file: file, line: line)
+            XCTAssertGreaterThan(peak, 0.05, "\(label): stem \(index) did not play (\(report))", file: file, line: line)
         }
         // The waveform floor is 0.05; any inter-stem offset leaves uncancelled noise far above it.
-        let report = engine.lastStartReport.map {
-            "attempts \($0.attempts), lead \(String(format: "%.3f", $0.lead)) s, calls \(String(format: "%.3f", $0.callDuration)) s, together \($0.startedTogether)"
-        } ?? "no start report"
         XCTAssertLessThan(reading.master, 0.06, "\(label): stems started out of sync (\(report))", file: file, line: line)
     }
 
