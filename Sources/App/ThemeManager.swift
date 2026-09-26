@@ -107,7 +107,11 @@ public final class ThemeManager {
         case .dark: NSAppearance(named: .darkAqua)
         case .light: NSAppearance(named: .aqua)
         }
-        for window in NSApp?.windows ?? [] { window.appearance = appearance }
+        // The status item must follow the menu bar, not the app theme, or its
+        // template glyph disappears against a menu bar of the opposite appearance.
+        for window in NSApp?.windows ?? [] where !window.className.hasPrefix("NSStatusBar") {
+            window.appearance = appearance
+        }
     }
 
     // MARK: - Semantic Nothing Hardware Design Tokens
