@@ -27,10 +27,13 @@ enum AudioExporter {
     }
 
     static func safeFilename(_ title: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+        // Names are shared in ZIPs, so also exclude characters Windows cannot extract.
+        let invalid = CharacterSet(charactersIn: "/:\\?*\"<>|").union(.controlCharacters)
+        // A leading dot hides the file on macOS; Windows drops trailing dots and spaces.
+        let edges = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "."))
         let name = title.components(separatedBy: invalid).joined(separator: "_")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != ".", name != ".." else { return "Isolate" }
+            .trimmingCharacters(in: edges)
+        guard !name.isEmpty else { return "Isolate" }
         // Leave room for stem names and extensions on 255-byte file systems.
         // Truncate at Character boundaries so Unicode titles remain valid.
         var result = ""
@@ -41,6 +44,7 @@ enum AudioExporter {
             result.append(character)
             byteCount += size
         }
+        result = result.trimmingCharacters(in: edges)
         return result.isEmpty ? "Isolate" : result
     }
 
