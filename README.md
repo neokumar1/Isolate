@@ -1,64 +1,142 @@
 # Isolate
 
-A native music stem player for Apple Silicon Macs, with a Nothing-inspired mixer interface.
+**Split a song into vocals, drums, bass and other on your Mac, then mix, loop, slow down and export the stems.**
 
-Isolate separates audio into **vocals, drums, bass, and other** using a local Core ML model. Balance the four channels, practice with an A–B loop, compare against the original, and export your work. Audio processing runs on your Mac; no account or cloud service is required.
+Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the open-source separation model from Meta's Demucs project, through Core ML, so songs are separated on your own Mac with no account and no upload. Once a song is split, four channel strips let you solo the bass line, mute the vocals to sing along, slow a solo to 0.75× without changing its pitch, loop the hard part, and export the stems or your own mix. The interface is a hardware-style mixer inspired by Nothing's dot-matrix design.
 
-## Features
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Assets/screenshot-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="Assets/screenshot-light.png">
+  <img alt="The Isolate window: the library sidebar on the left, four channel strips for vocals, drums, bass and other, the studio display with a 32-band spectrum above them, and the playback controls below" src="Assets/screenshot-dark.png">
+</picture>
 
-- Four synchronized stem channels with calibrated −60 to +6 dB faders, silence at the bottom, mute, solo, and stereo pan.
-- Three-band EQ on each stem and the master bus: 100 Hz low shelf, 1 kHz bell, and 10 kHz high shelf. EQ presets and bypass controls.
-- Playback speed from 0.5× to 1.5× in preset steps; pitch from −12 to +12 semitones.
-- A–B practice loops, original/mix comparison, live spectrum and level meters.
-- Batch import, drag and drop, searchable SwiftData library grouped by source folder, and metadata/artwork when present.
-- Content-based caching: identical source bytes reuse the same completed separation; unfinished imports never become valid cache entries.
-- Four individual **24-bit WAV or FLAC stems in a ZIP**, or a **24-bit WAV mix** with the current channel levels, pan, EQ, speed, and pitch.
-- Dark, light, and system appearances; menu bar controls, media keys, and trackpad haptics.
+**[Download Isolate for macOS](https://github.com/neokumar1/Isolate/releases/latest)** · Apple silicon · macOS 14 or later · Free and open source (MIT)
 
-The original is decoded to stereo 44.1 kHz for comparison. Stem exports exclude fader, pan, tempo, and pitch changes; optional stem EQ baking is available in the EQ panel. Mix exports render the full track, including the original when comparison bypass is active. Loop boundaries do not trim exports.
+## Download
 
-## Requirements and installation
+1. Download **[Isolate.dmg](https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg)** from the [latest release](https://github.com/neokumar1/Isolate/releases/latest).
+2. Open it and drag **Isolate** into **Applications**.
+3. Open Isolate from Applications and approve it once, as described in [First launch](#first-launch).
 
-- Apple Silicon Mac; deployment target macOS 14 or later.
-- Disk space for the app/model and decoded stems. Cached float audio uses about **106 MB per minute** across four stems and the original.
-- A compatible HTDemucs Core ML model, bundled by the release packaging process. A source checkout does not contain model weights.
+| | |
+| --- | --- |
+| Requires | A Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later; macOS 26 or later recommended for separation (see below) |
+| Download | About 160 MB |
+| Installed | About 313 MB, including the separation model |
+| Separated songs | About 106 MB of disk per minute of audio, kept until you delete the song |
 
-The public v1.2.7 DMG inspected on September 21, 2026 lacks the separation model. This checkout prepares v1.2.8 with model-aware packaging; it has not been published. See [INSTALL.md](INSTALL.md) and [MODEL.md](MODEL.md) for working source-build instructions, and [QUALITY_REPORT.md](QUALITY_REPORT.md) for verification. Once a complete package is available on [GitHub Releases](https://github.com/neokumar1/Isolate/releases), open its DMG and drag Isolate into Applications.
+**Separation on macOS 14 and 15.** Testing on hosted Macs found that Core ML in macOS 14 and 15 computes Isolate's separation model incorrectly on some of its compute paths (the CPU path on both, and every path available on the macOS 15 test machine), while macOS 26 and 27 are correct on every path. Before it separates anything, Isolate checks the model on a built-in test signal and uses a compute path that passes. If none passes on your Mac, it says so and asks you to update to macOS 26 or later; it never writes stems from a model that failed the check. Separation has been verified end to end on macOS 26 and 27.
 
-## Quick start
+Each release lists SHA-256 checksums in `SHA256SUMS.txt`. To check your download, run `shasum -a 256 ~/Downloads/Isolate.dmg` and compare the result. Homebrew, a terminal installer and source builds are covered in [INSTALL.md](INSTALL.md).
 
-1. Press **⌘O** or drop local audio files into the window. MP3, WAV, FLAC, M4A/AAC/ALAC, AIFF, and CAF are accepted when supported by the macOS decoder. DRM-protected audio is unsupported.
-2. Wait for separation, or press Escape to cancel. Progress and speed are measured from the current job; the first model load can take longer.
-3. Adjust the four channels. Double-click a fader, pan dial, or EQ knob to reset it.
-4. Set loop markers with **[** and **]**, and toggle looping with **L**.
-5. Use **File → Export Stems…** or **File → Export Mix…**.
+## First launch
+
+Isolate's releases are built by GitHub Actions from this repository and are ad-hoc signed. They are not signed with an Apple Developer ID or notarized by Apple, so macOS can't confirm who made the app and blocks the first launch until you approve it. You do this once for each new version.
+
+### macOS 15 Sequoia and later
+
+1. Open Isolate from Applications. macOS says **"Isolate" Not Opened** because Apple could not verify it. Click **Done**, not Move to Trash.
+2. Open **System Settings › Privacy & Security** and scroll down to **Security**.
+3. Next to the message that Isolate was blocked, click **Open Anyway**. The button only appears for a while after a blocked launch; if it isn't there, repeat step 1.
+4. Enter your login password or use Touch ID.
+5. When macOS asks one last time, click **Open**.
+
+From then on, Isolate opens like any other app.
+
+### macOS 14 Sonoma
+
+In Applications, Control-click (or right-click) **Isolate**, choose **Open**, then click **Open** in the dialog.
+
+### Please don't turn off Gatekeeper
+
+Don't disable Gatekeeper (for example with `spctl --master-disable`) or strip quarantine attributes with `xattr` to skip these steps. Those commands change security checks for every app on your Mac, while the steps above approve only Isolate. If you'd rather not run a prebuilt app, check the download against `SHA256SUMS.txt` or [build Isolate from source](INSTALL.md#build-from-source).
+
+If you open Isolate straight from the disk image, it offers to move itself into Applications.
+
+## What it does
+
+**Separate**
+
+- Four stems, always in the same order: vocals, drums, bass and other. HTDemucs runs through Core ML on your Mac. Isolate has no account, analytics or network features of its own.
+- Import files or whole folders with ⌘O or by dragging them onto the window. MP3, WAV, FLAC, M4A (AAC or ALAC), AIFF and CAF are supported. Surround files are downmixed to stereo, and iCloud Drive files that aren't on your Mac yet are downloaded first.
+- While a song separates, Isolate shows the file name, chunk count, time remaining and measured speed. You can cancel one song or a whole batch, and if you allow notifications, Isolate tells you when an import finishes while it is in the background.
+- Separated songs are cached by the file's exact contents. Importing the identical file again, even from a different folder, reuses its stems instead of separating it again; a copy with edited tags or artwork, or in another format, is separated again.
+
+<img alt="Separation in progress: a large percentage, the file name, the current stage and a Cancel Import button" src="Assets/screenshot-separating.png" width="640">
+
+**Mix**
+
+- Four channel strips, each with a fader from −60 to +6 dB (the bottom is silence), mute, solo, stereo pan and a live meter.
+- Three-band EQ on every stem and on the master bus: a 100 Hz low shelf, a 1 kHz bell and a 10 kHz high shelf, each ±12 dB. It includes factory presets, per-channel bypass and one key (⌘E) to bypass all EQ.
+- One-click macros: Acapella, Instrumental, Drumless, Karaoke (vocals at −12 dB), Drums & Bass, and Reset.
+- Compare Original (the **BYPASS** button) switches to the source recording under the same speed, pitch and master EQ, so you can check the separation against the real thing.
+
+**Practice**
+
+- Speed from 0.5× to 1.5× (0.5, 0.75, 0.85, 1, 1.15, 1.25 and 1.5) without changing pitch, and pitch from −12 to +12 semitones without changing speed.
+- A–B loop: set the start and end at the playhead with [ and ], turn looping on or off with L, and clear the markers with ⌥L.
+- A studio display above the mixer with five views: a 32-band spectrum, the stem macros, stem balance, telemetry (tempo, key, format and timecode) and an equalizer for any stem or the master bus (⌘1 to ⌘5).
+
+**Library**
+
+- Songs are grouped by the folder they came from and can be searched by title, file name, or the artist and album folders they sit in. Next and Previous follow the sidebar order.
+- Artist, album, artwork, BPM and key come from the file's own tags. Isolate doesn't estimate BPM or key, and shows them as unknown when the tags don't have them.
+- Rename songs in the library. Deleting a song removes only the stems Isolate made; your original file is never changed or deleted.
+
+**Export**
+
+- **Stems:** a ZIP of four 24-bit WAV or FLAC files at 44.1 kHz. Channel EQ is included unless it is bypassed; levels, pan, speed and pitch are not. If any stem would clip, all four are lowered by the same amount so they still add up to the same mix.
+- **Mix:** a 24-bit WAV of the whole track with your current levels, mutes, solos, pan, EQ, speed and pitch. With Compare Original on, it exports the original recording instead and names the file `_Original.wav`.
+- Exports show their progress and can be cancelled (EXPORT button or File › Cancel Export). An existing file is replaced only after the new one is complete.
+
+**On your Mac**
+
+- Dark, light and match-system themes, with support for Increase Contrast and VoiceOver labels on the controls.
+- A menu bar mini controller, media keys and Now Playing, and trackpad haptics.
 
 ## Keyboard shortcuts
 
-| Shortcut | Action |
+| Keys | Action |
 | --- | --- |
-| Space | Play / pause |
-| ⌘O | Import audio / batch import |
-| ⌘⇧E | Export four stems as ZIP |
-| ⌘⇧M | Export the full current mix as WAV |
-| ⌘⌥B | Compare original / stem mix |
-| 1 / 2 / 3 / 4 | Solo vocals / drums / bass / other |
-| V / D / B / O | Mute vocals / drums / bass / other |
-| A / I / R | Acapella / instrumental / reset mix |
-| [ / ] / L | Set loop start / end / toggle loop |
-| ⌘E | Bypass all EQ |
-| ⌘1 … ⌘5 | Select header display mode |
-| ⌘B | Show / hide library |
-| ⌘0 | Show main window |
-| ⌘, | Settings and shortcuts |
-| ? or / | Shortcut reference card |
-| Escape | Dismiss a dialog or cancel separation |
+| Space | Play or pause |
+| 1, 2, 3, 4 | Solo vocals, drums, bass or other |
+| V, D, B, O | Mute vocals, drums, bass or other |
+| A / I | Acapella (vocals only) / Instrumental (no vocals) |
+| R | Reset levels, mutes, solos and pan |
+| [ / ] | Set the loop start / end at the playhead |
+| L | Turn the A–B loop on or off |
+| ⌥L | Clear the loop markers |
+| ⌘1 to ⌘5 | Studio display: 32-band FFT, stem macros, stem balance, telemetry, equalizer |
+| ⌘E | Bypass all EQ (stems and master) |
+| ⌥⌘B | Compare Original (BYPASS) |
+| ⌘O | Import files or folders |
+| ⇧⌘E | Export stems |
+| ⇧⌘M | Export mix |
+| ⌘B | Show or hide the library |
+| ⌘, | Settings |
+| ⌘0 | Show the Isolate window |
+| ? or / | Show or hide the shortcut card |
+| Esc | Close the open panel, or cancel the import in progress |
+| Arrow keys | Adjust the focused fader, knob, pan control or seek bar |
+| Double-click | Reset a fader, pan control, EQ knob, pitch or speed |
 
-Focused faders and dials also support keyboard adjustment and accessibility actions.
+The full list is also in **Settings › Shortcuts**.
 
-## Development
+## Speed, quality and limits
 
-Requires Xcode 26.2 or later (Swift 6.2 compiler or later) and [XcodeGen](https://github.com/yonaskolb/XcodeGen). The project currently uses Swift 5 language mode.
+- **Speed depends on your Mac.** On an M-series MacBook Pro running macOS 27, real songs separated at about 2.5× realtime during v1.3.0 testing: a 4:37 ALAC track in 1:49 and an 8:24 MP3 in 3:17. Those runs were measured before a later optimization and haven't been re-timed. Your speed will vary with the Mac, the macOS version and what else is running; the progress screen shows the measured speed for each song.
+- **The first separation after installing or updating is slower** while macOS prepares the model for your Mac. On the test Mac that took about 17 seconds once; later model loads took 3 to 4 seconds.
+- **Memory:** on the test Mac, Isolate's memory footprint was about 1.6 to 2.7 GB after a separation, while the model was loaded. Isolate releases the model after 60 seconds without a separation.
+- **Disk:** separated songs use about 106 MB per minute of audio. Isolate checks for enough free space before it starts.
+- **Quality depends on the recording.** Expect some bleed between stems and some artifacts, especially on dense mixes. Isolate makes no guarantee about separation quality.
+- **Looping is for practice.** Playback that starts from a stop waits a fraction of a second so all four stems start together, and the A–B loop is not a sample-accurate DAW loop.
+- **Not supported:** Intel Macs, DRM-protected files (such as Apple Music downloads), OGG and Opus, files with more than 8 channels, MP3 export, and exporting only the loop region.
+
+Having trouble? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md). Changes in each version are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Build from source
+
+You need Xcode 26.2 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen). The model weights are not in this repository; [MODEL.md](MODEL.md) explains how to install the validated model.
 
 ```sh
 brew install xcodegen
@@ -68,12 +146,12 @@ xcodebuild build -project Isolate.xcodeproj -scheme Isolate \
 open build/DerivedData/Build/Products/Debug/Isolate.app
 ```
 
-Set up the model using [MODEL.md](MODEL.md) before importing audio. Run checks using [RELEASE.md](RELEASE.md). Architecture and signal flow are documented in [ARCHITECTURE.md](ARCHITECTURE.md) and [AUDIO_ENGINE.md](AUDIO_ENGINE.md).
-
-## Practical limits
-
-Separation quality depends on the source and model; some bleed and artifacts are expected. Processing speed and Core ML compute-device selection depend on hardware, OS, and workload. Isolate does not claim a fixed speed, memory ceiling, or exclusive Neural Engine execution. Looping uses scheduled playback and is intended for practice; it is not a sample-accurate DAW loop engine. BPM and key are read from metadata, with unknown values shown explicitly.
+[INSTALL.md](INSTALL.md) has the full steps, [RELEASE.md](RELEASE.md) covers tests and packaging, and [ARCHITECTURE.md](ARCHITECTURE.md), [AUDIO_ENGINE.md](AUDIO_ENGINE.md) and [DESIGN.md](DESIGN.md) describe how the app works.
 
 ## Credits
 
-App code: [MIT](LICENSE). Model architecture: [Demucs by Meta](https://github.com/facebookresearch/demucs). Typography: DotGothic16 by Fontworks. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Isolate is an independent project and is not affiliated with Nothing or Apple.
+- App code: [MIT License](LICENSE), © 2026 Neo Kumar.
+- Separation model: HTDemucs from Meta's [Demucs](https://github.com/facebookresearch/demucs) project, MIT License, converted to Core ML.
+- Typeface: [DotGothic16](https://github.com/fontworks-fonts/DotGothic16) by Fontworks, SIL Open Font License 1.1.
+
+License texts ship inside the app; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Isolate is an independent project. It is not affiliated with or endorsed by Nothing Technology Limited or Apple; "Nothing-inspired" describes the visual style only.

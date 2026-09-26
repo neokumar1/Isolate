@@ -31,11 +31,15 @@ public final class ThemeManager {
     
     /// Tracks system dark/light appearance changes
     public var systemIsDark: Bool = true
-    
+
+    /// Mirrors System Settings > Accessibility > Display > Increase contrast.
+    public var increaseContrast: Bool = false
+
     private init() {
         let saved = AppPreferences.defaults.string(forKey: "hardwareTheme") ?? "system"
         self.currentTheme = HardwareTheme(rawValue: saved) ?? .system
         self.systemIsDark = checkSystemIsDark()
+        self.increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         setupAppearanceObserver()
     }
     
@@ -69,6 +73,15 @@ public final class ThemeManager {
                 self.updateWindowAppearance()
             }
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            }
+        }
     }
     
     public var isDark: Bool {
@@ -94,7 +107,11 @@ public final class ThemeManager {
         case .dark: NSAppearance(named: .darkAqua)
         case .light: NSAppearance(named: .aqua)
         }
-        for window in NSApp?.windows ?? [] { window.appearance = appearance }
+        // The status item must follow the menu bar, not the app theme, or its
+        // template glyph disappears against a menu bar of the opposite appearance.
+        for window in NSApp?.windows ?? [] where !window.className.hasPrefix("NSStatusBar") {
+            window.appearance = appearance
+        }
     }
 
     // MARK: - Semantic Nothing Hardware Design Tokens
@@ -116,30 +133,46 @@ public final class ThemeManager {
         isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08)
     }
     
-    // Text
+    // Text. Readable text uses textPrimary, textSecondary, or textMuted, each at
+    // least 4.5:1 against the backgrounds and channel-strip fills in its mode.
     public var textPrimary: Color {
         isDark ? Color.white : Color(red: 0.08, green: 0.08, blue: 0.09)
     }
-    
+
     public var textSecondary: Color {
-        isDark ? Color.gray : Color(red: 0.46, green: 0.46, blue: 0.49)
+        if increaseContrast { return textPrimary }
+        return isDark ? Color(white: 0.66) : Color(red: 0.30, green: 0.30, blue: 0.32)
     }
-    
+
     public var textMuted: Color {
+        if increaseContrast { return textSecondary }
+        return isDark ? Color(red: 0.52, green: 0.52, blue: 0.54) : Color(red: 0.39, green: 0.39, blue: 0.41)
+    }
+
+    /// Disabled controls and purely decorative marks only; never information.
+    public var textDisabled: Color {
         isDark ? Color.gray.opacity(0.5) : Color.black.opacity(0.35)
     }
-    
+
+    /// Caution states such as original-master comparison and loop markers.
+    public var warning: Color {
+        isDark ? Color(red: 0.83, green: 0.66, blue: 0.26) : Color(red: 0.49, green: 0.34, blue: 0.0)
+    }
+
     // Borders & Hairlines
     public var hairline: Color {
-        isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.12)
+        let opacity = increaseContrast ? 0.45 : 0.12
+        return isDark ? Color.white.opacity(opacity) : Color.black.opacity(opacity)
     }
-    
+
     public var border: Color {
-        isDark ? Color.white.opacity(0.20) : Color.black.opacity(0.20)
+        let opacity = increaseContrast ? 0.55 : 0.20
+        return isDark ? Color.white.opacity(opacity) : Color.black.opacity(opacity)
     }
-    
+
     public var cardBorder: Color {
-        isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.14)
+        if increaseContrast { return border }
+        return isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.14)
     }
     
     // Overlays & Modals
@@ -152,16 +185,24 @@ public final class ThemeManager {
     }
     
     // Hardware elements
+    /// The single interrupt/active accent. Meets 4.5:1 as text on this mode's
+    /// backgrounds; use `onAccent` for anything drawn on top of a red fill.
     public var accentRed: Color {
-        Color.red
+        isDark ? Color(red: 1.0, green: 0.26, blue: 0.27) : Color(red: 0.78, green: 0.08, blue: 0.11)
     }
-    
+
+    /// Foreground for text and glyphs on an `accentRed` fill.
+    public var onAccent: Color {
+        isDark ? Color.black : Color.white
+    }
+
     public var knobFace: Color {
         isDark ? Color(white: 0.08) : Color(white: 0.93)
     }
-    
+
     public var knobArcTrack: Color {
-        isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.12)
+        let opacity = increaseContrast ? 0.45 : 0.12
+        return isDark ? Color.white.opacity(opacity) : Color.black.opacity(opacity)
     }
     
     public var faderTrack: Color {

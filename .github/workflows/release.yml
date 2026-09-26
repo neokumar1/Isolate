@@ -14,18 +14,29 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
-    timeout-minutes: 45
+    # Core ML computes the model incorrectly on hosted macOS 14 and 15 (Isolate refuses to
+    # separate there), so the inference gate must run where separation is verified.
+    runs-on: macos-26
+    timeout-minutes: 60
     env:
       ISOLATE_MODEL_ARCHIVE_URL: ${{ vars.ISOLATE_MODEL_ARCHIVE_URL }}
       ISOLATE_MODEL_ARCHIVE_SHA256: ${{ vars.ISOLATE_MODEL_ARCHIVE_SHA256 }}
       TEST_RUNNER_ISOLATE_REQUIRE_MODEL: '1'
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v5
-      - name: Require a release tag
+      # Fail in seconds, before the model download and test run, when the tag,
+      # project.yml, Info.plist and CHANGELOG.md do not agree.
+      - name: Require a version tag that matches the app
         env:
           REF_TYPE: ${{ github.ref_type }}
-        run: test "$REF_TYPE" = tag
+        run: |
+          if [[ "$REF_TYPE" != tag ]]; then
+            echo "::error::Run this workflow from a version tag such as v1.3.0, not a branch."
+            exit 1
+          fi
+          bash scripts/check_version.sh "$RELEASE_TAG"
+          bash scripts/release_notes.sh "$RELEASE_TAG" > /dev/null
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -36,31 +47,34 @@ jobs:
       - name: Require passing tests including actual model inference
         run: xcodebuild test -project Isolate.xcodeproj -scheme Isolate -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO
       - name: Package release with bundled model
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: bash scripts/package_release.sh "$RELEASE_TAG"
+      - name: Write release notes
+        run: bash scripts/release_notes.sh "$RELEASE_TAG" > dist/RELEASE_NOTES.md
       - name: Create draft for manual review
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.3
         with:
+          name: Isolate ${{ github.ref_name }}
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/Isolate.dmg
-            dist/Isolate-${{ github.ref_name }}.dmg
             dist/Isolate-${{ github.ref_name }}-macOS.zip
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
-          generate_release_notes: true
           draft: true
-          body: |
-            Apple Silicon · macOS 14+
-            Includes the validated Core ML separation model.
-
-            These CI artifacts are ad-hoc signed and are not notarized. Before publishing,
-            complete the platform and distribution checks in RELEASE.md. Download the DMG,
-            drag Isolate into Applications, and follow Apple's Privacy & Security guidance
-            if macOS requests explicit approval.
+      - name: Summarize maintainer checks
+        run: |
+          {
+            echo "### Draft release ${RELEASE_TAG} created"
+            echo "The artifacts are ad-hoc signed and not notarized. Before publishing, work through the publication checks in RELEASE.md,"
+            echo "then set the Homebrew cask's version and sha256 from the published Isolate.dmg."
+            echo
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-test-results
           path: build/DerivedData/Logs/Test/*.xcresult

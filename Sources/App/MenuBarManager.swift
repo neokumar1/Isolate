@@ -6,8 +6,11 @@ import SwiftUI
 public final class MenuBarManager: NSObject, NSMenuDelegate {
     public static let shared = MenuBarManager()
     
-    private var statusItem: NSStatusItem?
+    private(set) var statusItem: NSStatusItem?
     private weak var engineManager: AudioEngineManager?
+    /// Opens or fronts the main window through SwiftUI, which can recreate it
+    /// after it was closed; set by the app scene.
+    var openMainWindow: (() -> Void)?
     private var playlistProvider: (() -> [TrackModel])?
     private var trackSelectHandler: ((TrackModel) -> Void)?
     
@@ -52,15 +55,18 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = createMenuBarIcon(frame: 0, isPlaying: false)
+            button.image = createMenuBarIcon(frame: 0, isPlaying: engineManager?.isPlaying ?? false)
             button.imagePosition = .imageOnly
             button.toolTip = "Isolate - 4-Stem Neural Audio"
+            // The icon is image-only, so VoiceOver needs an explicit name.
+            button.setAccessibilityLabel("Isolate")
         }
         
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
         self.statusItem = item
+        updatePlaybackState(isPlaying: engineManager?.isPlaying ?? false)
     }
     
     public func updatePlaybackState(isPlaying: Bool) {
@@ -68,6 +74,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         animationTimer = nil
         
         guard statusItem != nil else { return }
+        statusItem?.button?.setAccessibilityValue(isPlaying ? "Playing" : "Paused")
         if isPlaying && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             animationTimer = Timer.scheduledTimer(withTimeInterval: 0.14, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -120,6 +127,11 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         return img
     }
     
+    /// A single track needs no count; the subtitle already names it.
+    static func batchCompletionTitle(count: Int) -> String {
+        count == 1 ? "Stems Ready" : "Stems Ready (\(count) Tracks)"
+    }
+
     public func sendBatchCompletionNotification(count: Int, lastTitle: String) {
         Task {
             let center = UNUserNotificationCenter.current()
@@ -127,7 +139,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 let granted = try await center.requestAuthorization(options: [.alert, .sound])
                 guard granted else { return }
                 let content = UNMutableNotificationContent()
-                content.title = "Stems Ready (\(count) Tracks)"
+                content.title = Self.batchCompletionTitle(count: count)
                 content.subtitle = lastTitle
                 content.body = "Four-stem separation complete. Ready to play and mix."
                 content.sound = .default
@@ -185,19 +197,20 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         
         // 3. Stem Quick Actions
+        let anySolo = engine.vocalSolo || engine.drumSolo || engine.bassSolo || engine.otherSolo
         let acapellaItem = NSMenuItem(title: "Acapella (Solo Vocals)", action: #selector(applyAcapella), keyEquivalent: "")
         acapellaItem.target = self
-        acapellaItem.state = (engine.vocalSolo && !engine.vocalMuted) ? .on : .off
+        acapellaItem.state = (engine.vocalSolo && !engine.vocalMuted && !engine.drumSolo && !engine.bassSolo && !engine.otherSolo) ? .on : .off
         menu.addItem(acapellaItem)
         
         let instrumentalItem = NSMenuItem(title: "Instrumental (Mute Vocals)", action: #selector(applyInstrumental), keyEquivalent: "")
         instrumentalItem.target = self
-        instrumentalItem.state = (engine.vocalMuted && !engine.drumMuted) ? .on : .off
+        instrumentalItem.state = (engine.vocalMuted && !engine.drumMuted && !engine.bassMuted && !engine.otherMuted && !anySolo) ? .on : .off
         menu.addItem(instrumentalItem)
         
         let drumlessItem = NSMenuItem(title: "Drumless Backing", action: #selector(applyDrumless), keyEquivalent: "")
         drumlessItem.target = self
-        drumlessItem.state = (engine.drumMuted && !engine.vocalMuted) ? .on : .off
+        drumlessItem.state = (engine.drumMuted && !engine.vocalMuted && !engine.bassMuted && !engine.otherMuted && !anySolo) ? .on : .off
         menu.addItem(drumlessItem)
         
         let resetItem = NSMenuItem(title: "Reset 4-Stem Mix", action: #selector(applyResetMix), keyEquivalent: "")
@@ -246,10 +259,19 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     }
     
     @objc private func bringWindowToFront() {
-        NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first {
+        NSApp.activate()
+        if let openMainWindow {
+            openMainWindow()
+        } else if let window = Self.mainWindowCandidate(in: NSApp.windows) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    /// The status item's own borderless window is also in `NSApp.windows` (and
+    /// is first when the main window is closed), so only a titled window counts.
+    static func mainWindowCandidate(in windows: [NSWindow]) -> NSWindow? {
+        windows.first { !($0 is NSPanel) && $0.styleMask.contains(.titled) }
     }
     
     @objc private func quitApp() {

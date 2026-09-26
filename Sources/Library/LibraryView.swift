@@ -82,20 +82,31 @@ struct LibraryView: View {
     private func recalculateTotalDuration() {
         let urlPairs: [(vocal: URL, original: URL)] = tracks.map { ($0.vocalStemURL, $0.originalURL) }
         statisticsTask?.cancel()
+        guard !urlPairs.isEmpty else {
+            totalDurationSeconds = 0
+            totalOriginalBytes = 0
+            return
+        }
         statisticsTask = Task {
-            let statistics = await Task.detached(priority: .utility) {
-            var totalBytes: Int64 = 0
-            var totalSecs: Double = 0.0
-            for pair in urlPairs {
-                totalBytes += (try? FileManager.default.attributesOfItem(atPath: pair.original.path)[.size] as? Int64) ?? 0
-                if let file = try? AVAudioFile(forReading: pair.vocal) {
-                    totalSecs += Double(file.length) / file.processingFormat.sampleRate
-                } else if let file = try? AVAudioFile(forReading: pair.original) {
-                    totalSecs += Double(file.length) / file.processingFormat.sampleRate
+            let calculation = Task.detached(priority: .utility) {
+                var totalBytes: Int64 = 0
+                var totalSecs: Double = 0.0
+                for pair in urlPairs {
+                    guard !Task.isCancelled else { break }
+                    totalBytes += (try? FileManager.default.attributesOfItem(atPath: pair.original.path)[.size] as? Int64) ?? 0
+                    if let file = try? AVAudioFile(forReading: pair.vocal) {
+                        totalSecs += Double(file.length) / file.processingFormat.sampleRate
+                    } else if let file = try? AVAudioFile(forReading: pair.original) {
+                        totalSecs += Double(file.length) / file.processingFormat.sampleRate
+                    }
                 }
+                return (totalSecs, totalBytes)
             }
-            return (totalSecs, totalBytes)
-            }.value
+            let statistics = await withTaskCancellationHandler {
+                await calculation.value
+            } onCancel: {
+                calculation.cancel()
+            }
             guard !Task.isCancelled else { return }
             totalDurationSeconds = statistics.0
             totalOriginalBytes = statistics.1
@@ -105,48 +116,38 @@ struct LibraryView: View {
     @State private var theme = ThemeManager.shared
     @State private var searchText = ""
     
-    private var filteredTracks: [TrackModel] {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else { return tracks }
-        
-        // If searching generic stem terms, all tracks have 4 isolated stems
-        if trimmed == "stem" || trimmed == "stems" || trimmed == "all" {
-            return tracks
-        }
-        
-        let queryTokens = trimmed
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-        
-        guard !queryTokens.isEmpty else { return tracks }
-        
-        return tracks.filter { track in
-            let titleLower = track.title.lowercased()
-            let filenameLower = track.originalURL.lastPathComponent.lowercased()
-            let pathLower = track.originalURL.path.lowercased()
-            let extLower = track.originalURL.pathExtension.lowercased()
-            let vocalLower = track.vocalStemURL.lastPathComponent.lowercased()
-            let drumLower = track.drumStemURL.lastPathComponent.lowercased()
-            let bassLower = track.bassStemURL.lastPathComponent.lowercased()
-            let otherLower = track.otherStemURL.lastPathComponent.lowercased()
-            
-            let combined = "\(titleLower) \(filenameLower) \(pathLower) \(extLower) \(vocalLower) \(drumLower) \(bassLower) \(otherLower)"
-            
-            // Direct substring match
-            if combined.contains(trimmed) { return true }
-            
-            // Multi-token match across words/delimiters
-            return queryTokens.allSatisfy { token in
-                combined.contains(token)
+    /// Group headers: the folder name, extended with parent folders only where
+    /// two different folders share a name (e.g. ARTIST A / GREATEST HITS).
+    /// Built from every track so headers stay stable while searching.
+    /// One pass per depth: each suffix is counted in a dictionary rather than compared
+    /// against every other folder, so a large library stays linear in its folders.
+    static func folderLabels(for folders: [URL]) -> [URL: String] {
+        let unique = Array(Set(folders))
+        let components = unique.map(\.pathComponents)
+        var labels: [URL: String] = [:]
+        var pending = Array(unique.indices)
+        var count = 1
+        while !pending.isEmpty {
+            let keys = components.map { $0.suffix(count).joined(separator: " / ").lowercased() }
+            var tally: [String: Int] = [:]
+            for key in keys { tally[key, default: 0] += 1 }
+            var colliding: [Int] = []
+            for index in pending {
+                if count < components[index].count, tally[keys[index], default: 0] > 1 {
+                    colliding.append(index)
+                } else {
+                    labels[unique[index]] = components[index].suffix(count).joined(separator: " / ")
+                }
             }
+            pending = colliding
+            count += 1
         }
+        return labels
     }
-    
-    private var groupedTracks: [(folder: URL, tracks: [TrackModel])] {
-        let groups = Dictionary(grouping: filteredTracks) { $0.originalURL.deletingLastPathComponent() }
-        return groups.keys.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-            .map { (folder: $0, tracks: groups[$0] ?? []) }
-    }
+
+    /// Folder labels from the last body update, rebuilt only when the library's set of
+    /// folders changes rather than on every search keystroke or hover.
+    @State private var folderLabelCache = FolderLabelCache()
 
     var body: some View {
         ZStack {
@@ -169,6 +170,16 @@ struct LibraryView: View {
             }
             .background(theme.surface)
         }
+        .onAppear { recalculateTotalDuration() }
+        .onDisappear { statisticsTask?.cancel() }
+        .onChange(of: tracks.map(\.id)) { _, _ in
+            recalculateTotalDuration()
+        }
+        // A search can hide the row whose inline menu is open; close it rather
+        // than leave its invisible click catcher over the player.
+        .onChange(of: searchText) { _, _ in
+            activeMenuTrackID = nil
+        }
     }
     
     private var headerView: some View {
@@ -190,7 +201,7 @@ struct LibraryView: View {
                     Text("IMPORT TRACK")
                 }
                 .font(.custom("DotGothic16-Regular", size: 14))
-                .foregroundColor(.red)
+                .foregroundColor(theme.textPrimary)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 6)
                 .contentShape(Rectangle())
@@ -207,9 +218,10 @@ struct LibraryView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
-                .foregroundColor(isSearchFocused ? .red : theme.textSecondary)
+                .foregroundColor(isSearchFocused ? theme.textPrimary : theme.textSecondary)
             
-            TextField("SEARCH STEMS...", text: $searchText)
+            TextField("SEARCH LIBRARY...", text: $searchText)
+                .accessibilityLabel("Search library")
                 .textFieldStyle(.plain)
                 .font(.custom("DotGothic16-Regular", size: 11.5))
                 .foregroundColor(theme.textPrimary)
@@ -237,6 +249,7 @@ struct LibraryView: View {
                         .foregroundColor(theme.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear library search")
             }
         }
         .padding(.horizontal, 8)
@@ -244,10 +257,11 @@ struct LibraryView: View {
         .background(isSearchFocused ? theme.surfaceHover : theme.surfaceSecondary)
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(isSearchFocused ? Color.red.opacity(0.8) : theme.cardBorder, lineWidth: 1)
+                .stroke(isSearchFocused ? theme.textPrimary : theme.cardBorder, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            activeMenuTrackID = nil
             isSearchFocused = true
         }
         .padding(.horizontal, 16)
@@ -256,19 +270,21 @@ struct LibraryView: View {
     
     @ViewBuilder
     private var trackListView: some View {
+        // Filter once per update; rows reuse the result instead of re-filtering.
+        let filtered = tracks.matchingLibrarySearch(searchText)
         if tracks.isEmpty {
             emptyStateView
-        } else if filteredTracks.isEmpty {
+        } else if filtered.isEmpty {
             VStack(spacing: 8) {
                 Spacer()
                 Text("NO MATCHING TRACKS")
                     .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                 Spacer()
             }
             .frame(maxWidth: .infinity)
         } else {
-            tracksScrollView
+            tracksScrollView(filtered)
         }
     }
     
@@ -277,31 +293,35 @@ struct LibraryView: View {
             Spacer()
             Image(systemName: "music.note.list")
                 .font(.system(size: 32))
-                .foregroundColor(.gray.opacity(0.5))
+                .foregroundColor(theme.textMuted)
             Text("NO TRACKS IMPORTED")
                 .font(.custom("DotGothic16-Regular", size: 13))
-                .foregroundColor(.gray)
+                .foregroundColor(theme.textSecondary)
             Text("Drag & drop audio files here")
                 .font(.custom("DotGothic16-Regular", size: 11))
-                .foregroundColor(.gray.opacity(0.7))
+                .foregroundColor(theme.textSecondary)
             Spacer()
         }
         .frame(maxWidth: .infinity)
     }
     
-    private var tracksScrollView: some View {
-        ScrollView {
+    private func tracksScrollView(_ filtered: [TrackModel]) -> some View {
+        let total = filtered.count
+        let labels = folderLabelCache.labels(for: tracks.map { $0.originalURL.deletingLastPathComponent() })
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 6) {
-                ForEach(groupedTracks, id: \.folder) { group in
-                    Text(group.folder.lastPathComponent.uppercased())
+                ForEach(filtered.libraryFolderGroups(), id: \.folder) { group in
+                    Text((labels[group.folder] ?? group.folder.lastPathComponent).uppercased())
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                         .padding(.top, 12)
                         .padding(.horizontal, 8)
                         .help(group.folder.path)
                 ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
                     let isCurrentMenuOpen = activeMenuTrackID == track.id
-                    let zIndexValue: Double = isCurrentMenuOpen ? 1000.0 : Double(filteredTracks.count - index)
+                    let zIndexValue: Double = isCurrentMenuOpen ? 1000.0 : Double(total - index)
                     TrackRowView(
                         track: track,
                         isActive: engineManager.currentTrackID == track.id,
@@ -343,13 +363,6 @@ struct LibraryView: View {
             .padding(.vertical, 8)
             .background(CustomScrollerModifier())
         }
-        .onAppear {
-            recalculateTotalDuration()
-        }
-        .onDisappear { statisticsTask?.cancel() }
-        .onChange(of: tracks.count) { _, _ in
-            recalculateTotalDuration()
-        }
         .contentShape(Rectangle())
         .onTapGesture {
             isSearchFocused = false
@@ -373,6 +386,13 @@ struct LibraryView: View {
         .background(theme.surface)
     }
     
+    private var librarySummary: String {
+        var parts = ["\(tracks.count) \(tracks.count == 1 ? "track" : "tracks")"]
+        if totalOriginalBytes > 0 { parts.append(formattedTotalSize) }
+        if totalDurationSeconds > 0 { parts.append(formattedTotalDuration) }
+        return parts.joined(separator: ", ")
+    }
+
     private var telemetryView: some View {
         HStack(spacing: 4) {
             Text("\(tracks.count) \(tracks.count == 1 ? "TRACK" : "TRACKS")")
@@ -382,7 +402,7 @@ struct LibraryView: View {
             if totalOriginalBytes > 0 {
                 Text("•")
                     .font(.custom("DotGothic16-Regular", size: 9))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.textMuted)
                 
                 Text(formattedTotalSize)
                     .font(.custom("DotGothic16-Regular", size: 10.5))
@@ -392,7 +412,7 @@ struct LibraryView: View {
             if totalDurationSeconds > 0 {
                 Text("•")
                     .font(.custom("DotGothic16-Regular", size: 9))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.textMuted)
                 
                 Text(formattedTotalDuration)
                     .font(.custom("DotGothic16-Regular", size: 10.5))
@@ -401,6 +421,9 @@ struct LibraryView: View {
         }
         .lineLimit(1)
         .minimumScaleFactor(0.85)
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("library-summary")
+        .accessibilityLabel(librarySummary)
     }
     
     private var settingsButton: some View {
@@ -438,6 +461,25 @@ struct LibraryView: View {
 
 }
 
+/// Remembers `LibraryView.folderLabels` for the last set of folders. It is not
+/// observable, so reading it never invalidates the view.
+@MainActor
+final class FolderLabelCache {
+    private var folders: Set<URL>?
+    private var labels: [URL: String] = [:]
+    private(set) var buildCount = 0
+
+    func labels(for folders: [URL]) -> [URL: String] {
+        let current = Set(folders)
+        if current != self.folders {
+            self.folders = current
+            labels = LibraryView.folderLabels(for: Array(current))
+            buildCount += 1
+        }
+        return labels
+    }
+}
+
 struct TrackRowView: View {
     let track: TrackModel
     let isActive: Bool
@@ -453,9 +495,7 @@ struct TrackRowView: View {
     @State private var isDeleteHovered = false
     
     private var dotColor: Color {
-        if isMenuOpen {
-            return Color.red
-        } else if isHovered {
+        if isMenuOpen || isHovered {
             return theme.textPrimary
         } else {
             return theme.textSecondary
@@ -469,6 +509,8 @@ struct TrackRowView: View {
                 dotsMenuButton
             }
             .opacity(isMenuOpen ? 0.0 : 1.0)
+            .allowsHitTesting(!isMenuOpen)
+            .accessibilityHidden(isMenuOpen)
             
             if isMenuOpen {
                 inlineActionsView
@@ -477,19 +519,29 @@ struct TrackRowView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
-            isMenuOpen
+            isMenuOpen || isActive
                 ? theme.surfaceSecondary
-                : (isActive ? Color.red.opacity(0.12) : (isHovered ? theme.surfaceHover : Color.clear))
+                : (isHovered ? theme.surfaceHover : Color.clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 3)
                 .stroke(
                     isMenuOpen || isActive
-                        ? Color.red.opacity(0.8)
+                        ? theme.border
                         : (isHovered ? theme.cardBorder : Color.clear),
                     lineWidth: 1
                 )
         )
+        // The loaded track's indicator bar is the row's only red.
+        .overlay(alignment: .leading) {
+            if isActive && !isMenuOpen {
+                Rectangle()
+                    .fill(theme.accentRed)
+                    .frame(width: 3)
+                    .padding(.vertical, 4)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering in
             if !isMenuOpen {
@@ -513,25 +565,19 @@ struct TrackRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)
                     .font(.custom("DotGothic16-Regular", size: 15))
-                    .foregroundColor(isActive ? .red : theme.textPrimary)
+                    .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
                 
-                HStack(spacing: 8) {
-                    Text(track.dateAdded, style: .date)
-                        .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(theme.textSecondary)
-                    
-                    if isActive {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 4, height: 4)
-                    }
-                }
+                Text(track.dateAdded, style: .date)
+                    .font(.custom("DotGothic16-Regular", size: 11))
+                    .foregroundColor(theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Load \(track.title)")
+        .accessibilityValue(isActive ? "Selected" : "")
     }
     
     private var dotsMenuButton: some View {
@@ -545,11 +591,11 @@ struct TrackRowView: View {
                 Circle().fill(dotColor).frame(width: 3, height: 3)
             }
             .frame(width: 24, height: 24)
-            .background(isMenuOpen ? Color.red.opacity(0.18) : (isHovered ? theme.surfaceHover : Color.clear))
+            .background(isMenuOpen || isHovered ? theme.surfaceHover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(isMenuOpen ? Color.red : (isHovered ? theme.border : Color.clear), lineWidth: 1)
+                    .stroke(isMenuOpen ? theme.textPrimary : (isHovered ? theme.border : Color.clear), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -589,10 +635,10 @@ struct TrackRowView: View {
                         .font(.custom("DotGothic16-Regular", size: 12))
                         .fontWeight(.bold)
                 }
-                .foregroundColor(isDeleteHovered ? .black : .red)
+                .foregroundColor(isDeleteHovered ? theme.onAccent : theme.accentRed)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(isDeleteHovered ? Color.red : Color.red.opacity(0.18))
+                .background(isDeleteHovered ? theme.accentRed : theme.accentRed.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
@@ -615,11 +661,12 @@ struct TrackRowView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close track actions")
         }
     }
 }
 
-// MARK: - Native AppKit Nothing OS Hardware Red LED Scroller
+// MARK: - Native AppKit Nothing OS Hardware Scroller
 public final class NothingScroller: NSScroller {
     public override class var isCompatibleWithOverlayScrollers: Bool {
         return true
@@ -669,10 +716,11 @@ public final class NothingScroller: NSScroller {
             height: thumbHeight
         )
         
-        // Crisp rectangular Nothing Hardware Red LED (0px corner radius)
+        // Crisp rectangular thumb (0px corner radius); neutral, since scrolling
+        // is not an interrupt state.
         context.addRect(thumbRect)
-        context.setFillColor(CGColor(red: 1.0, green: 0.15, blue: 0.15, alpha: 0.95))
-        context.setShadow(offset: .zero, blur: 4.0, color: CGColor(red: 1.0, green: 0.0, blue: 0.0, alpha: 0.6))
+        let isDark = ThemeManager.shared.isDark
+        context.setFillColor(isDark ? CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.55) : CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.45))
         context.fillPath()
         
         context.restoreGState()

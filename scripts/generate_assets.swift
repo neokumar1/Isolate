@@ -1,32 +1,40 @@
 import Cocoa
 
+// Run from the repository root: swift scripts/generate_assets.swift
+
+/// A drawing context backed by exactly `width` x `height` pixels. NSImage.lockFocus
+/// draws at the main screen's backing scale, which doubled every size on Retina
+/// Macs and left the icon without its 16 and 128 px images.
+func makeBitmap(width: Int, height: Int) throws -> (rep: NSBitmapImageRep, context: NSGraphicsContext) {
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+          let context = NSGraphicsContext(bitmapImageRep: rep) else { throw AssetError.renderFailed }
+    return (rep, context)
+}
+
 func createDMGBackground() throws {
     let width: CGFloat = 660
     let height: CGFloat = 400
     let scale: CGFloat = 2.0
-    let size = NSSize(width: width * scale, height: height * scale)
-    
-    let image = NSImage(size: size)
-    image.lockFocus()
-    
-    guard let context = NSGraphicsContext.current?.cgContext else { image.unlockFocus(); throw AssetError.renderFailed }
+
+    let bitmap = try makeBitmap(width: Int(width * scale), height: Int(height * scale))
+    let context = bitmap.context.cgContext
     context.scaleBy(x: scale, y: scale)
-    
+
     // Clean Pure White Background matching reference screenshot
     context.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0))
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    
-    image.unlockFocus()
-    
-    if let tiffData = image.tiffRepresentation,
-       let rep = NSBitmapImageRep(data: tiffData),
-       let pngData = rep.representation(using: .png, properties: [:]) {
-        let outDir = URL(fileURLWithPath: "Assets")
-        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let outURL = outDir.appendingPathComponent("dmg_background.png")
-        try pngData.write(to: outURL, options: .atomic)
-        print("Generated DMG background at \(outURL.path)")
-    } else { throw AssetError.renderFailed }
+    bitmap.context.flushGraphics()
+
+    // 144 dpi, so Finder draws these pixels into the 660 x 400 pt window.
+    bitmap.rep.size = NSSize(width: width, height: height)
+    guard let pngData = bitmap.rep.representation(using: .png, properties: [:]) else { throw AssetError.renderFailed }
+    let outDir = URL(fileURLWithPath: "Assets")
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+    let outURL = outDir.appendingPathComponent("dmg_background.png")
+    try pngData.write(to: outURL, options: .atomic)
+    print("Generated DMG background at \(outURL.path)")
 }
 
 func createAppIcon() throws {
@@ -49,11 +57,9 @@ func createAppIcon() throws {
     
     for spec in iconSpecs {
         let s = CGFloat(spec.pixelSize)
-        let size = NSSize(width: s, height: s)
-        let img = NSImage(size: size)
-        img.lockFocus()
-        guard let ctx = NSGraphicsContext.current?.cgContext else { img.unlockFocus(); throw AssetError.renderFailed }
-        
+        let bitmap = try makeBitmap(width: spec.pixelSize, height: spec.pixelSize)
+        let ctx = bitmap.context.cgContext
+
         let bounds = CGRect(x: 0, y: 0, width: s, height: s)
         
         // 1. Dark hardware background
@@ -137,14 +143,10 @@ func createAppIcon() throws {
             ctx.fillEllipse(in: CGRect(x: dotX, y: dotY, width: dotSize, height: dotSize))
         }
         
-        img.unlockFocus()
-        
-        if let tiffData = img.tiffRepresentation,
-           let rep = NSBitmapImageRep(data: tiffData),
-           let png = rep.representation(using: .png, properties: [:]) {
-            let outURL = iconsetDir.appendingPathComponent(spec.name)
-            try png.write(to: outURL)
-        } else { throw AssetError.renderFailed }
+        bitmap.context.flushGraphics()
+
+        guard let png = bitmap.rep.representation(using: .png, properties: [:]) else { throw AssetError.renderFailed }
+        try png.write(to: iconsetDir.appendingPathComponent(spec.name))
     }
     
     let temporaryIcon = iconsetDir.appendingPathComponent("AppIcon.icns")

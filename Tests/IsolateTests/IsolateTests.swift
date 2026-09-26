@@ -1,30 +1,80 @@
 import XCTest
 import Accelerate
 import AVFoundation
+import CoreML
 import os
 @testable import Isolate
 
 @MainActor
 final class IsolateTests: XCTestCase {
-    
-    func testHannWindowCOLAProperty() {
-        let chunkSize = 441000
-        let hopSize = 220500
-        
-        var window = [Float](repeating: 0.0, count: chunkSize)
-        for i in 0..<chunkSize {
-            window[i] = 0.5 * (1.0 - cosf(Float(2.0 * Double.pi * Double(i) / Double(chunkSize))))
+
+    override func setUpWithError() throws {
+        // Tests that need sound start playback themselves.
+        addTeardownBlock(Hardening.disableAutoPlay())
+    }
+
+    func testOverlapAddThroughAccumulateReconstructsTheInput() throws {
+        // An identity "model" returns the normalised input for every source. The engine's
+        // window, denormalisation and weighting must then give the input back.
+        let chunkSize = DemucsEngine.chunkSize
+        let hopSize = DemucsEngine.hopSize
+        let mean: Float = 0.05
+        let deviation: Float = 0.2
+        // Explicit types keep this within older compilers' type-checking limits.
+        let signal: [Float] = (0..<(chunkSize + hopSize)).map { (index: Int) -> Float in
+            let t = Double(index)
+            let fast: Double = 0.3 * sin(t * 0.0123)
+            let slow: Double = 0.1 * sin(t * 0.00071)
+            return Float(fast + slow) + mean
         }
-        
-        // Sum 2 consecutive windows shifted by hopSize in the overlapping region
-        for i in 0..<hopSize {
-            let val1 = window[hopSize + i]
-            let val2 = window[i]
-            let sum = val1 + val2
-            XCTAssertEqual(sum, 1.0, accuracy: 1e-4, "Hann window 50% overlap must sum to 1.0 everywhere in overlap region")
+        var window = [Float](repeating: 0, count: chunkSize)
+        vDSP_hann_window(&window, vDSP_Length(chunkSize), Int32(vDSP_HANN_DENORM))
+        // Contiguous Float32, and Float16 stored time-major so accumulate() must follow the strides.
+        let layouts: [(MLMultiArrayDataType, [Int], Float)] = [
+            (.float32, [8 * chunkSize, 2 * chunkSize, chunkSize, 1], 1e-5),
+            (.float16, [8 * chunkSize, 2, 1, 8], 1e-3)
+        ]
+        for (dataType, strides, tolerance) in layouts {
+            var accumulated: [[[Float]]] = []
+            var weights: [[Float]] = []
+            for start in [0, hopSize] {
+                let elementSize = dataType == .float32 ? 4 : 2
+                let storage = UnsafeMutableRawPointer.allocate(byteCount: 8 * chunkSize * elementSize, alignment: 16)
+                for stem in 0..<4 {
+                    for channel in 0..<2 {
+                        // A per-target offset shows whether each result lands in its own stem and channel.
+                        let offset = Float(stem * 2 + channel) * 0.01
+                        for i in 0..<chunkSize {
+                            let value = (signal[start + i] - mean) / deviation + offset
+                            let index = stem * strides[1] + channel * strides[2] + i * strides[3]
+                            if dataType == .float32 { storage.storeBytes(of: value, toByteOffset: index * 4, as: Float.self) }
+                            else { storage.storeBytes(of: Float16(value), toByteOffset: index * 2, as: Float16.self) }
+                        }
+                    }
+                }
+                let output = try MLMultiArray(dataPointer: storage, shape: [1, 4, 2, NSNumber(value: chunkSize)],
+                                              dataType: dataType, strides: strides.map { NSNumber(value: $0) }) { $0.deallocate() }
+                var accumulators = (0..<8).map { _ in [Float](repeating: 0, count: chunkSize) }
+                var chunkWeights = [Float](repeating: 0, count: chunkSize)
+                try DemucsEngine.accumulate(output, into: &accumulators, weights: &chunkWeights, window: window,
+                                            mean: mean, standardDeviation: deviation)
+                accumulated.append(accumulators)
+                weights.append(chunkWeights)
+            }
+            // The second half of the first chunk overlaps the first half of the second.
+            for target in 0..<8 {
+                let offset = Float(target) * 0.01 * deviation
+                var worst: Float = 0
+                for i in stride(from: 0, to: hopSize, by: 7) {
+                    let weight = weights[0][hopSize + i] + weights[1][i]
+                    let rebuilt = (accumulated[0][target][hopSize + i] + accumulated[1][target][i]) / max(1e-5, weight)
+                    worst = max(worst, abs(rebuilt - (signal[hopSize + i] + offset)))
+                }
+                XCTAssertLessThan(worst, tolerance, "\(dataType == .float32 ? "Float32" : "Float16") target \(target)")
+            }
         }
     }
-    
+
 
     
 
@@ -43,7 +93,7 @@ final class IsolateTests: XCTestCase {
         XCTAssertGreaterThan(maxMagnitude, 0.0, "FFT magnitude for sine wave must be greater than zero")
     }
 
-    func testShortLivedFFTAnalyzersShareSafeSetupOwnership() {
+    func testShortLivedFFTAnalyzersReleaseSetupOwnership() {
         autoreleasepool {
             let analyzers = (0..<5).map { _ in FFTAnalyzer(fftSize: 1024) }
             var samples = [Float](repeating: 0.5, count: 1024)
@@ -97,24 +147,21 @@ final class IsolateTests: XCTestCase {
             try writer.write(from: buffer)
         }
         
-        let progressUpdates = OSAllocatedUnfairLock(initialState: [Double]())
-        let stemURLs: [URL]
-        do {
-            stemURLs = try await DemucsEngine.shared.splitAudio(url: tempAudioURL) { info in
-                progressUpdates.withLock { $0.append(info.fraction) }
-            }
-        } catch DemucsError.modelNotFound(let msg) {
-            try? FileManager.default.removeItem(at: tempDir)
-            if ProcessInfo.processInfo.environment["ISOLATE_REQUIRE_MODEL"] == "1" {
-                XCTFail(msg)
-                return
-            }
-            throw XCTSkip("Install the model to run inference: \(msg)")
+        let progressUpdates = OSAllocatedUnfairLock(initialState: [SplitProgressInfo]())
+        // Skips only when no model is installed; a model that fails to load fails the test.
+        let stemURLs = try await Hardening.splitRequiringModel(tempAudioURL) { info in
+            progressUpdates.withLock { $0.append(info) }
         }
-        
+
         XCTAssertEqual(stemURLs.count, 4, "Must output 4 stems (vocals, drums, bass, other)")
-        XCTAssertFalse(progressUpdates.withLock { $0.isEmpty }, "Must send progress updates during splitting")
-        
+        // The 0% cache check is always reported; per-chunk progress must follow and finish.
+        let updates = progressUpdates.withLock { $0 }
+        let chunked = updates.filter { $0.totalChunks > 0 }
+        XCTAssertEqual(chunked.first?.totalChunks, 4, "11.25 s spans four 5 s hops")
+        XCTAssertEqual(chunked.map(\.currentChunk), Array(1...4), "Every chunk must report its progress")
+        XCTAssertEqual(updates.map(\.fraction), updates.map(\.fraction).sorted(), "Progress must never move backwards")
+        XCTAssertEqual(updates.last?.fraction, 1)
+
         for stemURL in stemURLs {
             XCTAssertTrue(FileManager.default.fileExists(atPath: stemURL.path), "Stem file must exist on disk at \(stemURL.path)")
             let audioFile = try AVAudioFile(forReading: stemURL)
@@ -273,15 +320,17 @@ final class IsolateTests: XCTestCase {
         let pL = buffer.floatChannelData![0]
         let pR = buffer.floatChannelData![1]
         
+        // 1 kHz sits at the mid band's centre, so the mid gain applies in full.
         for i in 0..<Int(frameCount) {
             let t = Float(i) / Float(sampleRate)
-            let val = 0.4 * sinf(2.0 * .pi * 440.0 * t)
+            let val = 0.4 * sinf(2.0 * .pi * 1000.0 * t)
             pL[i] = val
             pR[i] = val
         }
-        
+
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
         let sourceURL = tempDir.appendingPathComponent("source_stem.wav")
         let destURL = tempDir.appendingPathComponent("rendered_eq_stem.wav")
         
@@ -304,23 +353,28 @@ final class IsolateTests: XCTestCase {
             sourceURL: sourceURL,
             destURL: destURL,
             low: 3.0,
-            mid: -2.0,
+            mid: -6.0,
             high: 4.5
         )
-        
+
         XCTAssertTrue(FileManager.default.fileExists(atPath: destURL.path), "Rendered audio file must exist on disk")
         let renderedFile = try AVAudioFile(forReading: destURL)
         XCTAssertEqual(renderedFile.processingFormat.sampleRate, sampleRate, "Sample rate must match")
-        XCTAssertGreaterThan(renderedFile.length, 0, "Rendered file must contain audio frames")
-        
-        try? FileManager.default.removeItem(at: tempDir)
+        XCTAssertEqual(renderedFile.length, AVAudioFramePosition(frameCount), "Rendered file must keep every frame")
+        // Past the filters' settling time, the tone must be 6 dB quieter (shelves add little at 1 kHz).
+        let rendered = try Hardening.samples(destURL)
+        let gain = 20 * log10(Double(Hardening.peak(rendered.dropFirst(Int(frameCount) / 2)) / 0.4))
+        XCTAssertEqual(gain, -6, accuracy: 1, "The stem EQ must be rendered into the file, not just stored")
     }
     
 
     
     func testHardwareThemeSwitchingAndTokenConsistency() {
         let themeManager = ThemeManager.shared
-        
+        // The shared theme outlives this test; later layout tests must see the one they started with.
+        let originalTheme = themeManager.currentTheme
+        defer { themeManager.applyTheme(originalTheme) }
+
         // 1. Verify Enum Cases and Display Names
         XCTAssertEqual(HardwareTheme.allCases.count, 3)
         XCTAssertEqual(HardwareTheme.system.displayName, "MATCH SYSTEM")
@@ -353,13 +407,28 @@ final class IsolateTests: XCTestCase {
         )
     }
 
-    func testAudioEngineManagerReleasesMeterTapsDuringTeardown() {
+    func testAudioEngineManagerReleasesMeterTapsDuringTeardown() throws {
         weak var releasedManager: AudioEngineManager?
+        var output: AVAudioEngine?
+        var stemMixers: [AVAudioNode] = []
         autoreleasepool {
             let manager = AudioEngineManager()
             releasedManager = manager
+            output = manager.timePitchNode.engine
+            stemMixers = [manager.vocalEQ, manager.drumEQ, manager.bassEQ, manager.otherEQ].compactMap {
+                output?.outputConnectionPoints(for: $0, outputBus: 0).first?.node
+            }
         }
         XCTAssertNil(releasedManager, "Audio engine teardown must release meter tap processors.")
+        let engine = try XCTUnwrap(output)
+        XCTAssertEqual(stemMixers.count, 4)
+        // The taps capture the manager weakly, so release alone proves nothing. Installing on a
+        // bus that still has a tap raises, so these succeed only if deinit removed every tap.
+        for node in [engine.mainMixerNode] + stemMixers {
+            node.installTap(onBus: 0, bufferSize: 1024, format: nil) { _, _ in }
+            node.removeTap(onBus: 0)
+        }
+        XCTAssertFalse(engine.isRunning)
     }
     
 
@@ -381,8 +450,13 @@ final class IsolateTests: XCTestCase {
         engine.pitchShiftSemitones = 0.0
         XCTAssertTrue(engine.timePitchNode.bypass, "timePitchNode bypass must re-engage when pitch returns to 0")
         
-        // Verify master limiter is instantiated in the audio graph
-        XCTAssertNotNil(engine.masterLimiter, "masterLimiter True-Peak brickwall limiter must be attached to prevent inter-sample DAC clipping")
+        // The limiter must sit between master EQ and the output, not merely exist.
+        guard let graph = engine.timePitchNode.engine else { return XCTFail("The time/pitch node must be attached") }
+        func next(_ node: AVAudioNode) -> AVAudioNode? { graph.outputConnectionPoints(for: node, outputBus: 0).first?.node }
+        XCTAssertTrue(next(engine.timePitchNode) === engine.masterEQ)
+        XCTAssertTrue(next(engine.masterEQ) === engine.masterLimiter, "Master EQ must feed the peak limiter")
+        XCTAssertTrue(next(engine.masterLimiter) === graph.mainMixerNode, "The limiter must feed the output")
+        XCTAssertFalse(engine.masterLimiter.bypass)
     }
     
     @MainActor
@@ -508,10 +582,8 @@ final class IsolateTests: XCTestCase {
         XCTAssertEqual(engine.currentTrackID, track.id)
         XCTAssertEqual(engine.currentTrackName, "SAFETY TEST SONG")
         
-        // 4. Test togglePlayback (pause / play cycle)
-        if !engine.isPlaying {
-            engine.togglePlayback()
-        }
+        // 4. Test togglePlayback (pause / play cycle); skips only without an output device
+        try Hardening.requirePlayback(engine)
         XCTAssertTrue(engine.isPlaying, "Audio engine must transition to playing without throwing 'disconnected state' error")
         
         // 5. Pause
