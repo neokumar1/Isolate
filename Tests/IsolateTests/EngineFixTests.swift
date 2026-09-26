@@ -237,4 +237,32 @@ final class EngineFixTests: XCTestCase {
         XCTAssertEqual(engine.playbackProgress, 0.3, accuracy: 1e-9, "Play at the end resumes the loop, not 0:00")
         engine.unloadTrack()
     }
+
+    func testCompareOriginalBlanksStemMeters() async throws {
+        let engine = AudioEngineManager()
+        await engine.loadTrack(try cancellingTrack())
+        try requirePlayback(engine)
+        let stems = try await observeMeters(engine, for: .milliseconds(400)).stems
+        XCTAssertTrue(stems.allSatisfy { $0 > 0.05 })
+        engine.isBypassed = true
+        XCTAssertEqual(engine.stemPeaks, [0, 0, 0, 0])
+        let bypassed = try await observeMeters(engine)
+        XCTAssertEqual(bypassed.stems, [0, 0, 0, 0], "Silenced stems must not show activity")
+        XCTAssertGreaterThan(bypassed.master, 0.1, "The original is audible and metered")
+        engine.isBypassed = false
+        engine.unloadTrack()
+    }
+
+    func testMetersAnalyseTheNewestAudioInLongTapBuffers() throws {
+        // macOS delivers ~100 ms tap buffers; the tone sits only in the newest 1024 frames.
+        let buffer = AVAudioPCMBuffer(pcmFormat: StreamingAudio.format, frameCapacity: 4410)!
+        buffer.frameLength = 4410
+        for channel in 0..<2 {
+            for frame in 0..<4410 {
+                buffer.floatChannelData![channel][frame] = frame < 3386 ? 0 : 0.2 * sin(Float(frame) * 2 * .pi * 440 / 44_100)
+            }
+        }
+        let reading = try XCTUnwrap(AudioMeterProcessor(bandCount: 32).process(buffer))
+        XCTAssertGreaterThan(reading.spectrum.max() ?? 0, 0.1)
+    }
 }

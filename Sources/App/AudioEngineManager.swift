@@ -566,6 +566,8 @@ public final class AudioEngineManager {
             guard let reading = processor.process(buffer) else { return }
             Task { @MainActor [weak self] in
                 guard let self, self.isPlaying else { return }
+                // Compare Original silences the stem sum after these taps.
+                if stem != nil && self.isBypassed && self.canBypass { return }
                 if let stem { self.stemPeaks[stem] = reading.peak }
                 switch stem {
                 case 0: self.vocalEQMagnitudes = reading.spectrum
@@ -629,6 +631,11 @@ public final class AudioEngineManager {
         if isBypassed && canBypass {
             stemsSumMixer.outputVolume = 0.0
             originalPlayer.volume = 1.0
+            stemPeaks = Array(repeating: 0, count: 4)
+            vocalEQMagnitudes = Array(repeating: 0, count: 7)
+            drumEQMagnitudes = Array(repeating: 0, count: 7)
+            bassEQMagnitudes = Array(repeating: 0, count: 7)
+            otherEQMagnitudes = Array(repeating: 0, count: 7)
             return
         }
         
