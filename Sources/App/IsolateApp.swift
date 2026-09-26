@@ -9,6 +9,11 @@ struct IsolateApp: App {
     @State private var theme = ThemeManager.shared
     @State private var isShowingAboutModal = false
     @State private var isShowingSettingsModal = false
+    private let libraryContainer: ModelContainer
+
+    init() {
+        libraryContainer = LibraryStore.makeContainer()
+    }
 
     var body: some Scene {
         WindowGroup("Isolate", id: "main", for: String.self) { _ in
@@ -66,7 +71,7 @@ struct IsolateApp: App {
                     .disabled(!engineManager.canBypass || engineManager.isSplitting)
             }
         }
-        .modelContainer(for: TrackModel.self, inMemory: AppPreferences.isTesting)
+        .modelContainer(libraryContainer)
         .defaultSize(width: 1280, height: 800)
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
@@ -416,6 +421,9 @@ struct ContentView: View {
                     }
                 }
             )
+            if let notice = LibraryStore.takeStartupNotice() {
+                engineManager.showError(notice)
+            }
         }
         .onChange(of: tracks) { _, newTracks in
             NowPlayingManager.shared.configure(
