@@ -455,64 +455,34 @@ struct ContentView: View {
         .onAppear {
             theme.updateWindowAppearance()
             appMoveHelper.checkLocationOnStartup()
-            NowPlayingManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { tracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
-            MenuBarManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { tracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
+            configureSystemControls(tracks)
             if let notice = LibraryStore.takeStartupNotice() {
                 engineManager.showError(notice)
             }
         }
         .onChange(of: tracks) { _, newTracks in
-            NowPlayingManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { newTracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
-            MenuBarManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { newTracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
+            configureSystemControls(newTracks)
         }
+    }
+
+    /// Media keys, Control Center and the status menu step through the library
+    /// in the sidebar's folder order.
+    private func configureSystemControls(_ library: [TrackModel]) {
+        let selectTrack: (TrackModel) -> Void = { track in
+            Task {
+                guard !engineManager.isSplitting else { return }
+                await engineManager.loadTrack(track)
+                if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
+                    engineManager.togglePlayback()
+                }
+            }
+        }
+        NowPlayingManager.shared.configure(engineManager: engineManager,
+                                           playlistProvider: { library.libraryPlaybackOrder() },
+                                           trackSelectHandler: selectTrack)
+        MenuBarManager.shared.configure(engineManager: engineManager,
+                                        playlistProvider: { library.libraryPlaybackOrder() },
+                                        trackSelectHandler: selectTrack)
     }
 }
 

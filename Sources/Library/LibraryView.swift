@@ -116,47 +116,24 @@ struct LibraryView: View {
     @State private var theme = ThemeManager.shared
     @State private var searchText = ""
     
-    private var filteredTracks: [TrackModel] {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else { return tracks }
-        
-        // If searching generic stem terms, all tracks have 4 isolated stems
-        if trimmed == "stem" || trimmed == "stems" || trimmed == "all" {
-            return tracks
+    /// Group headers: the folder name, extended with parent folders only where
+    /// two different folders share a name (e.g. ARTIST A / GREATEST HITS).
+    /// Built from every track so headers stay stable while searching.
+    static func folderLabels(for folders: [URL]) -> [URL: String] {
+        let unique = Array(Set(folders))
+        func suffix(_ folder: URL, _ count: Int) -> String {
+            folder.pathComponents.suffix(count).joined(separator: " / ")
         }
-        
-        let queryTokens = trimmed
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-        
-        guard !queryTokens.isEmpty else { return tracks }
-        
-        return tracks.filter { track in
-            let titleLower = track.title.lowercased()
-            let filenameLower = track.originalURL.lastPathComponent.lowercased()
-            let pathLower = track.originalURL.path.lowercased()
-            let extLower = track.originalURL.pathExtension.lowercased()
-            let vocalLower = track.vocalStemURL.lastPathComponent.lowercased()
-            let drumLower = track.drumStemURL.lastPathComponent.lowercased()
-            let bassLower = track.bassStemURL.lastPathComponent.lowercased()
-            let otherLower = track.otherStemURL.lastPathComponent.lowercased()
-            
-            let combined = "\(titleLower) \(filenameLower) \(pathLower) \(extLower) \(vocalLower) \(drumLower) \(bassLower) \(otherLower)"
-            
-            // Direct substring match
-            if combined.contains(trimmed) { return true }
-            
-            // Multi-token match across words/delimiters
-            return queryTokens.allSatisfy { token in
-                combined.contains(token)
+        var labels: [URL: String] = [:]
+        for folder in unique {
+            var count = 1
+            while count < folder.pathComponents.count,
+                  unique.contains(where: { $0 != folder && suffix($0, count).lowercased() == suffix(folder, count).lowercased() }) {
+                count += 1
             }
+            labels[folder] = suffix(folder, count)
         }
-    }
-    
-    private var groupedTracks: [(folder: URL, tracks: [TrackModel])] {
-        let groups = Dictionary(grouping: filteredTracks) { $0.originalURL.deletingLastPathComponent() }
-        return groups.keys.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-            .map { (folder: $0, tracks: groups[$0] ?? []) }
+        return labels
     }
 
     var body: some View {
@@ -184,6 +161,11 @@ struct LibraryView: View {
         .onDisappear { statisticsTask?.cancel() }
         .onChange(of: tracks.map(\.id)) { _, _ in
             recalculateTotalDuration()
+        }
+        // A search can hide the row whose inline menu is open; close it rather
+        // than leave its invisible click catcher over the player.
+        .onChange(of: searchText) { _, _ in
+            activeMenuTrackID = nil
         }
     }
     
@@ -225,7 +207,7 @@ struct LibraryView: View {
                 .font(.system(size: 11))
                 .foregroundColor(isSearchFocused ? .red : theme.textSecondary)
             
-            TextField("SEARCH STEMS...", text: $searchText)
+            TextField("SEARCH LIBRARY...", text: $searchText)
                 .accessibilityLabel("Search library")
                 .textFieldStyle(.plain)
                 .font(.custom("DotGothic16-Regular", size: 11.5))
@@ -266,6 +248,7 @@ struct LibraryView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            activeMenuTrackID = nil
             isSearchFocused = true
         }
         .padding(.horizontal, 16)
@@ -274,9 +257,11 @@ struct LibraryView: View {
     
     @ViewBuilder
     private var trackListView: some View {
+        // Filter once per update; rows reuse the result instead of re-filtering.
+        let filtered = tracks.matchingLibrarySearch(searchText)
         if tracks.isEmpty {
             emptyStateView
-        } else if filteredTracks.isEmpty {
+        } else if filtered.isEmpty {
             VStack(spacing: 8) {
                 Spacer()
                 Text("NO MATCHING TRACKS")
@@ -286,7 +271,7 @@ struct LibraryView: View {
             }
             .frame(maxWidth: .infinity)
         } else {
-            tracksScrollView
+            tracksScrollView(filtered)
         }
     }
     
@@ -307,19 +292,23 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity)
     }
     
-    private var tracksScrollView: some View {
-        ScrollView {
+    private func tracksScrollView(_ filtered: [TrackModel]) -> some View {
+        let total = filtered.count
+        let labels = Self.folderLabels(for: tracks.map { $0.originalURL.deletingLastPathComponent() })
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 6) {
-                ForEach(groupedTracks, id: \.folder) { group in
-                    Text(group.folder.lastPathComponent.uppercased())
+                ForEach(filtered.libraryFolderGroups(), id: \.folder) { group in
+                    Text((labels[group.folder] ?? group.folder.lastPathComponent).uppercased())
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                         .padding(.top, 12)
                         .padding(.horizontal, 8)
                         .help(group.folder.path)
                 ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
                     let isCurrentMenuOpen = activeMenuTrackID == track.id
-                    let zIndexValue: Double = isCurrentMenuOpen ? 1000.0 : Double(filteredTracks.count - index)
+                    let zIndexValue: Double = isCurrentMenuOpen ? 1000.0 : Double(total - index)
                     TrackRowView(
                         track: track,
                         isActive: engineManager.currentTrackID == track.id,

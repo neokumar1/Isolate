@@ -26,6 +26,37 @@ public final class TrackModel {
     }
 }
 
+// MARK: - Library order and search
+
+extension Array where Element == TrackModel {
+    /// Sidebar grouping: source folders in path order, each keeping the input
+    /// (newest-first) order. Next/Previous walk this same order.
+    func libraryFolderGroups() -> [(folder: URL, tracks: [TrackModel])] {
+        let groups = Dictionary(grouping: self) { $0.originalURL.deletingLastPathComponent() }
+        return groups.keys.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            .map { (folder: $0, tracks: groups[$0] ?? []) }
+    }
+
+    func libraryPlaybackOrder() -> [TrackModel] {
+        libraryFolderGroups().flatMap(\.tracks)
+    }
+
+    /// Matches only what identifies a track to the user: its title, source file
+    /// name and folder. Stem file names and full paths are shared by every
+    /// track, so matching them made common words return the whole library.
+    func matchingLibrarySearch(_ text: String) -> [TrackModel] {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return self }
+        let tokens = query.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        return filter { track in
+            let searchable = [track.title, track.originalURL.lastPathComponent,
+                              track.originalURL.deletingLastPathComponent().lastPathComponent]
+                .joined(separator: " ").lowercased()
+            return searchable.contains(query) || (!tokens.isEmpty && tokens.allSatisfy { searchable.contains($0) })
+        }
+    }
+}
+
 // MARK: - Library store
 
 /// Opens the on-disk library. Builds up to 1.2 used SwiftData's default
