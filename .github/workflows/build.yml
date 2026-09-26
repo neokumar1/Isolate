@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,8 +16,18 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
-    timeout-minutes: 30
+    name: Build & Test (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-26]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      # Pull requests from forks get no repository variables; they build and
+      # test without the model, and the inference tests skip.
+      ISOLATE_MODEL_ARCHIVE_URL: ${{ vars.ISOLATE_MODEL_ARCHIVE_URL }}
+      ISOLATE_MODEL_ARCHIVE_SHA256: ${{ vars.ISOLATE_MODEL_ARCHIVE_SHA256 }}
     steps:
       - uses: actions/checkout@v5
       - uses: maxim-lobanov/setup-xcode@v1
@@ -24,10 +35,23 @@ jobs:
           xcode-version: latest-stable
       - run: brew install xcodegen
       - run: xcodegen generate
-      - name: Check shell scripts and whitespace
+      - name: Check scripts, version metadata and whitespace
         run: |
-          bash -n install.sh scripts/package_release.sh scripts/fetch_release_model.sh
+          for script in install.sh scripts/*.sh; do bash -n "$script"; done
+          ruby -c Casks/isolate.rb
+          bash scripts/check_version.sh
+          git diff --exit-code -- Info.plist
           git diff --check
+      - name: Fetch and validate the pinned model
+        if: env.ISOLATE_MODEL_ARCHIVE_URL != '' && env.ISOLATE_MODEL_ARCHIVE_SHA256 != ''
+        run: |
+          bash scripts/fetch_release_model.sh
+          # Xcode forwards TEST_RUNNER_ variables to the tests, which then fail
+          # instead of skipping when the model cannot run.
+          echo "TEST_RUNNER_ISOLATE_REQUIRE_MODEL=1" >> "$GITHUB_ENV"
+      - name: Note skipped inference
+        if: env.ISOLATE_MODEL_ARCHIVE_URL == '' || env.ISOLATE_MODEL_ARCHIVE_SHA256 == ''
+        run: echo "::notice::The model variables are not available to this run, so Core ML inference tests will skip."
       - name: Build Apple Silicon release
         run: xcodebuild build -project Isolate.xcodeproj -scheme Isolate -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO
       - name: Run unit and audio regression tests
@@ -36,5 +60,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: test-results
+          name: test-results-${{ matrix.runner }}
           path: build/DerivedData/Logs/Test/*.xcresult
