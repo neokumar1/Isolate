@@ -3,21 +3,31 @@ import CoreML
 @preconcurrency import AVFoundation
 import Accelerate
 import AudioToolbox
+import os
 
 public enum DemucsError: LocalizedError, Sendable {
     case modelNotFound(String)
+    case modelLoadFailed(String)
     case compilationFailed(String)
     case assetReaderFailed(String)
     case conversionFailed(String)
+    /// A source file that cannot be read; the message is already user-facing.
+    case unreadableSource(String)
+    case insufficientDiskSpace(needed: Int64, available: Int64)
     case invalidAudioFormat
     case cancelled
 
     public var errorDescription: String? {
         switch self {
         case .modelNotFound(let msg): return "CoreML Model Not Found: \(msg)"
+        case .modelLoadFailed(let msg): return "Model Could Not Be Loaded: \(msg)"
         case .compilationFailed(let msg): return "Model Compilation Failed: \(msg)"
         case .assetReaderFailed(let msg): return "Audio Reading Failed: \(msg)"
         case .conversionFailed(let msg): return "Audio Conversion Failed: \(msg)"
+        case .unreadableSource(let msg): return msg
+        case .insufficientDiskSpace(let needed, let available):
+            let size = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            return "Not enough disk space: separating this track needs about \(size(needed)) free, and \(size(available)) is available."
         case .invalidAudioFormat: return "Invalid Audio Format"
         case .cancelled: return "Operation Cancelled"
         }
@@ -59,6 +69,13 @@ public actor DemucsEngine {
     public static let shared = DemucsEngine()
     
     private var model: MLModel?
+    /// One shared load, so a cancelled import never starts a second compile.
+    private var modelLoad: Task<MLModel, Error>?
+    private var modelRelease: Task<Void, Never>?
+    /// Core ML holds a large working set while the model stays loaded. Reloading
+    /// from its compiled cache is quick next to a separation, so an idle model is
+    /// released; a batch keeps it because each file starts before this elapses.
+    private var idleModelLifetime: Duration = .seconds(60)
     
     // Demucs HTDemucs operates on 10.0s chunks @ 44.1kHz (441,000 samples)
     public static let sampleRate: Double = 44100.0
@@ -72,9 +89,77 @@ public actor DemucsEngine {
     
     // MARK: - Model loading
 
-    private func loadModelIfNeeded() async throws {
-        if model != nil { return }
-        
+    /// Returns the model, sharing one in-flight load. Cancelling an import ends its
+    /// wait at once; the load finishes in the background for the next import.
+    private func loadedModel() async throws -> MLModel {
+        if let model { return model }
+        let load: Task<MLModel, Error>
+        if let modelLoad {
+            load = modelLoad
+        } else {
+            load = Task.detached(priority: .userInitiated) { try await Self.loadModel() }
+            modelLoad = load
+            Task { await finishModelLoad(load) }
+        }
+        let loaded = try await Self.value(of: load)
+        model = loaded
+        return loaded
+    }
+
+    private func finishModelLoad(_ load: Task<MLModel, Error>) async {
+        let result = await load.result
+        guard modelLoad == load else { return }
+        modelLoad = nil
+        guard case .success(let loaded) = result else { return }
+        model = loaded
+        // A load abandoned by a cancelled import must not stay resident.
+        if !isSeparating { scheduleModelRelease() }
+    }
+
+    private func scheduleModelRelease() {
+        modelRelease?.cancel()
+        let lifetime = idleModelLifetime
+        modelRelease = Task {
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled else { return }
+            releaseIdleModel()
+        }
+    }
+
+    /// Drops the loaded model unless a separation is using it.
+    func releaseIdleModel() {
+        guard !isSeparating else { return }
+        model = nil
+    }
+
+    var isModelLoaded: Bool { model != nil }
+
+    /// Tests shorten the lifetime to observe a release.
+    func setIdleModelLifetime(_ lifetime: Duration) {
+        idleModelLifetime = lifetime
+    }
+
+    /// Awaits a task's result while letting the caller's cancellation end the wait.
+    private static func value<T: Sendable>(of task: Task<T, Error>) async throws -> T {
+        let pending = OSAllocatedUnfairLock<CheckedContinuation<T, Error>?>(initialState: nil)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pending.withLock { $0 = continuation }
+                if Task.isCancelled {
+                    pending.withLock { $0.take() }?.resume(throwing: CancellationError())
+                    return
+                }
+                Task {
+                    let result = await task.result
+                    pending.withLock { $0.take() }?.resume(with: result)
+                }
+            }
+        } onCancel: {
+            pending.withLock { $0.take() }?.resume(throwing: CancellationError())
+        }
+    }
+
+    private static func loadModel() async throws -> MLModel {
         let fileManager = FileManager.default
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Isolate")
@@ -96,21 +181,6 @@ public actor DemucsEngine {
             candidateModelURLs.append(appSupportCompiledURL)
         }
         
-        // Try loading candidate pre-compiled models
-        for url in candidateModelURLs {
-            do {
-                let config = MLModelConfiguration()
-                config.computeUnits = .all
-                let loaded = try MLModel(contentsOf: url, configuration: config)
-                try Self.validateModel(loaded)
-                self.model = loaded
-                
-                return
-            } catch {
-                print("Failed to load CoreML model from \(url.path): \(error)")
-            }
-        }
-        
         // 3. Check for .mlpackage in AppSupport or Bundle to compile on-the-fly
         var candidatePackages: [URL] = []
         if let bundlePkg = Bundle.main.url(forResource: "HTDemucs_CoreML_FP16", withExtension: "mlpackage") {
@@ -124,10 +194,32 @@ public actor DemucsEngine {
         if fileManager.fileExists(atPath: appSupportPkg.path) {
             candidatePackages.append(appSupportPkg)
         }
+        return try await loadModel(compiled: candidateModelURLs, packages: candidatePackages,
+                                   compiledCache: appSupportCompiledURL)
+    }
+
+    static func loadModel(compiled: [URL], packages: [URL], compiledCache appSupportCompiledURL: URL) async throws -> MLModel {
+        let fileManager = FileManager.default
+        // Only the first failure is reported: it belongs to the preferred location.
+        var failure: String?
         
-        for pkgURL in candidatePackages {
+        // Try loading candidate pre-compiled models
+        for url in unique(compiled) {
             do {
-                // The separation guard prevents a second load while compilation awaits.
+                let config = MLModelConfiguration()
+                config.computeUnits = .all
+                let loaded = try MLModel(contentsOf: url, configuration: config)
+                try Self.validateModel(loaded)
+                return loaded
+            } catch {
+                print("Failed to load CoreML model from \(url.path): \(error)")
+                failure = failure ?? loadFailure(url, error)
+            }
+        }
+        
+        for pkgURL in unique(packages) {
+            do {
+                // The shared load task prevents a second compile while this one awaits.
                 // Validate before replacing the cached compiled model.
                 let temporary = try await MLModel.compileModel(at: pkgURL)
                 defer { try? fileManager.removeItem(at: temporary) }
@@ -140,19 +232,40 @@ public actor DemucsEngine {
                 } else {
                     try fileManager.moveItem(at: temporary, to: appSupportCompiledURL)
                 }
-                self.model = try MLModel(contentsOf: appSupportCompiledURL, configuration: config)
-                return
+                return try MLModel(contentsOf: appSupportCompiledURL, configuration: config)
             } catch {
                 print("Failed to compile mlpackage from \(pkgURL.path): \(error)")
+                failure = failure ?? loadFailure(pkgURL, error)
             }
         }
         
+        // A model that is present but unusable needs a different fix than a missing one.
+        if let failure {
+            throw DemucsError.modelLoadFailed("\(failure) Replace it with the validated model described in MODEL.md.")
+        }
         throw DemucsError.modelNotFound("Install the complete Isolate release, or follow MODEL.md to place HTDemucs.mlmodelc in ~/Library/Application Support/Isolate.")
+    }
+
+    /// Bundle lookups by name and by resource path can return the same model.
+    private static func unique(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    private static func loadFailure(_ url: URL, _ error: Error) -> String {
+        let reason = if case DemucsError.modelLoadFailed(let message) = error { message } else { error.localizedDescription }
+        return "\((url.path as NSString).abbreviatingWithTildeInPath) could not be used. \(reason)"
     }
     
     // MARK: - Streaming separation
 
     private var isSeparating = false
+
+    /// Launch-time cache cleanup that cannot race a separation this process starts.
+    public func removeAbandonedStaging() {
+        guard !isSeparating else { return }
+        StemCache.removeAbandonedStaging()
+    }
 
     /// Uses a rolling ten-second overlap accumulator and writes completed hops to disk.
     public func splitAudio(
@@ -163,7 +276,13 @@ public actor DemucsEngine {
             throw DemucsError.conversionFailed("Another separation is still running.")
         }
         isSeparating = true
-        defer { isSeparating = false }
+        modelRelease?.cancel()
+        defer {
+            isSeparating = false
+            scheduleModelRelease()
+        }
+        // Holding the only separation slot means no other staging folder is live.
+        StemCache.removeAbandonedStaging()
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let startTime = CACurrentMediaTime()
@@ -178,6 +297,7 @@ public actor DemucsEngine {
             ))
         }
         try Task.checkCancellation()
+        try await StreamingAudio.downloadIfNeeded(url) { report(0, "DOWNLOADING FROM ICLOUD...") }
         report(0, "CHECKING AUDIO CACHE...")
         let key = try StemCache.key(for: url)
         let destination = StemCache.root.appending(path: key, directoryHint: .isDirectory)
@@ -185,13 +305,13 @@ public actor DemucsEngine {
             report(1, "LOADED FROM CACHE")
             return cached
         }
-        report(0.01, "LOADING SEPARATION MODEL...")
-        try await loadModelIfNeeded()
-        try Task.checkCancellation()
-        guard let model else { throw DemucsError.modelNotFound("Install the HTDemucs Core ML model.") }
-        try Self.validateModel(model)
         let fm = FileManager.default
         try fm.createDirectory(at: StemCache.root, withIntermediateDirectories: true)
+        try StemCache.ensureSpace(forFrames: StreamingAudio.declaredFrames(of: url))
+        report(0.01, "LOADING SEPARATION MODEL...")
+        let model = try await loadedModel()
+        try Task.checkCancellation()
+        try Self.validateModel(model)
         let staging = StemCache.root.appending(path: ".partial-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
@@ -279,31 +399,41 @@ public actor DemucsEngine {
               input.shape.map(\.intValue) == [1, 2, chunkSize],
               let output = model.modelDescription.outputDescriptionsByName["sources"]?.multiArrayConstraint,
               output.shape.map(\.intValue) == [1, 4, 2, chunkSize] else {
-            throw DemucsError.conversionFailed("The model must accept audio [1, 2, 441000] and return sources [1, 4, 2, 441000].")
+            throw DemucsError.modelLoadFailed("The model must accept audio [1, 2, 441000] and return sources [1, 4, 2, 441000].")
         }
     }
 
-    private static func accumulate(_ output: MLMultiArray, into accumulators: inout [[Float]],
-                                   weights: inout [Float], window: [Float], mean: Float,
-                                   standardDeviation: Float) throws {
+    static func accumulate(_ output: MLMultiArray, into accumulators: inout [[Float]],
+                           weights: inout [Float], window: [Float], mean: Float,
+                           standardDeviation: Float) throws {
         guard output.shape.map(\.intValue) == [1, 4, 2, chunkSize],
               output.dataType == .float16 || output.dataType == .float32 else {
             throw DemucsError.conversionFailed("The model returned an unsupported audio tensor.")
         }
         let strides = output.strides.map(\.intValue)
-        for stem in 0..<4 {
-            for channel in 0..<2 {
-                let offset = stem * strides[1] + channel * strides[2]
-                let target = stem * 2 + channel
-                for i in 0..<chunkSize {
-                    let index = offset + i * strides[3]
-                    let sample: Float
-                    if output.dataType == .float32 {
-                        sample = output.dataPointer.assumingMemoryBound(to: Float.self)[index]
-                    } else {
-                        sample = Float(output.dataPointer.assumingMemoryBound(to: Float16.self)[index])
+        let step = strides[3]
+        let isFloat32 = output.dataType == .float32
+        // Resolve the tensor type and storage once; per-sample Objective-C
+        // property reads dominated this loop. Arithmetic order is unchanged.
+        output.withUnsafeBytes { raw in
+            window.withUnsafeBufferPointer { window in
+                for stem in 0..<4 {
+                    for channel in 0..<2 {
+                        let offset = stem * strides[1] + channel * strides[2]
+                        accumulators[stem * 2 + channel].withUnsafeMutableBufferPointer { target in
+                            if isFloat32 {
+                                let samples = raw.baseAddress!.assumingMemoryBound(to: Float.self)
+                                for i in 0..<chunkSize {
+                                    target[i] += (samples[offset + i * step] * standardDeviation + mean) * window[i]
+                                }
+                            } else {
+                                let samples = raw.baseAddress!.assumingMemoryBound(to: Float16.self)
+                                for i in 0..<chunkSize {
+                                    target[i] += (Float(samples[offset + i * step]) * standardDeviation + mean) * window[i]
+                                }
+                            }
+                        }
                     }
-                    accumulators[target][i] += (sample * standardDeviation + mean) * window[i]
                 }
             }
         }

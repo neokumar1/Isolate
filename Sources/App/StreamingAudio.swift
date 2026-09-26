@@ -1,5 +1,7 @@
 import AVFoundation
 import AudioToolbox
+import Network
+import os
 
 /// Disk-backed audio preparation keeps memory independent of track duration.
 enum StreamingAudio {
@@ -26,10 +28,33 @@ enum StreamingAudio {
         try check(ExtAudioFileOpenURL(source as CFURL, &reference))
         guard let reference else { throw DemucsError.invalidAudioFormat }
         defer { ExtAudioFileDispose(reference) }
-        var description = format.streamDescription.pointee
+        let info = try sourceInfo(reference)
+        // A stereo client format keeps only the first two channels of wider
+        // sources, so decode every channel and downmix by speaker position.
+        var clientFormat = format
+        var downmix: AVAudioConverter?
+        if info.format.mChannelsPerFrame > 2 {
+            let layout = try channelLayout(of: reference, channels: info.format.mChannelsPerFrame)
+            clientFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44_100,
+                                         interleaved: false, channelLayout: layout)
+            guard let converter = AVAudioConverter(from: clientFormat, to: format) else {
+                throw DemucsError.invalidAudioFormat
+            }
+            converter.downmix = true
+            downmix = converter
+        }
+        var description = clientFormat.streamDescription.pointee
         try check(ExtAudioFileSetProperty(reference, kExtAudioFileProperty_ClientDataFormat,
                                          UInt32(MemoryLayout<AudioStreamBasicDescription>.size), &description))
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_384),
+        if let layout = clientFormat.channelLayout, downmix != nil {
+            // Codecs such as ALAC decode in their native order unless the client layout is explicit.
+            let size = MemoryLayout<AudioChannelLayout>.size
+                + max(0, Int(layout.layout.pointee.mNumberChannelDescriptions) - 1) * MemoryLayout<AudioChannelDescription>.size
+            try check(ExtAudioFileSetProperty(reference, kExtAudioFileProperty_ClientChannelLayout,
+                                             UInt32(size), layout.layout))
+        }
+        guard let decoded = AVAudioPCMBuffer(pcmFormat: clientFormat, frameCapacity: 16_384),
+              let buffer = downmix == nil ? decoded : AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_384),
               let channels = buffer.floatChannelData else { throw DemucsError.invalidAudioFormat }
         let writer = try AVAudioFile(forWriting: destination, settings: settings)
         var count = 0
@@ -38,12 +63,13 @@ enum StreamingAudio {
         var stereoSumSquares = 0.0
         while true {
             try Task.checkCancellation()
-            buffer.frameLength = buffer.frameCapacity
-            var frames = buffer.frameCapacity
-            try check(ExtAudioFileRead(reference, &frames, buffer.mutableAudioBufferList))
+            decoded.frameLength = decoded.frameCapacity
+            var frames = decoded.frameCapacity
+            try check(ExtAudioFileRead(reference, &frames, decoded.mutableAudioBufferList))
             guard frames > 0 else { break }
-            buffer.frameLength = frames
-            for i in 0..<Int(frames) {
+            decoded.frameLength = frames
+            try downmix?.convert(to: buffer, from: decoded)
+            for i in 0..<Int(buffer.frameLength) {
                 guard channels[0][i].isFinite, channels[1][i].isFinite else {
                     throw DemucsError.conversionFailed("The source contains non-finite audio samples.")
                 }
@@ -54,10 +80,16 @@ enum StreamingAudio {
                 stereoSumSquares += (Double(channels[0][i]) * Double(channels[0][i])
                     + Double(channels[1][i]) * Double(channels[1][i])) * 0.5
             }
-            count += Int(frames)
+            count += Int(buffer.frameLength)
             try writer.write(from: buffer)
         }
-        guard count > 0 else { throw DemucsError.invalidAudioFormat }
+        guard count > 0 else { throw DemucsError.unreadableSource("The file contains no audio that could be decoded.") }
+        // Some decoders end cleanly at a damaged region instead of failing. Lossless
+        // formats declare an exact length, so a large shortfall means lost audio.
+        let exactLength = [kAudioFormatLinearPCM, kAudioFormatFLAC, kAudioFormatAppleLossless].contains(info.format.mFormatID)
+        if exactLength, info.frames > 0, info.frames - count > max(info.frames / 100, 44_100) {
+            throw DemucsError.unreadableSource("The file appears damaged or incomplete: only \(clock(count)) of \(clock(info.frames)) could be decoded.")
+        }
         let mean = sum / Double(count)
         let variance = max(0, sumSquares / Double(count) - mean * mean)
         // Opposite-phase stereo can have a silent mono reference while both
@@ -65,6 +97,65 @@ enum StreamingAudio {
         let stereoVariance = max(0, stereoSumSquares / Double(count) - mean * mean)
         let normalizationVariance = variance < 1e-8 ? stereoVariance : variance
         return Statistics(frames: count, mean: Float(mean), standardDeviation: max(1e-4, Float(sqrt(normalizationVariance))))
+    }
+
+    /// Declared length at 44.1 kHz, or nil when the file does not state one.
+    static func declaredFrames(of source: URL) -> Int? {
+        var reference: ExtAudioFileRef?
+        guard ExtAudioFileOpenURL(source as CFURL, &reference) == noErr, let reference else { return nil }
+        defer { ExtAudioFileDispose(reference) }
+        guard let frames = try? sourceInfo(reference).frames, frames > 0 else { return nil }
+        return frames
+    }
+
+    private static func sourceInfo(_ reference: ExtAudioFileRef) throws -> (format: AudioStreamBasicDescription, frames: Int) {
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        try check(ExtAudioFileGetProperty(reference, kExtAudioFileProperty_FileDataFormat, &size, &format))
+        var length: Int64 = 0
+        size = UInt32(MemoryLayout<Int64>.size)
+        // Streams written without a total length report zero.
+        if ExtAudioFileGetProperty(reference, kExtAudioFileProperty_FileLengthFrames, &size, &length) != noErr { length = 0 }
+        guard format.mSampleRate > 0, length > 0 else { return (format, 0) }
+        return (format, Int((Double(length) * 44_100 / format.mSampleRate).rounded()))
+    }
+
+    /// The file's speaker layout, or the WAV/FLAC default order when it declares none.
+    private static func channelLayout(of reference: ExtAudioFileRef, channels: UInt32) throws -> AVAudioChannelLayout {
+        var size: UInt32 = 0
+        if ExtAudioFileGetPropertyInfo(reference, kExtAudioFileProperty_FileChannelLayout, &size, nil) == noErr, size > 0 {
+            let byteCount = max(Int(size), MemoryLayout<AudioChannelLayout>.size)
+            let raw = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: MemoryLayout<AudioChannelLayout>.alignment)
+            defer { raw.deallocate() }
+            raw.initializeMemory(as: UInt8.self, repeating: 0, count: byteCount)
+            let pointer = raw.assumingMemoryBound(to: AudioChannelLayout.self)
+            if ExtAudioFileGetProperty(reference, kExtAudioFileProperty_FileChannelLayout, &size, raw) == noErr {
+                let layout = AVAudioChannelLayout(layout: pointer)
+                let tag = layout.layoutTag
+                let offset = MemoryLayout<AudioChannelLayout>.offset(of: \.mChannelDescriptions)!
+                let descriptions = UnsafeBufferPointer(
+                    start: (raw + offset).assumingMemoryBound(to: AudioChannelDescription.self),
+                    count: min(Int(pointer.pointee.mNumberChannelDescriptions),
+                               (byteCount - offset) / MemoryLayout<AudioChannelDescription>.stride))
+                // Discrete or unlabelled channels have no speaker position to downmix from.
+                let positioned = tag != kAudioChannelLayoutTag_UseChannelDescriptions
+                    || descriptions.allSatisfy { (1..<100).contains($0.mChannelLabel) }
+                if layout.channelCount == channels, positioned,
+                   tag & 0xFFFF_0000 != kAudioChannelLayoutTag_DiscreteInOrder,
+                   tag & 0xFFFF_0000 != kAudioChannelLayoutTag_Unknown {
+                    return layout
+                }
+            }
+        }
+        let defaults: [UInt32: AudioChannelLayoutTag] = [
+            3: kAudioChannelLayoutTag_WAVE_3_0, 4: kAudioChannelLayoutTag_WAVE_4_0_A,
+            5: kAudioChannelLayoutTag_WAVE_5_0_A, 6: kAudioChannelLayoutTag_WAVE_5_1_A,
+            7: kAudioChannelLayoutTag_WAVE_6_1, 8: kAudioChannelLayoutTag_WAVE_7_1
+        ]
+        guard let tag = defaults[channels], let layout = AVAudioChannelLayout(layoutTag: tag) else {
+            throw DemucsError.unreadableSource("Audio with \(channels) channels is not supported. Import a stereo or surround mix.")
+        }
+        return layout
     }
 
     static func reflectedIndex(_ index: Int, count: Int) -> Int {
@@ -109,9 +200,99 @@ enum StreamingAudio {
         }
     }
 
-    private static func check(_ status: OSStatus) throws {
-        guard status == noErr else {
-            throw DemucsError.conversionFailed("Audio decoding failed (\(status)). The file may be damaged or unsupported.")
+    // MARK: - iCloud Drive
+
+    /// True for an iCloud Drive file whose contents have been evicted from this Mac.
+    static func isCloudPlaceholder(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
+        return values?.isUbiquitousItem == true && values?.ubiquitousItemDownloadingStatus == .notDownloaded
+    }
+
+    /// Reading an evicted file blocks inside the kernel until iCloud delivers it,
+    /// with no status and no way to cancel. Download it explicitly and wait instead.
+    static func downloadIfNeeded(_ url: URL, onStart: () -> Void) async throws {
+        guard isCloudPlaceholder(url) else { return }
+        onStart()
+        let name = url.lastPathComponent
+        do { try FileManager.default.startDownloadingUbiquitousItem(at: url) }
+        catch { throw DemucsError.unreadableSource("'\(name)' is in iCloud Drive and could not be downloaded: \(error.localizedDescription)") }
+        let network = NetworkPath()
+        defer { network.stop() }
+        try await waitForDownload(named: name, isOffline: { network.isOffline }) {
+            var item = url
+            item.removeAllCachedResourceValues()
+            let values = try item.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey, .ubiquitousItemDownloadingErrorKey])
+            if let error = values.ubiquitousItemDownloadingError { throw error }
+            return values.ubiquitousItemDownloadingStatus != .notDownloaded
         }
     }
+
+    static func waitForDownload(named name: String, interval: Duration = .milliseconds(250),
+                                isOffline: () -> Bool, isDownloaded: () throws -> Bool) async throws {
+        var offlineChecks = 0
+        while true {
+            let downloaded: Bool
+            do { downloaded = try isDownloaded() }
+            catch { throw DemucsError.unreadableSource("'\(name)' is in iCloud Drive and could not be downloaded: \(error.localizedDescription)") }
+            if downloaded { return }
+            // Tolerate a brief network change before reporting that the Mac is offline.
+            offlineChecks = isOffline() ? offlineChecks + 1 : 0
+            if offlineChecks >= 8 {
+                throw DemucsError.unreadableSource("'\(name)' is in iCloud Drive and has not been downloaded to this Mac. Connect to the internet and import it again.")
+            }
+            try await Task.sleep(for: interval)
+        }
+    }
+
+    // MARK: - Errors
+
+    private static func check(_ status: OSStatus) throws {
+        guard status == noErr else { throw DemucsError.unreadableSource(describe(status)) }
+    }
+
+    /// Plain-language reasons for common Core Audio failures, keeping the code for diagnosis.
+    static func describe(_ status: OSStatus) -> String {
+        let reason: String
+        switch status {
+        case kAudioFileUnsupportedFileTypeError, kAudioFileUnsupportedDataFormatError:
+            reason = "This audio format is not supported"
+        case kAudioFileInvalidFileError:
+            reason = "The file is damaged, or its contents do not match its extension"
+        case kAudioFileInvalidChunkError, kAudioFileInvalidPacketOffsetError,
+             kAudioFileInvalidPacketDependencyError, kAudioCodecBadDataError:
+            reason = "The file appears to be damaged"
+        case kAudioFilePermissionsError:
+            reason = "Isolate does not have permission to read the file"
+        case kAudioFileFileNotFoundError:
+            reason = "The file could not be found"
+        default:
+            reason = "The file could not be decoded. It may be damaged or unsupported"
+        }
+        let bytes = withUnsafeBytes(of: UInt32(bitPattern: status).bigEndian) { Array($0) }
+        let code = bytes.allSatisfy({ (0x20...0x7E).contains($0) })
+            ? "'\(String(decoding: bytes, as: UTF8.self))'" : "\(status)"
+        return "\(reason) (Core Audio \(code))."
+    }
+
+    static func clock(_ frames: Int) -> String {
+        let seconds = frames / 44_100
+        return seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+/// Latest network reachability, observed only while an iCloud download is pending.
+private final class NetworkPath: @unchecked Sendable {
+    private let monitor = NWPathMonitor()
+    private let status = OSAllocatedUnfairLock<NWPath.Status?>(initialState: nil)
+
+    init() {
+        monitor.pathUpdateHandler = { [status] path in status.withLock { $0 = path.status } }
+        monitor.start(queue: DispatchQueue(label: "Isolate.StreamingAudio.network"))
+    }
+
+    var isOffline: Bool { status.withLock { $0 } == .unsatisfied }
+
+    func stop() { monitor.cancel() }
 }
