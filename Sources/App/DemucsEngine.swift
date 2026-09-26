@@ -398,6 +398,10 @@ public actor DemucsEngine {
         let staging = StemCache.root.appending(path: ".partial-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
+        // A second running copy of Isolate (say, the DMG copy beside /Applications)
+        // shares this cache and sweeps staging; the lock marks this folder as live.
+        let stagingLock = StemCache.lockStaging(staging)
+        defer { if stagingLock >= 0 { close(stagingLock) } }
         report(0.02, "DECODING AUDIO...")
         let original = staging.appending(path: "original.wav")
         let stats = try StreamingAudio.decode(url, to: original)

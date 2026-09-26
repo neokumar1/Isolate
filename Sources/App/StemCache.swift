@@ -46,12 +46,38 @@ enum StemCache {
     /// mid-separation. Call only while no separation is running: at launch, or from
     /// DemucsEngine once it holds the single separation slot. A backup exists only
     /// while an invalid cache is being replaced, so it never holds usable stems.
+    /// Staging that another running copy of Isolate still locks is kept.
     static func removeAbandonedStaging() {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
         for entry in entries where entry.lastPathComponent.hasPrefix(".partial-") || entry.lastPathComponent.hasPrefix(".backup-") {
+            if entry.lastPathComponent.hasPrefix(".partial-"), isStagingLocked(entry) { continue }
             try? fm.removeItem(at: entry)
         }
+    }
+
+    private static let lockName = ".lock"
+
+    /// Locks `staging` for as long as the returned descriptor stays open. The lock is
+    /// released when the process exits or crashes. Returns -1 if it could not be taken;
+    /// the separation still runs, unprotected as before.
+    static func lockStaging(_ staging: URL) -> Int32 {
+        let fd = open(staging.appending(path: lockName).path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return -1 }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            close(fd)
+            return -1
+        }
+        return fd
+    }
+
+    /// True while a live process holds the staging lock. Staging with no lock file,
+    /// from a crash before it was made or from an older version, is abandoned.
+    static func isStagingLocked(_ staging: URL) -> Bool {
+        let fd = open(staging.appending(path: lockName).path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { return errno != ENOENT && errno != ENOTDIR }
+        defer { close(fd) }
+        return flock(fd, LOCK_EX | LOCK_NB) != 0
     }
 
     /// Float32 stereo WAVs for the decoded original and four stems, plus headroom.
@@ -92,5 +118,7 @@ enum StemCache {
         } else {
             try fm.moveItem(at: staging, to: destination)
         }
+        // Removed only after the move, so the staging folder is never left unlocked.
+        try? fm.removeItem(at: destination.appending(path: lockName))
     }
 }
