@@ -8,7 +8,7 @@ Isolate needs a Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or late
 2. Open the disk image and drag Isolate into Applications. Quit a running copy before replacing it.
 3. Open Isolate from Applications and approve the first launch as described in the README's [First launch](README.md#first-launch) section.
 
-The app takes about 300 MB once installed, because the separation model is inside it (`Isolate.app/Contents/Resources/HTDemucs.mlmodelc`). Releases are ad-hoc signed and are not notarized by Apple. Approve Isolate in **System Settings › Privacy & Security** rather than disabling Gatekeeper or clearing quarantine attributes.
+The app takes about 313 MB once installed, because the separation model is inside it (`Isolate.app/Contents/Resources/HTDemucs.mlmodelc`). Releases are ad-hoc signed and are not notarized by Apple. Approve Isolate in **System Settings › Privacy & Security** rather than disabling Gatekeeper or clearing quarantine attributes.
 
 To check a download, compare `shasum -a 256 Isolate.dmg` with the value in the release's `SHA256SUMS.txt`. A checksum published in the same release confirms the file arrived intact; it does not prove who published it.
 

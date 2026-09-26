@@ -22,7 +22,7 @@ Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the o
 | --- | --- |
 | Requires | A Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later |
 | Download | About 160 MB |
-| Installed | About 300 MB, including the separation model |
+| Installed | About 313 MB, including the separation model |
 | Separated songs | About 106 MB of disk per minute of audio, kept until you delete the song |
 
 Each release lists SHA-256 checksums in `SHA256SUMS.txt`. To check your download, run `shasum -a 256 ~/Downloads/Isolate.dmg` and compare the result. Homebrew, a terminal installer and source builds are covered in [INSTALL.md](INSTALL.md).
