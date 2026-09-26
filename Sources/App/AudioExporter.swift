@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 
 enum AudioExporter {
@@ -48,10 +49,20 @@ enum AudioExporter {
         return result.isEmpty ? "Isolate" : result
     }
 
+    /// Stems in fixed-point formats peak at no more than -0.1 dBFS.
+    static let stemPeakCeiling = Float(pow(10, -0.1 / 20))
+
     /// Render on a worker task using a separate graph; live playback is untouched.
     static func render(sources: [Source], to destination: URL, format: Format = .wav,
                        masterEQ: EQ = EQ(), rate: Float = 1, pitch: Float = 0,
                        limitPeak: Bool = false) throws {
+        _ = try renderMeasured(sources: sources, to: destination, settings: format.settings,
+                               masterEQ: masterEQ, rate: rate, pitch: pitch, limitPeak: limitPeak)
+    }
+
+    /// Returns the largest sample magnitude written, measured before any fixed-point conversion.
+    private static func renderMeasured(sources: [Source], to destination: URL, settings: [String: Any],
+                                       masterEQ: EQ, rate: Float, pitch: Float, limitPeak: Bool) throws -> Float {
         guard !sources.isEmpty, rate.isFinite, rate > 0 else { throw DemucsError.invalidAudioFormat }
         let engine = AVAudioEngine()
         let audioFormat = StreamingAudio.format
@@ -111,7 +122,7 @@ enum AudioExporter {
         for (player, file) in zip(players, files) { player.scheduleFile(file, at: nil) }
         try engine.start()
         for player in players { player.play(at: AVAudioTime(sampleTime: 0, atRate: 44_100)) }
-        let output = try AVAudioFile(forWriting: destination, settings: format.settings)
+        let output = try AVAudioFile(forWriting: destination, settings: settings)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: 4096) else {
             throw DemucsError.invalidAudioFormat
         }
@@ -120,6 +131,7 @@ enum AudioExporter {
         let tail: AVAudioFramePosition = timePitch.bypass ? 0 : 4096
         let frameCount = AVAudioFramePosition(ceil(Double(files[0].length) / Double(rate))) + tail + latency
         var stalled = 0
+        var peak: Float = 0
         while engine.manualRenderingSampleTime < frameCount {
             try Task.checkCancellation()
             let before = engine.manualRenderingSampleTime
@@ -128,7 +140,9 @@ enum AudioExporter {
             let count = AVAudioFrameCount(min(4096, end - before))
             switch try engine.renderOffline(count, to: buffer) {
             case .success:
-                if before >= latency { try output.write(from: buffer) }
+                guard before >= latency else { break }
+                peak = max(peak, Self.peak(of: buffer))
+                try output.write(from: buffer)
             case .cannotDoInCurrentContext, .insufficientDataFromInputNode:
                 break
             case .error:
@@ -139,21 +153,37 @@ enum AudioExporter {
             stalled = before == engine.manualRenderingSampleTime ? stalled + 1 : 0
             guard stalled < 100 else { throw DemucsError.conversionFailed("Offline rendering stopped making progress.") }
         }
+        return peak
     }
 
+    /// Returns the gain applied to all four stems to stay below `stemPeakCeiling`, or 1 when none was needed.
+    @discardableResult
     static func archive(sources: [Source], title: String, format: Format, to destination: URL,
-                        progress: @Sendable (Double) -> Void) throws {
+                        progress: @Sendable (Double) -> Void) throws -> Float {
         let fm = FileManager.default
         let directory = fm.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: directory) }
         guard sources.count == 4 else { throw DemucsError.invalidAudioFormat }
-        var names: [String] = []
+        // Separated stems and EQ boosts can exceed full scale, which 24-bit WAV and FLAC would clip.
+        // Render in Float32 first, then lower all four by one gain so their balance and sum are kept.
+        var rendered: [URL] = []
+        var peak: Float = 0
         for (index, source) in sources.enumerated() {
+            let url = directory.appending(path: "render-\(index).wav")
+            peak = max(peak, try renderMeasured(sources: [source], to: url, settings: StreamingAudio.settings,
+                                                masterEQ: EQ(), rate: 1, pitch: 0, limitPeak: false))
+            rendered.append(url)
+            progress(Double(index + 1) / 10)
+        }
+        let gain = peak > stemPeakCeiling ? stemPeakCeiling / peak : 1
+        var names: [String] = []
+        for (index, url) in rendered.enumerated() {
             let name = "\(safeFilename(title))_\(DemucsEngine.stemNames[index]).\(format.fileExtension)"
             names.append(name)
-            try render(sources: [source], to: directory.appending(path: name), format: format)
-            progress(Double(index + 1) / 5)
+            try encode(url, to: directory.appending(path: name), format: format, gain: gain)
+            try? fm.removeItem(at: url)
+            progress(0.4 + Double(index + 1) / 10)
         }
         let archive = directory.appending(path: "stems.zip")
         let process = Process()
@@ -166,6 +196,41 @@ enum AudioExporter {
         try Task.checkCancellation()
         try publish(archive, to: destination)
         progress(1)
+        return gain
+    }
+
+    /// Converts rendered Float32 audio to the export format, scaling every sample by `gain`.
+    private static func encode(_ source: URL, to destination: URL, format: Format, gain: Float) throws {
+        let input = try AVAudioFile(forReading: source)
+        let output = try AVAudioFile(forWriting: destination, settings: format.settings)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 65_536) else {
+            throw DemucsError.invalidAudioFormat
+        }
+        var scale = gain
+        while input.framePosition < input.length {
+            try Task.checkCancellation()
+            try input.read(into: buffer)
+            guard buffer.frameLength > 0, let channels = buffer.floatChannelData else {
+                throw DemucsError.invalidAudioFormat
+            }
+            if gain != 1 {
+                for channel in 0..<Int(buffer.format.channelCount) {
+                    vDSP_vsmul(channels[channel], 1, &scale, channels[channel], 1, vDSP_Length(buffer.frameLength))
+                }
+            }
+            try output.write(from: buffer)
+        }
+    }
+
+    private static func peak(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let channels = buffer.floatChannelData else { return 0 }
+        var peak: Float = 0
+        for channel in 0..<Int(buffer.format.channelCount) {
+            var channelPeak: Float = 0
+            vDSP_maxmgv(channels[channel], 1, &channelPeak, vDSP_Length(buffer.frameLength))
+            peak = max(peak, channelPeak)
+        }
+        return peak
     }
 
     static func publish(_ source: URL, to destination: URL) throws {

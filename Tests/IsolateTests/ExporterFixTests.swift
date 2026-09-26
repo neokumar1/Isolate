@@ -45,6 +45,78 @@ final class ExporterFixTests: XCTestCase {
         amplitude * sin(Float(frame) * 2 * .pi * 440 / 44_100)
     }
 
+    private func extract(_ archive: URL) throws -> URL {
+        let folder = directory.appending(path: UUID().uuidString)
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/unzip")
+        process.arguments = ["-q", archive.path, "-d", folder.path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        return folder
+    }
+
+    private func stems(amplitudes: [Float], frequency: Float = 440) throws -> [AudioExporter.Source] {
+        try amplitudes.enumerated().map { index, amplitude in
+            .init(url: try audio("stem-\(index).wav", frames: 8820) {
+                amplitude * sin(Float($0) * 2 * .pi * frequency / 44_100)
+            })
+        }
+    }
+
+    func testStemArchiveLowersAllStemsTogetherInsteadOfClipping() throws {
+        // Cached Float32 stems can peak above 1.0; 24-bit output used to hard-clip them.
+        let amplitudes: [Float] = [1.5, 0.75, 0.3, 0.15]
+        let sources = try stems(amplitudes: amplitudes)
+        for format in AudioExporter.Format.allCases {
+            let archive = directory.appending(path: "stems.\(format.fileExtension).zip")
+            let gain = try AudioExporter.archive(sources: sources, title: "Headroom", format: format, to: archive) { _ in }
+            XCTAssertEqual(gain, AudioExporter.stemPeakCeiling / 1.5, accuracy: 1e-3)
+            let folder = try extract(archive)
+            var peaks: [Float] = []
+            for stem in DemucsEngine.stemNames {
+                let url = folder.appending(path: "Headroom_\(stem).\(format.fileExtension)")
+                if format == .wav {
+                    XCTAssertEqual(try AVAudioFile(forReading: url).fileFormat.settings[AVLinearPCMBitDepthKey] as? Int, 24)
+                }
+                let left = try samples(url)
+                let right = try samples(url, channel: 1)
+                XCTAssertFalse(left.contains { abs($0) >= 0.999 }, "\(format) \(stem) must not reach full scale")
+                peaks.append(max(left.map(abs).max() ?? 0, right.map(abs).max() ?? 0))
+            }
+            XCTAssertLessThanOrEqual(peaks[0], AudioExporter.stemPeakCeiling + 1e-6)
+            XCTAssertEqual(peaks[0], AudioExporter.stemPeakCeiling, accuracy: 1e-3)
+            for (peak, amplitude) in zip(peaks, amplitudes) {
+                XCTAssertEqual(peak / peaks[0], amplitude / amplitudes[0], accuracy: 1e-3, "Relative stem balance must be kept")
+            }
+        }
+    }
+
+    func testStemArchiveMeasuresHeadroomAfterEQBoost() throws {
+        var sources = try stems(amplitudes: [0.5, 0.1, 0.1, 0.1], frequency: 60)
+        sources[0].eq = .init(low: 12)
+        let archive = directory.appending(path: "boosted.zip")
+        let gain = try AudioExporter.archive(sources: sources, title: "Boost", format: .wav, to: archive) { _ in }
+        XCTAssertLessThan(gain, 0.9, "A +12 dB low shelf pushes a 0.5 bass stem well past full scale")
+        let bass = try samples(try extract(archive).appending(path: "Boost_vocals.wav"))
+        let peak = bass.map(abs).max() ?? 0
+        XCTAssertLessThanOrEqual(peak, AudioExporter.stemPeakCeiling + 1e-6)
+        XCTAssertGreaterThan(peak, 0.9)
+    }
+
+    func testStemArchiveLeavesStemsBelowFullScaleUnchanged() throws {
+        let archive = directory.appending(path: "quiet.zip")
+        let gain = try AudioExporter.archive(sources: try stems(amplitudes: [0.2, 0.2, 0.2, 0.2]),
+                                             title: "Quiet", format: .wav, to: archive) { _ in }
+        XCTAssertEqual(gain, 1)
+        let output = try samples(try extract(archive).appending(path: "Quiet_drums.wav"))
+        let input = try samples(directory.appending(path: "stem-1.wav"))
+        XCTAssertEqual(output.count, input.count)
+        for (exported, original) in zip(output, input) {
+            XCTAssertEqual(exported, original, accuracy: 2e-7)
+        }
+    }
+
     func testLimitedMixIsSampleAlignedAndKeepsItsLastFrames() throws {
         // An impulse at a known frame and a tone filling the final 200 frames.
         let source = try audio("aligned.wav", frames: 44_100) { frame in
