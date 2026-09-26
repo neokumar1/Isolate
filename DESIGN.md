@@ -59,4 +59,4 @@ Everything at rest is neutral: titles, the clock, resting meters and fader fills
 - Custom controls have VoiceOver labels and values. Faders, knobs, pan bars, the seek bar and EQ nodes are adjustable. Several resets also exist as a named action or a context-menu item: Reset on EQ nodes, Center Pan on pan bars, Reset EQ Gain on knobs, and Clear Loop Markers on LOOP.
 - Tabs, chips and presets report their selected state, and errors are announced as well as shown.
 - Hit areas are expanded without changing the layout, so small controls respond across their full visible area.
-- Every main action has a keyboard shortcut, listed in Settings › Shortcuts and on the shortcut card (?).
+- Every main action has a keyboard shortcut. Settings › Shortcuts lists them all; the shortcut card (? or /) shows the most-used ones.

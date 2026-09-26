@@ -29,7 +29,7 @@ Isolate imports MP3, WAV, FLAC, M4A (AAC or ALAC), AIFF, AIFC and CAF files thro
 - **"The file is damaged, or its contents do not match its extension"** or **"The file could not be decoded"**: try playing the file in Music or QuickTime Player. If it doesn't play there either, export or download it again.
 - **"The file appears damaged or incomplete: only 2:10 of 4:05 could be decoded"**: a WAV, FLAC or ALAC file is shorter than its header says, usually from an interrupted copy or download. Get a complete copy.
 
-When several files fail in one batch, the message at the end names each file and its reason.
+When several files fail in one batch, the message at the end names up to three files with their reasons and counts the rest.
 
 ## Files in iCloud Drive
 
@@ -59,7 +59,7 @@ The library is `~/Library/Application Support/Isolate/Library.store`.
 
 To restore a backup, quit Isolate, move `Library.store`, `Library.store-wal` and `Library.store-shm` out of `~/Library/Application Support/Isolate`, copy the files from the backup folder in their place, and open Isolate. If it still can't be opened, the backup may have been written by a newer version of Isolate; install that version and try again.
 
-Your separated stems stay in the `Stems` folder either way. Importing the same original files again finds their stems by content and reuses them without separating again.
+Your separated stems stay in the `Stems` folder either way. Importing the same original files again reuses stems made by Isolate 1.3 or later without separating again. Stems made by earlier versions can't be matched, so those songs are separated again, and their old folders stay in `~/Library/Application Support/Isolate/Stems` until you delete them.
 
 ## Stems are missing or the original was moved
 

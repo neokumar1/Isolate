@@ -67,8 +67,9 @@ Default signing is ad hoc, now with the hardened runtime. For Developer ID distr
 3. Smoke-test import, cancellation, playback, audio-device switching, export, relaunch, deletion and the upgrade from a pre-1.3 library on the minimum supported macOS and a current stable macOS.
 4. Listen to separated musical material to assess stem identity and artifacts; synthetic tests do not establish perceptual quality.
 5. Download the draft's DMG in a browser and walk through the README's [First launch](README.md#first-launch) steps on macOS 15 or later and on macOS 14. If the build is ever Developer ID signed and notarized, update the README, the release notes script and the cask caveats to match.
-6. Review the draft's notes, version and checksums, then publish it and mark it as the latest release. The README's download link and `install.sh` follow the latest release, so publish before announcing.
-7. Set the cask's `version` and `sha256` from the published `Isolate.dmg` together, and check it with `brew install --cask neokumar1/isolate/isolate` on a clean Mac.
-8. Keep the model archive's prerelease unpublished as Latest. Consider editing older release notes that recommend `xattr -cr` or Control-click on macOS 15 and later.
+6. Merge the release branch into `main` (use a merge commit so the tagged commit stays in `main`'s history). The release notes' and cask's `#first-launch` links, the issue templates, the `install.sh` URL in INSTALL.md and the Homebrew tap all read `main`.
+7. Review the draft's notes, version and checksums, then publish it and mark it as the latest release. The README's download link and `install.sh` follow the latest release, so publish and merge before announcing, then confirm that https://github.com/neokumar1/Isolate#first-launch opens the First launch section.
+8. Commit the cask's `version` and `sha256` for the published `Isolate.dmg` to `main` together, and check it with `brew install --cask neokumar1/isolate/isolate` on a clean Mac.
+9. Keep the model archive's prerelease unpublished as Latest. Consider editing older release notes that recommend `xattr -cr` or Control-click on macOS 15 and later.
 
 See [QUALITY_REPORT.md](QUALITY_REPORT.md) for this checkout's measured verification and remaining external release gates.

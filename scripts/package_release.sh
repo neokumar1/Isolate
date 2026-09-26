@@ -57,7 +57,9 @@ SIGN_ARGS=(--force --deep --options runtime --sign "$SIGNING_IDENTITY")
 if [[ "$SIGNING_IDENTITY" != "-" ]]; then SIGN_ARGS+=(--timestamp); fi
 codesign "${SIGN_ARGS[@]}" "$APP_BUNDLE"
 codesign --verify --deep --strict "$APP_BUNDLE"
-if ! codesign -dv "$APP_BUNDLE" 2>&1 | grep -q 'flags=.*runtime'; then
+# Capture first: grep -q exits early, and under pipefail codesign's SIGPIPE fails the check.
+SIGN_INFO=$(codesign -dv "$APP_BUNDLE" 2>&1)
+if [[ "$SIGN_INFO" != *flags=*runtime* ]]; then
     echo "The app was signed without the hardened runtime." >&2
     exit 1
 fi

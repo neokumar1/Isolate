@@ -60,7 +60,7 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 - Four stems, always in the same order: vocals, drums, bass and other. HTDemucs runs through Core ML on your Mac. Isolate has no account, analytics or network features of its own.
 - Import files or whole folders with ⌘O or by dragging them onto the window. MP3, WAV, FLAC, M4A (AAC or ALAC), AIFF and CAF are supported. Surround files are downmixed to stereo, and iCloud Drive files that aren't on your Mac yet are downloaded first.
 - While a song separates, Isolate shows the file name, chunk count, time remaining and measured speed. You can cancel one song or a whole batch, and if you allow notifications, Isolate tells you when an import finishes while it is in the background.
-- Separated songs are cached by their audio content. Importing the same audio again, even from a different folder, reuses its stems instead of separating it again.
+- Separated songs are cached by the file's exact contents. Importing the identical file again, even from a different folder, reuses its stems instead of separating it again; a copy with edited tags or artwork, or in another format, is separated again.
 
 <img alt="Separation in progress: a large percentage, the file name, the current stage and a Cancel Import button" src="Assets/screenshot-separating.png" width="640">
 
@@ -75,7 +75,7 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 
 - Speed from 0.5× to 1.5× (0.5, 0.75, 0.85, 1, 1.15, 1.25 and 1.5) without changing pitch, and pitch from −12 to +12 semitones without changing speed.
 - A–B loop: set the start and end at the playhead with [ and ], turn looping on or off with L, and clear the markers with ⌥L.
-- A studio display above the mixer with five views: a 32-band spectrum, the stem macros, stem balance, telemetry (tempo, key, format and timecode) and the master equalizer (⌘1 to ⌘5).
+- A studio display above the mixer with five views: a 32-band spectrum, the stem macros, stem balance, telemetry (tempo, key, format and timecode) and an equalizer for any stem or the master bus (⌘1 to ⌘5).
 
 **Library**
 

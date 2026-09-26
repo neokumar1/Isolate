@@ -14,7 +14,9 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    # Core ML computes the model incorrectly on hosted macOS 14 and 15 (Isolate refuses to
+    # separate there), so the inference gate must run where separation is verified.
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       ISOLATE_MODEL_ARCHIVE_URL: ${{ vars.ISOLATE_MODEL_ARCHIVE_URL }}

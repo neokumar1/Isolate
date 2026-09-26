@@ -25,7 +25,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 - Isolate now checks the separation model on a built-in test signal before using it. Core ML in macOS 14 and 15 computes the model incorrectly on some compute paths; Isolate picks one that passes, or asks you to update to macOS 26 instead of producing broken stems.
 
 - Import whole folders by dragging them onto the window or choosing them with ⌘O. Files are added in Finder order, a file is never imported twice in one batch, and AIFC files are accepted.
-- Batch imports show "N OF M" with the file name, can be cancelled as a whole, and end with one summary naming each file that failed and why.
+- Batch imports show "N OF M" with the file name, can be cancelled as a whole, and end with one summary of the files that failed and why (the first three are named, the rest are counted).
 - iCloud Drive files that are not on your Mac yet are downloaded first. If you are offline, Isolate says so instead of waiting.
 - Surround files (up to 7.1) are downmixed to stereo by speaker position. Before, only their first two channels were used.
 - Truncated or damaged WAV, FLAC and ALAC files are refused with how much of them could be read, instead of producing shortened stems.
