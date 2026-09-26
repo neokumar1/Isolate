@@ -119,22 +119,35 @@ struct LibraryView: View {
     /// Group headers: the folder name, extended with parent folders only where
     /// two different folders share a name (e.g. ARTIST A / GREATEST HITS).
     /// Built from every track so headers stay stable while searching.
+    /// One pass per depth: each suffix is counted in a dictionary rather than compared
+    /// against every other folder, so a large library stays linear in its folders.
     static func folderLabels(for folders: [URL]) -> [URL: String] {
         let unique = Array(Set(folders))
-        func suffix(_ folder: URL, _ count: Int) -> String {
-            folder.pathComponents.suffix(count).joined(separator: " / ")
-        }
+        let components = unique.map(\.pathComponents)
         var labels: [URL: String] = [:]
-        for folder in unique {
-            var count = 1
-            while count < folder.pathComponents.count,
-                  unique.contains(where: { $0 != folder && suffix($0, count).lowercased() == suffix(folder, count).lowercased() }) {
-                count += 1
+        var pending = Array(unique.indices)
+        var count = 1
+        while !pending.isEmpty {
+            let keys = components.map { $0.suffix(count).joined(separator: " / ").lowercased() }
+            var tally: [String: Int] = [:]
+            for key in keys { tally[key, default: 0] += 1 }
+            var colliding: [Int] = []
+            for index in pending {
+                if count < components[index].count, tally[keys[index], default: 0] > 1 {
+                    colliding.append(index)
+                } else {
+                    labels[unique[index]] = components[index].suffix(count).joined(separator: " / ")
+                }
             }
-            labels[folder] = suffix(folder, count)
+            pending = colliding
+            count += 1
         }
         return labels
     }
+
+    /// Folder labels from the last body update, rebuilt only when the library's set of
+    /// folders changes rather than on every search keystroke or hover.
+    @State private var folderLabelCache = FolderLabelCache()
 
     var body: some View {
         ZStack {
@@ -294,7 +307,7 @@ struct LibraryView: View {
     
     private func tracksScrollView(_ filtered: [TrackModel]) -> some View {
         let total = filtered.count
-        let labels = Self.folderLabels(for: tracks.map { $0.originalURL.deletingLastPathComponent() })
+        let labels = folderLabelCache.labels(for: tracks.map { $0.originalURL.deletingLastPathComponent() })
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 6) {
                 ForEach(filtered.libraryFolderGroups(), id: \.folder) { group in
@@ -446,6 +459,25 @@ struct LibraryView: View {
         onImport?()
     }
 
+}
+
+/// Remembers `LibraryView.folderLabels` for the last set of folders. It is not
+/// observable, so reading it never invalidates the view.
+@MainActor
+final class FolderLabelCache {
+    private var folders: Set<URL>?
+    private var labels: [URL: String] = [:]
+    private(set) var buildCount = 0
+
+    func labels(for folders: [URL]) -> [URL: String] {
+        let current = Set(folders)
+        if current != self.folders {
+            self.folders = current
+            labels = LibraryView.folderLabels(for: Array(current))
+            buildCount += 1
+        }
+        return labels
+    }
 }
 
 struct TrackRowView: View {
