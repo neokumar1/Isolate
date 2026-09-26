@@ -115,9 +115,9 @@ final class IsolateUITests: XCTestCase {
         // The chips mark their choice with the selected trait. If this macOS does not surface
         // it, say so in the report instead of failing on the platform.
         let exposesSelection = dark.isSelected
-        if !exposesSelection {
-            XCTContext.runActivity(named: "Settings chips do not report AXSelected; selection not asserted") { _ in }
-        }
+        XCTContext.runActivity(named: exposesSelection
+            ? "Settings chips report selection; asserting it"
+            : "Settings chips do not report AXSelected; selection not asserted") { _ in }
         light.click()
         if exposesSelection {
             XCTAssertTrue(waitFor(light, "selected == true"), "Clicking NOTHING LIGHT must select it")
@@ -227,12 +227,14 @@ final class IsolateUITests: XCTestCase {
         // Escape on a card opened over the separation closes that card and never cancels the
         // import. Checked only while the separation is still running when each card opens.
         let cancelImport = app.buttons["CANCEL IMPORT"]
+        var checkedCards: [String] = []
         if cancelImport.waitForExistence(timeout: 5) {
             app.typeKey(",", modifierFlags: .command)
             if preferences.waitForExistence(timeout: 3) {
                 app.typeKey(.escape, modifierFlags: [])
                 expectGone(preferences, "Escape must close Settings opened over the separation")
                 XCTAssertFalse(app.buttons["CANCELLING…"].exists, "Escape on Settings must not cancel the separation")
+                checkedCards.append("Settings")
             }
         }
         if cancelImport.exists {
@@ -243,8 +245,12 @@ final class IsolateUITests: XCTestCase {
                 app.typeKey(.escape, modifierFlags: [])
                 expectGone(about, "Escape must close About opened over the separation")
                 XCTAssertFalse(app.buttons["CANCELLING…"].exists, "Escape on About must not cancel the separation")
+                checkedCards.append("About")
             }
         }
+        XCTContext.runActivity(named: checkedCards.isEmpty
+            ? "Escape over separation not checked: the separation finished first"
+            : "Escape over separation checked on: \(checkedCards.joined(separator: ", "))") { _ in }
 
         // A cancelled import adds no row, so this also proves the Escapes above left it running.
         let actions = app.buttons["Actions for UI Workflow"]
