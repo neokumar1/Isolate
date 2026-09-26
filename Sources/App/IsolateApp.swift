@@ -337,6 +337,14 @@ struct ContentView: View {
         .onChange(of: isSidebarVisible) { _, visible in
             if !visible { activeMenuTrackID = nil }
         }
+        .onChange(of: importer.isImporting) { _, importing in
+            // Each file of a batch clears the startup warning, so repeat it when
+            // the batch ends: the tracks it added are gone after quitting.
+            guard !importing, LibraryStore.isInMemory else { return }
+            let current = engineManager.errorMessage ?? ""
+            guard !current.contains(LibraryStore.inMemoryWarning) else { return }
+            engineManager.showError(current.isEmpty ? LibraryStore.inMemoryWarning : current + " " + LibraryStore.inMemoryWarning)
+        }
         .onChange(of: engineManager.errorMessage) { _, message in
             // The toast is visual only; speak errors for VoiceOver users.
             if let message { AccessibilityNotification.Announcement("Error: \(message)").post() }
@@ -493,6 +501,8 @@ struct ContentView: View {
                     ErrorToastCard(
                         message: errorMsg,
                         onDismiss: {
+                            // Closing a library recovery notice stops it repeating at launch.
+                            LibraryStore.noticeDismissed(errorMsg)
                             engineManager.dismissError()
                         }
                     )
