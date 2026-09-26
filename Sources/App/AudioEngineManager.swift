@@ -1031,8 +1031,10 @@ public final class AudioEngineManager {
             guard !lastImportCancelled else { return nil }
             try installFiles(stems)
             currentTrackID = url.path
-            let title = url.deletingPathExtension().lastPathComponent
+            let title = Self.displayTitle(for: url)
             currentTrackName = title.uppercased()
+            // Keep the library title in Now Playing, matching later loads of this track.
+            titleOverride = title
             trackTitle = title
             extractMetadata(url: url)
             splitProgress = 1
@@ -1061,6 +1063,43 @@ public final class AudioEngineManager {
     @ObservationIgnored private var titleOverride: String?
     private var metadataRequestID = UUID()
 
+    /// The Finder name without its extension; POSIX names store "/" as ":".
+    nonisolated static func displayTitle(for url: URL) -> String {
+        let name = FileManager.default.displayName(atPath: url.path)
+        let suffix = "." + url.pathExtension
+        // Finder may already hide the extension, so only strip one that is present.
+        guard suffix.count > 1, name.count > suffix.count,
+              name.lowercased().hasSuffix(suffix.lowercased()) else { return name }
+        return String(name.dropLast(suffix.count))
+    }
+
+    /// Embedded covers can be far larger than any view. Decode a bounded thumbnail
+    /// (off the main actor at the call site) rather than the full-resolution image.
+    nonisolated static func artworkImage(from data: Data, maxPixelSize: Int = 1024) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? Int,
+           let height = properties[kCGImagePropertyPixelHeight] as? Int,
+           width * height > 100_000_000 {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// Opening the source can block on sleeping network or external volumes.
+    nonisolated static func probeFormat(_ url: URL) -> (sampleRate: String, bitDepth: String)? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let bitDepth = (file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int) ?? 0
+        return (String(format: "%.1f kHz", file.fileFormat.sampleRate / 1000),
+                bitDepth > 0 ? "\(bitDepth)-BIT" : "COMPRESSED")
+    }
+
     private func extractMetadata(url: URL) {
         metadataTask?.cancel()
         let requestID = UUID()
@@ -1074,14 +1113,14 @@ public final class AudioEngineManager {
             var foundTitle: String? = nil
             var foundArtist: String? = nil
             var foundAlbum: String? = nil
-            var foundArt: NSImage? = nil
+            var foundArt: CGImage? = nil
             
             do {
                 let metadata = try await asset.load(.commonMetadata)
                 for item in metadata {
                     if item.commonKey == .commonKeyArtwork {
                         if let data = (try? await item.load(.value)) as? Data {
-                            foundArt = NSImage(data: data)
+                            foundArt = await Task.detached(priority: .utility) { Self.artworkImage(from: data) }.value
                         }
                     } else if item.commonKey == .commonKeyTitle {
                         if let titleStr = (try? await item.load(.value)) as? String {
@@ -1113,7 +1152,7 @@ public final class AudioEngineManager {
 
                     if foundArt == nil && (item.commonKey == .commonKeyArtwork || item.identifier?.rawValue.contains("APIC") == true || item.identifier?.rawValue.contains("artwork") == true) {
                         if let data = (try? await item.load(.value)) as? Data {
-                            foundArt = NSImage(data: data)
+                            foundArt = await Task.detached(priority: .utility) { Self.artworkImage(from: data) }.value
                         }
                     }
                     if foundTitle == nil && (item.commonKey == .commonKeyTitle || item.identifier?.rawValue.contains("TIT2") == true || item.identifier?.rawValue.contains("title") == true) {
@@ -1137,7 +1176,7 @@ public final class AudioEngineManager {
             }
             
             let finalArt = foundArt
-            let finalTitle = foundTitle ?? url.deletingPathExtension().lastPathComponent
+            let finalTitle = foundTitle ?? Self.displayTitle(for: url)
             let finalArtist = foundArtist ?? "Isolate"
             let finalAlbum = foundAlbum ?? "4-Stem Neural Audio"
             let ext = url.pathExtension.uppercased()
@@ -1146,21 +1185,14 @@ public final class AudioEngineManager {
             let finalBPM = foundBPM ?? "BPM UNKNOWN"
             let finalKey = foundKey ?? "KEY UNKNOWN"
 
-            let (computedSampleRate, computedBitDepth): (String, String) = {
-                guard let f = try? AVAudioFile(forReading: url) else {
-                    return ("44.1 kHz", "24-BIT PCM")
-                }
-                let sr = f.fileFormat.sampleRate
-                let srStr = String(format: "%.1f kHz", sr / 1000)
-                let bd = (f.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int) ?? 0
-                return (srStr, bd > 0 ? "\(bd)-BIT" : "COMPRESSED")
-            }()
-            let finalSampleRate = computedSampleRate
-            let finalBitDepth = computedBitDepth
+            // This task inherits the main actor; open the source file on a worker instead.
+            let probed = await Task.detached(priority: .utility) { Self.probeFormat(url) }.value
+            let finalSampleRate = probed?.sampleRate ?? "44.1 kHz"
+            let finalBitDepth = probed?.bitDepth ?? "24-BIT PCM"
             
             await MainActor.run {
                 guard !Task.isCancelled, let self, self.metadataRequestID == requestID else { return }
-                self.albumArt = finalArt
+                self.albumArt = finalArt.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
                 self.trackTitle = self.titleOverride ?? finalTitle
                 self.trackArtist = finalArtist
                 self.trackAlbum = finalAlbum

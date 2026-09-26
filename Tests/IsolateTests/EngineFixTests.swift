@@ -253,6 +253,15 @@ final class EngineFixTests: XCTestCase {
         engine.unloadTrack()
     }
 
+    func testFallbackTitlesUseFinderDisplayNames() throws {
+        let slash = directory.appending(path: "AC:DC - Back In Black.wav")
+        let dotted = directory.appending(path: "Song v1.2.wav")
+        for url in [slash, dotted] { try Data().write(to: url) }
+        XCTAssertEqual(AudioEngineManager.displayTitle(for: slash), "AC/DC - Back In Black")
+        XCTAssertEqual(AudioEngineManager.displayTitle(for: dotted), "Song v1.2")
+        XCTAssertEqual(AudioEngineManager.displayTitle(for: directory.appending(path: "Missing Take.mp3")), "Missing Take")
+    }
+
     func testMetersAnalyseTheNewestAudioInLongTapBuffers() throws {
         // macOS delivers ~100 ms tap buffers; the tone sits only in the newest 1024 frames.
         let buffer = AVAudioPCMBuffer(pcmFormat: StreamingAudio.format, frameCapacity: 4410)!
@@ -264,5 +273,36 @@ final class EngineFixTests: XCTestCase {
         }
         let reading = try XCTUnwrap(AudioMeterProcessor(bandCount: 32).process(buffer))
         XCTAssertGreaterThan(reading.spectrum.max() ?? 0, 0.1)
+    }
+
+    func testEmbeddedArtworkIsDecodedAtDisplaySize() throws {
+        let context = try XCTUnwrap(CGContext(data: nil, width: 3000, height: 2000, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 3000, height: 2000))
+        let image = try XCTUnwrap(context.makeImage())
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let artwork = try XCTUnwrap(AudioEngineManager.artworkImage(from: data as Data))
+        XCTAssertEqual(artwork.width, 1024)
+        XCTAssertEqual(artwork.height, 683, accuracy: 1)
+        XCTAssertNil(AudioEngineManager.artworkImage(from: Data("not an image".utf8)))
+    }
+
+    func testSourceFormatIsProbedOffTheMainActor() async throws {
+        let track = try cancellingTrack(seconds: 0.5)
+        let probed = try XCTUnwrap(AudioEngineManager.probeFormat(track.originalURL))
+        XCTAssertEqual(probed.sampleRate, "44.1 kHz")
+        XCTAssertEqual(probed.bitDepth, "32-BIT")
+        XCTAssertNil(AudioEngineManager.probeFormat(directory.appending(path: "absent.wav")))
+        let engine = AudioEngineManager()
+        await engine.loadTrack(track)
+        let deadline = Date.now.addingTimeInterval(3)
+        while engine.trackBitDepth != "32-BIT" && Date.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(engine.trackBitDepth, "32-BIT")
+        engine.unloadTrack()
     }
 }
