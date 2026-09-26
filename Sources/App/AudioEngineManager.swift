@@ -5,6 +5,7 @@ import SwiftData
 import Accelerate
 import AppKit
 import UniformTypeIdentifiers
+import os
 
 public struct TrackData: Sendable {
     public let id: String
@@ -213,7 +214,18 @@ public final class AudioEngineManager {
     
     public var detailedTimecode: String = "00:00.000 / -00:00.000"
     public var albumArt: NSImage?
-    public var playbackProgress: Double = 0.0
+    @ObservationIgnored private var storedPlaybackProgress = 0.0
+    /// Playback position (0-1). While the player is hidden the timer advances the stored
+    /// value without notifying views; `setUIVisible(true)` publishes it again.
+    public var playbackProgress: Double {
+        get {
+            access(keyPath: \.playbackProgress)
+            return storedPlaybackProgress
+        }
+        set {
+            withMutation(keyPath: \.playbackProgress) { storedPlaybackProgress = newValue }
+        }
+    }
     public var seekFrameOffset: AVAudioFramePosition = 0
     public var currentTimeString: String = "00:00 / -00:00"
     public var isBypassed: Bool = false { didSet { applyVolumes() } }
@@ -510,6 +522,29 @@ public final class AudioEngineManager {
     public let masterMeter = MasterMeter()
     public var originalWaveformAmplitudes: [Float] = Array(repeating: 0.05, count: 30)
 
+    // MARK: - Player Visibility
+    /// False while the player window cannot be seen: the app is hidden, or the window is
+    /// minimized or fully covered. Meter readings and the 60 Hz position and timecode
+    /// updates then stay away from SwiftUI, which otherwise keeps re-rendering hidden
+    /// windows. Audio, loop wraps and Now Playing carry on, and `playbackProgress` stays current.
+    @ObservationIgnored public private(set) var isUIVisible = true
+    /// Mirrors `isUIVisible` for the meter taps, which run off the main actor.
+    @ObservationIgnored private let meterTapsEnabled = OSAllocatedUnfairLock(initialState: true)
+
+    public func setUIVisible(_ visible: Bool) {
+        guard visible != isUIVisible else { return }
+        isUIVisible = visible
+        meterTapsEnabled.withLock { $0 = visible }
+        if visible {
+            // Show the current position now rather than on the next timer tick.
+            withMutation(keyPath: \.playbackProgress) {}
+            updateTimeString(for: storedPlaybackProgress)
+        } else {
+            // Start from empty meters when shown again, not from a stale clip or peak.
+            clearMeters()
+        }
+    }
+
     // MARK: - Splitting & Progress State
     public var isSplitting = false
     public var isCompilingModel = false
@@ -632,8 +667,10 @@ public final class AudioEngineManager {
 
     private func installMeter(on node: AVAudioNode, stem: Int?) {
         let processor = AudioMeterProcessor(bandCount: stem == nil ? 32 : 7)
+        let isEnabled = meterTapsEnabled
         node.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
-            guard let reading = processor.process(buffer) else { return }
+            // Skip the analysis while the player cannot be seen.
+            guard isEnabled.withLock({ $0 }), let reading = processor.process(buffer) else { return }
             Task { @MainActor [weak self] in
                 self?.deliverMeterReading(reading, stem: stem)
             }
@@ -642,7 +679,7 @@ public final class AudioEngineManager {
 
     /// Publishes one tap reading to its meter; `stem` is nil for the master tap.
     func deliverMeterReading(_ reading: AudioMeterProcessor.Reading, stem: Int?) {
-        guard isPlaying else { return }
+        guard isPlaying, isUIVisible else { return }
         guard let stem else {
             masterMeter.update(spectrum: reading.spectrum, waveform: reading.waveform)
             return
@@ -1581,9 +1618,7 @@ public final class AudioEngineManager {
                     return
                 }
                 
-                self.playbackProgress = progress
-                
-                self.updateTimeDisplay(elapsed: elapsed, duration: duration)
+                self.publishPlaybackPosition(progress: progress, elapsed: elapsed, duration: duration)
                 
                 let elapsedSecs = Int(min(duration, elapsed))
                 if elapsedSecs != self.lastSyncedNowPlayingSec {
@@ -1596,6 +1631,18 @@ public final class AudioEngineManager {
         playbackClock.timer = t
     }
     
+    /// The timer's position update. While the player cannot be seen only the stored position
+    /// advances, so code reading `playbackProgress` stays current without re-rendering
+    /// hidden views 60 times a second.
+    func publishPlaybackPosition(progress: Double, elapsed: Double, duration: Double) {
+        guard isUIVisible else {
+            storedPlaybackProgress = progress
+            return
+        }
+        playbackProgress = progress
+        updateTimeDisplay(elapsed: elapsed, duration: duration)
+    }
+
     @MainActor
     public func updateTimeString(for progress: Double) {
         guard let fVocals = fileVocals else { return }

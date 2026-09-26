@@ -79,6 +79,11 @@ public struct PlayerView: View {
                 shortcutsOverlay(showsHUD: showsHUD)
             }
         }
+        .background {
+            PlayerVisibilityReporter(engine: engineManager)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
     }
     
     private func headerView(isCompactHeight: Bool) -> some View {
@@ -355,6 +360,84 @@ public struct PlayerView: View {
     private func toggleSolo(_ index: Int) {
         Haptics.playClick()
         engineManager.soloStem(index)
+    }
+}
+
+/// Tells the engine whether the window showing the player can be seen. SwiftUI keeps
+/// re-rendering hidden, minimized and fully covered windows, so the engine holds back
+/// meter and timecode updates until the window is visible again.
+struct PlayerVisibilityReporter: NSViewRepresentable {
+    let engine: AudioEngineManager
+
+    func makeNSView(context: Context) -> ReporterView {
+        ReporterView(engine: engine)
+    }
+
+    func updateNSView(_ view: ReporterView, context: Context) {
+        view.engine = engine
+    }
+
+    static func dismantleNSView(_ view: ReporterView, coordinator: ()) {
+        view.observe(nil)
+    }
+
+    final class ReporterView: NSView {
+        weak var engine: AudioEngineManager?
+        private weak var observedWindow: NSWindow?
+
+        init(engine: AudioEngineManager) {
+            self.engine = engine
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) {
+            return nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observe(window)
+        }
+
+        func observe(_ window: NSWindow?) {
+            if window != nil && window === observedWindow { return }
+            let center = NotificationCenter.default
+            center.removeObserver(self)
+            observedWindow = window
+            guard let window else {
+                // Nothing of the player is on screen any more; publish as usual.
+                engine?.setUIVisible(true)
+                return
+            }
+            let windowNotifications: [Notification.Name] = [
+                NSWindow.didChangeOcclusionStateNotification,
+                NSWindow.didMiniaturizeNotification,
+                NSWindow.didDeminiaturizeNotification,
+                NSWindow.didBecomeKeyNotification
+            ]
+            for name in windowNotifications {
+                center.addObserver(self, selector: #selector(visibilityMayHaveChanged), name: name, object: window)
+            }
+            for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+                center.addObserver(self, selector: #selector(visibilityMayHaveChanged), name: name, object: nil)
+            }
+            // Report after the current SwiftUI update rather than during it.
+            DispatchQueue.main.async { [weak self] in
+                self?.reportVisibility()
+            }
+        }
+
+        @objc private func visibilityMayHaveChanged(_ notification: Notification) {
+            reportVisibility()
+        }
+
+        private func reportVisibility() {
+            guard let window = observedWindow else { return }
+            // Hiding the app or minimizing also clears .visible; checking them too keeps
+            // the result right if their notifications arrive first.
+            let isVisible = NSApp?.isHidden != true && !window.isMiniaturized && window.occlusionState.contains(.visible)
+            engine?.setUIVisible(isVisible)
+        }
     }
 }
 
