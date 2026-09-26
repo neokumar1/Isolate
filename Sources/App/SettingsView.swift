@@ -130,6 +130,7 @@ struct SettingsModalCard: View {
                             .padding(.vertical, 5)
                             .background(selectedTab == 0 ? theme.textPrimary : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .contentShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selectedTab == 0 ? .isSelected : [])
@@ -146,6 +147,7 @@ struct SettingsModalCard: View {
                             .padding(.vertical, 5)
                             .background(selectedTab == 1 ? theme.textPrimary : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .contentShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selectedTab == 1 ? .isSelected : [])
@@ -470,6 +472,8 @@ struct SettingsModalCard: View {
                 RoundedRectangle(cornerRadius: 3)
                     .stroke(theme.hairline, lineWidth: 1)
             )
+            // The inactive half has a clear fill; keep the whole switch clickable.
+            .contentShape(RoundedRectangle(cornerRadius: 3))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)

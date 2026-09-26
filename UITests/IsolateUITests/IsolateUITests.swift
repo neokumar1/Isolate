@@ -99,7 +99,8 @@ final class IsolateUITests: XCTestCase {
         XCTAssertTrue(autoPlay.waitForExistence(timeout: 3))
         XCTAssertEqual(autoPlay.value as? String, "On")
         autoPlay.click()
-        XCTAssertEqual(autoPlay.value as? String, "Off")
+        let autoPlayOff = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Off"), object: autoPlay)
+        XCTAssertEqual(XCTWaiter.wait(for: [autoPlayOff], timeout: 2), .completed, "Clicking the switch's center must turn auto-play off")
         app.typeKey(.escape, modifierFlags: [])
         app.typeKey("o", modifierFlags: .command)
         let openButton = app.windows["open-panel"].buttons["Open"]

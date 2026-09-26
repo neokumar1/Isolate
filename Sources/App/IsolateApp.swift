@@ -1116,9 +1116,11 @@ struct ErrorToastCard: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(isCloseHovered ? theme.textPrimary : theme.textSecondary)
-                    .padding(5)
+                    .frame(width: 22, height: 22)
                     .background(isCloseHovered ? theme.surfaceHover : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
+                    // Clear padding is not hit-testable; keep the whole square clickable.
+                    .contentShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss error")
