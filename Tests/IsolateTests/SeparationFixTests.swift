@@ -302,4 +302,75 @@ final class SeparationFixTests: XCTestCase {
         XCTAssertTrue(StreamingAudio.describe(kAudioCodecBadDataError).hasPrefix("The file appears to be damaged"))
         XCTAssertEqual(StreamingAudio.describe(-50), "The file could not be decoded. It may be damaged or unsupported (Core Audio -50).")
     }
+
+    // MARK: - Model errors (separation-8)
+
+    func testUnusableModelIsNotReportedAsMissing() async throws {
+        let broken = directory.appending(path: "HTDemucs.mlmodelc")
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        try Data("not a model".utf8).write(to: broken.appending(path: "model.mil"))
+        let cache = directory.appending(path: "compiled.mlmodelc")
+        do {
+            _ = try await DemucsEngine.loadModel(compiled: [broken, broken], packages: [], compiledCache: cache)
+            XCTFail("A damaged model must not load")
+        } catch DemucsError.modelLoadFailed(let message) {
+            XCTAssertTrue(message.contains("HTDemucs.mlmodelc could not be used"), message)
+            XCTAssertTrue(message.contains("MODEL.md"), message)
+        }
+        do {
+            _ = try await DemucsEngine.loadModel(compiled: [], packages: [], compiledCache: cache)
+            XCTFail("No candidates means no model")
+        } catch DemucsError.modelNotFound {
+        }
+    }
+
+    // MARK: - Model lifetime (concurrency-5, concurrency-8)
+
+    func testCancellingDuringModelLoadReturnsPromptlyAndLaterImportsSucceed() async throws {
+        let engine = DemucsEngine.shared
+        await engine.releaseIdleModel()
+        let source = try stereo("load-cancel.wav", amplitude: Float.random(in: 0.25...0.35))
+        let loading = OSAllocatedUnfairLock(initialState: false)
+        let task = Task {
+            try await self.split(source) { info in
+                if info.statusMessage == "LOADING SEPARATION MODEL..." { loading.withLock { $0 = true } }
+            }
+        }
+        let deadline = Date.now.addingTimeInterval(10)
+        while !loading.withLock({ $0 }), Date.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(loading.withLock { $0 })
+        let cancelled = Date.now
+        task.cancel()
+        do {
+            let stems = try await task.value
+            removeCache(stems)
+            XCTFail("The import must stop when cancelled")
+        } catch is CancellationError {
+            XCTAssertLessThan(Date.now.timeIntervalSince(cancelled), 1.5, "Cancel must not wait for the model to load")
+        }
+        // The abandoned load is shared with the next import instead of being restarted.
+        let stems = try await split(source)
+        defer { removeCache(stems) }
+        XCTAssertEqual(stems?.count, 4)
+    }
+
+    func testIdleModelIsReleasedAndReloadedOnDemand() async throws {
+        let engine = DemucsEngine.shared
+        await engine.setIdleModelLifetime(.milliseconds(300))
+        defer { Task { await engine.setIdleModelLifetime(.seconds(60)) } }
+        let first = try await split(try stereo("idle-1.wav", amplitude: Float.random(in: 0.25...0.35)))
+        defer { removeCache(first) }
+        guard first != nil else { return }
+        let loadedAfterSplit = await engine.isModelLoaded
+        XCTAssertTrue(loadedAfterSplit)
+        try await Task.sleep(for: .seconds(1))
+        let loadedWhenIdle = await engine.isModelLoaded
+        XCTAssertFalse(loadedWhenIdle, "An idle model must be released")
+        await engine.setIdleModelLifetime(.seconds(60))
+        let second = try await split(try stereo("idle-2.wav", amplitude: Float.random(in: 0.25...0.35)))
+        defer { removeCache(second) }
+        XCTAssertEqual(second?.count, 4)
+        let loadedAgain = await engine.isModelLoaded
+        XCTAssertTrue(loadedAgain)
+    }
 }
