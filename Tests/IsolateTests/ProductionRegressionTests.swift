@@ -185,7 +185,8 @@ final class ProductionRegressionTests: XCTestCase {
         XCTAssertLessThan(right, left * 0.01)
         let slower = directory.appending(path: "slower.wav")
         try AudioExporter.render(sources: [.init(url: source)], to: slower, rate: 0.5)
-        XCTAssertEqual(try AVAudioFile(forReading: slower).length, 44_100)
+        // Stretched length plus the fixed time/pitch tail.
+        XCTAssertEqual(try AVAudioFile(forReading: slower).length, 44_100 + 4096)
     }
 
     func testMixExportAppliesPositiveFaderGain() throws {
