@@ -151,37 +151,51 @@ struct SplittingProgressModal: View {
     }
 
     var body: some View {
+        let isCancelling = engineManager.lastImportCancelled
         ZStack {
             theme.modalBackdrop
-            VStack(spacing: 24) {
-                Text(engineManager.splitStatusMessage)
-                    .font(.custom("DotGothic16-Regular", size: 22))
+            VStack(spacing: 20) {
+                Text("\(Int(engineManager.splitProgress * 100))%")
+                    .font(.custom("DotGothic16-Regular", size: 48))
                     .foregroundStyle(theme.textPrimary)
+                Text(engineManager.splitStatusMessage)
+                    .font(.custom("DotGothic16-Regular", size: 14))
+                    .foregroundStyle(theme.textSecondary)
                     .multilineTextAlignment(.center)
                 ModalDotMatrixProgressBar(progress: engineManager.splitProgress)
                     .frame(height: 10)
                     .accessibilityLabel("Separation progress")
                     .accessibilityValue("\(Int(engineManager.splitProgress * 100)) percent")
                 HStack {
-                    Text("\(Int(engineManager.splitProgress * 100))%")
-                    Spacer()
                     if engineManager.totalChunkCount > 0 {
                         Text("\(engineManager.currentChunkNumber) / \(engineManager.totalChunkCount) CHUNKS")
                     }
                     Spacer()
                     Text(engineManager.etaRemainingString)
                 }
-                .font(.custom("DotGothic16-Regular", size: 16))
-                .foregroundStyle(theme.textPrimary)
+                .font(.custom("DotGothic16-Regular", size: 11))
+                .foregroundStyle(theme.textMuted)
                 Text(engineManager.liveSpeedSubtitle)
-                    .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundStyle(theme.textSecondary)
-                Button(engineManager.lastImportCancelled ? "CANCELLING…" : "CANCEL IMPORT") {
+                    .font(.custom("DotGothic16-Regular", size: 11))
+                    .foregroundStyle(theme.textMuted)
+                Button(action: {
+                    Haptics.playClick()
                     engineManager.cancelSplitAudio()
+                }) {
+                    Text(isCancelling ? "CANCELLING…" : "CANCEL IMPORT")
+                        .font(.custom("DotGothic16-Regular", size: 13))
+                        .fontWeight(.bold)
+                        .foregroundStyle(isCancelling ? theme.textMuted : theme.accentRed)
+                        .frame(width: 180, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(isCancelling ? theme.border : theme.accentRed, lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .keyboardShortcut(Self.cancelShortcut(isCovered: isCovered))
-                .disabled(engineManager.lastImportCancelled || isCovered)
-                .tint(.red)
+                .disabled(isCancelling || isCovered)
             }
             .padding(36)
             .frame(width: 580)
@@ -208,7 +222,7 @@ struct ModalDotMatrixProgressBar: View {
             HStack(spacing: blockSpacing) {
                 ForEach(0..<blockCount, id: \.self) { i in
                     Rectangle()
-                        .fill(i < activeCount ? Color.red : theme.knobArcTrack)
+                        .fill(i < activeCount ? theme.accentRed : theme.knobArcTrack)
                         .frame(width: blockWidth, height: 8)
                 }
             }
@@ -231,6 +245,7 @@ struct ContentView: View {
     @State private var isShowingDeleteModal = false
     @State private var renameText = ""
     @State private var activeMenuTrackID: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @Environment(AudioEngineManager.self) private var engineManager
     @Query(sort: \TrackModel.dateAdded, order: .reverse) private var tracks: [TrackModel]
@@ -311,6 +326,10 @@ struct ContentView: View {
         .onChange(of: isSidebarVisible) { _, visible in
             if !visible { activeMenuTrackID = nil }
         }
+        .onChange(of: engineManager.errorMessage) { _, message in
+            // The toast is visual only; speak errors for VoiceOver users.
+            if let message { AccessibilityNotification.Announcement("Error: \(message)").post() }
+        }
         .overlay {
             if engineManager.isSplitting {
                 SplittingProgressModal(isCovered: isShowingAboutModal || isShowingSettingsModal || isShowingDeleteModal)
@@ -319,7 +338,7 @@ struct ContentView: View {
                     .font(.custom("DotGothic16-Regular", size: 24))
                     .padding(32)
                     .background(theme.modalBackground)
-                    .border(Color.red)
+                    .border(theme.accentRed)
                     .allowsHitTesting(false)
             }
         }
@@ -464,7 +483,7 @@ struct ContentView: View {
                     )
                     .padding(.top, 16)
                     .allowsHitTesting(true)
-                    .transition(.asymmetric(
+                    .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .move(edge: .top).combined(with: .opacity),
                         removal: .move(edge: .top).combined(with: .opacity)
                     ))
@@ -537,12 +556,12 @@ struct AboutModalCard: View {
                     }
                     VStack(spacing: 2) {
                         ForEach(0..<8, id: \.self) { _ in
-                            Rectangle().fill(Color.red).frame(width: 6, height: 4)
+                            Rectangle().fill(theme.accentRed).frame(width: 6, height: 4)
                         }
                     }
                     VStack(spacing: 2) {
                         ForEach(0..<10, id: \.self) { _ in
-                            Rectangle().fill(Color.red).frame(width: 6, height: 4)
+                            Rectangle().fill(theme.accentRed).frame(width: 6, height: 4)
                         }
                     }
                     VStack(spacing: 2) {
@@ -554,13 +573,12 @@ struct AboutModalCard: View {
                 .padding(.bottom, 16)
                 .frame(width: 84, height: 84, alignment: .bottom)
                 
-                // Top-right Red Glowing Status Dot
+                // Top-right Red Status Dot
                 Circle()
-                    .fill(Color.red)
+                    .fill(theme.accentRed)
                     .frame(width: 8, height: 8)
                     .padding(8)
             }
-            .shadow(color: Color.red.opacity(0.25), radius: 12)
             
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
@@ -571,14 +589,14 @@ struct AboutModalCard: View {
                     
                     Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"))
                         .font(.custom("DotGothic16-Regular", size: 13))
-                        .foregroundColor(.red)
+                        .foregroundColor(theme.textSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.red.opacity(0.15))
+                        .background(theme.surfaceSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
-                                .stroke(Color.red.opacity(0.4), lineWidth: 1)
+                                .stroke(theme.border, lineWidth: 1)
                         )
                 }
                 
@@ -594,19 +612,19 @@ struct AboutModalCard: View {
             
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 5, height: 5)
+                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
                     Text("CORE ML PROCESSING ON APPLE SILICON")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 5, height: 5)
+                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
                     Text("LIVE SPECTRUM & ACCELERATE AUDIO ANALYSIS")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 5, height: 5)
+                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
                     Text("100% PRIVATE & OFFLINE AUDIO PROCESSING")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
@@ -652,9 +670,9 @@ struct AboutModalCard: View {
                     Text("CLOSE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.surface)
                         .frame(width: 120, height: 36)
-                        .background(isCloseHovered ? Color.white : Color.red)
+                        .background(isCloseHovered ? theme.textSecondary : theme.textPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle())
                 }
@@ -691,7 +709,7 @@ struct MoveToApplicationsModalCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.app")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.textPrimary)
                 Text("MOVE TO APPLICATIONS?")
                     .font(.custom("DotGothic16-Regular", size: 20))
                     .foregroundColor(theme.textPrimary)
@@ -711,11 +729,11 @@ struct MoveToApplicationsModalCard: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            
+
             if let error = appMoveHelper.moveErrorMessage {
                 Text(error)
                     .font(.custom("DotGothic16-Regular", size: 11))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.accentRed)
                     .multilineTextAlignment(.center)
             }
             
@@ -761,13 +779,10 @@ struct MoveToApplicationsModalCard: View {
                             .font(.custom("DotGothic16-Regular", size: 13))
                             .fontWeight(.bold)
                     }
-                    .foregroundColor(isInstallHovered ? .black : .white)
+                    .foregroundColor(theme.surface)
                     .frame(width: 200, height: 36)
-                    .background(isInstallHovered ? Color.white : Color.red)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.red, lineWidth: 1)
-                    )
+                    .background(isInstallHovered ? theme.textSecondary : theme.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -821,7 +836,7 @@ struct RenameModalCard: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(theme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red, lineWidth: 1).allowsHitTesting(false))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(theme.textPrimary, lineWidth: 1).allowsHitTesting(false))
                 .foregroundColor(theme.textPrimary)
                 .onChange(of: renameText) { _, text in
                     if text.count > Self.maxTitleLength { renameText = String(text.prefix(Self.maxTitleLength)) }
@@ -861,9 +876,9 @@ struct RenameModalCard: View {
                     Text("SAVE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.surface)
                         .frame(width: 110, height: 34)
-                        .background(isSaveHovered ? Color.red.opacity(0.85) : Color.red)
+                        .background(isSaveHovered ? theme.textSecondary : theme.textPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle()) // Entire 110x34 area clickable!
                 }
@@ -899,7 +914,7 @@ struct DeleteModalCard: View {
         VStack(spacing: 20) {
             Text("DELETE TRACK?")
                 .font(.custom("DotGothic16-Regular", size: 22))
-                .foregroundColor(.red)
+                .foregroundColor(theme.accentRed)
             
             VStack(spacing: 4) {
                 Text("Are you sure you want to delete")
@@ -946,9 +961,9 @@ struct DeleteModalCard: View {
                     Text("DELETE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.onAccent)
                         .frame(width: 110, height: 34)
-                        .background(isDeleteHovered ? Color.red.opacity(0.85) : Color.red)
+                        .background(isDeleteHovered ? theme.accentRed.opacity(0.85) : theme.accentRed)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle()) // Entire 110x34 area clickable!
                 }
@@ -1067,7 +1082,7 @@ struct ErrorToastCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.accentRed)
                 
                 Text(message)
                     .font(.custom("DotGothic16-Regular", size: 12))
@@ -1098,8 +1113,8 @@ struct ErrorToastCard: View {
         .padding(.vertical, 8)
         .background(theme.modalBackground)
         .compositingGroup()
-        .border(Color.red.opacity(0.8), width: 1)
+        .border(theme.accentRed, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.red.opacity(0.3), radius: 14, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.6 : 0.15), radius: 12, x: 0, y: 4)
     }
 }

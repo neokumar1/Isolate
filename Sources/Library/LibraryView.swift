@@ -188,7 +188,7 @@ struct LibraryView: View {
                     Text("IMPORT TRACK")
                 }
                 .font(.custom("DotGothic16-Regular", size: 14))
-                .foregroundColor(.red)
+                .foregroundColor(theme.textPrimary)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 6)
                 .contentShape(Rectangle())
@@ -205,7 +205,7 @@ struct LibraryView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
-                .foregroundColor(isSearchFocused ? .red : theme.textSecondary)
+                .foregroundColor(isSearchFocused ? theme.textPrimary : theme.textSecondary)
             
             TextField("SEARCH LIBRARY...", text: $searchText)
                 .accessibilityLabel("Search library")
@@ -244,7 +244,7 @@ struct LibraryView: View {
         .background(isSearchFocused ? theme.surfaceHover : theme.surfaceSecondary)
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .stroke(isSearchFocused ? Color.red.opacity(0.8) : theme.cardBorder, lineWidth: 1)
+                .stroke(isSearchFocused ? theme.textPrimary : theme.cardBorder, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -266,7 +266,7 @@ struct LibraryView: View {
                 Spacer()
                 Text("NO MATCHING TRACKS")
                     .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(theme.textSecondary)
                 Spacer()
             }
             .frame(maxWidth: .infinity)
@@ -280,13 +280,13 @@ struct LibraryView: View {
             Spacer()
             Image(systemName: "music.note.list")
                 .font(.system(size: 32))
-                .foregroundColor(.gray.opacity(0.5))
+                .foregroundColor(theme.textMuted)
             Text("NO TRACKS IMPORTED")
                 .font(.custom("DotGothic16-Regular", size: 13))
-                .foregroundColor(.gray)
+                .foregroundColor(theme.textSecondary)
             Text("Drag & drop audio files here")
                 .font(.custom("DotGothic16-Regular", size: 11))
-                .foregroundColor(.gray.opacity(0.7))
+                .foregroundColor(theme.textSecondary)
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -389,7 +389,7 @@ struct LibraryView: View {
             if totalOriginalBytes > 0 {
                 Text("•")
                     .font(.custom("DotGothic16-Regular", size: 9))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.textMuted)
                 
                 Text(formattedTotalSize)
                     .font(.custom("DotGothic16-Regular", size: 10.5))
@@ -399,7 +399,7 @@ struct LibraryView: View {
             if totalDurationSeconds > 0 {
                 Text("•")
                     .font(.custom("DotGothic16-Regular", size: 9))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.textMuted)
                 
                 Text(formattedTotalDuration)
                     .font(.custom("DotGothic16-Regular", size: 10.5))
@@ -463,9 +463,7 @@ struct TrackRowView: View {
     @State private var isDeleteHovered = false
     
     private var dotColor: Color {
-        if isMenuOpen {
-            return Color.red
-        } else if isHovered {
+        if isMenuOpen || isHovered {
             return theme.textPrimary
         } else {
             return theme.textSecondary
@@ -489,19 +487,29 @@ struct TrackRowView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
-            isMenuOpen
+            isMenuOpen || isActive
                 ? theme.surfaceSecondary
-                : (isActive ? Color.red.opacity(0.12) : (isHovered ? theme.surfaceHover : Color.clear))
+                : (isHovered ? theme.surfaceHover : Color.clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 3)
                 .stroke(
                     isMenuOpen || isActive
-                        ? Color.red.opacity(0.8)
+                        ? theme.border
                         : (isHovered ? theme.cardBorder : Color.clear),
                     lineWidth: 1
                 )
         )
+        // The loaded track's indicator bar is the row's only red.
+        .overlay(alignment: .leading) {
+            if isActive && !isMenuOpen {
+                Rectangle()
+                    .fill(theme.accentRed)
+                    .frame(width: 3)
+                    .padding(.vertical, 4)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering in
             if !isMenuOpen {
@@ -525,20 +533,12 @@ struct TrackRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)
                     .font(.custom("DotGothic16-Regular", size: 15))
-                    .foregroundColor(isActive ? .red : theme.textPrimary)
+                    .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
                 
-                HStack(spacing: 8) {
-                    Text(track.dateAdded, style: .date)
-                        .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(theme.textSecondary)
-                    
-                    if isActive {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 4, height: 4)
-                    }
-                }
+                Text(track.dateAdded, style: .date)
+                    .font(.custom("DotGothic16-Regular", size: 11))
+                    .foregroundColor(theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -559,11 +559,11 @@ struct TrackRowView: View {
                 Circle().fill(dotColor).frame(width: 3, height: 3)
             }
             .frame(width: 24, height: 24)
-            .background(isMenuOpen ? Color.red.opacity(0.18) : (isHovered ? theme.surfaceHover : Color.clear))
+            .background(isMenuOpen || isHovered ? theme.surfaceHover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .stroke(isMenuOpen ? Color.red : (isHovered ? theme.border : Color.clear), lineWidth: 1)
+                    .stroke(isMenuOpen ? theme.textPrimary : (isHovered ? theme.border : Color.clear), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -603,10 +603,10 @@ struct TrackRowView: View {
                         .font(.custom("DotGothic16-Regular", size: 12))
                         .fontWeight(.bold)
                 }
-                .foregroundColor(isDeleteHovered ? .black : .red)
+                .foregroundColor(isDeleteHovered ? theme.onAccent : theme.accentRed)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(isDeleteHovered ? Color.red : Color.red.opacity(0.18))
+                .background(isDeleteHovered ? theme.accentRed : theme.accentRed.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
@@ -634,7 +634,7 @@ struct TrackRowView: View {
     }
 }
 
-// MARK: - Native AppKit Nothing OS Hardware Red LED Scroller
+// MARK: - Native AppKit Nothing OS Hardware Scroller
 public final class NothingScroller: NSScroller {
     public override class var isCompatibleWithOverlayScrollers: Bool {
         return true
@@ -684,10 +684,11 @@ public final class NothingScroller: NSScroller {
             height: thumbHeight
         )
         
-        // Crisp rectangular Nothing Hardware Red LED (0px corner radius)
+        // Crisp rectangular thumb (0px corner radius); neutral, since scrolling
+        // is not an interrupt state.
         context.addRect(thumbRect)
-        context.setFillColor(CGColor(red: 1.0, green: 0.15, blue: 0.15, alpha: 0.95))
-        context.setShadow(offset: .zero, blur: 4.0, color: CGColor(red: 1.0, green: 0.0, blue: 0.0, alpha: 0.6))
+        let isDark = ThemeManager.shared.isDark
+        context.setFillColor(isDark ? CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.55) : CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.45))
         context.fillPath()
         
         context.restoreGState()
