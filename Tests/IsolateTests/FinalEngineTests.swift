@@ -202,8 +202,8 @@ final class FinalEngineTests: XCTestCase {
         try await requireRenderTimelineStarts(engine)
         try await loopShortestRegion(engine, from: 0.3)
         let gaps = try await recordOutput(engine) {
-            // While paused the players' sample time stands still, but the host time reported with
-            // it keeps counting, so a start derived from host time would come late by the pause.
+            // While paused the players' sample time stands still, and the host time reported with
+            // it then trails real time by the pause, so a start derived from it comes that late.
             engine.togglePlayback()
             try await Task.sleep(for: .milliseconds(800))
             engine.togglePlayback()
@@ -212,7 +212,7 @@ final class FinalEngineTests: XCTestCase {
         print("Loop wrap gaps after a pause: \(milliseconds(gaps))")
         XCTAssertEqual(engine.lastStartReport?.watchdogRestarts, 0, "A start after the pause never took effect (\(describe(engine)))")
         XCTAssertFalse(gaps.isEmpty, "Expected a gap at each wrap")
-        // A host-time start left about 0.4 s of silence here, until the watchdog restarted it.
+        // A start mapped through host time left about 0.5 s of silence here, until the watchdog restarted it.
         XCTAssertLessThan(gaps.max() ?? 0, 0.2, "A wrap after the pause went silent too long: \(milliseconds(gaps))")
         engine.unloadTrack()
     }

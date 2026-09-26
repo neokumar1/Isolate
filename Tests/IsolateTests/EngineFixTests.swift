@@ -120,7 +120,9 @@ final class EngineFixTests: XCTestCase {
 
         await engine.loadTrack(try cancellingTrack(seconds: 0.4, folder: "short"))
         try requirePlayback(engine)
-        try await Task.sleep(for: .milliseconds(1600))
+        // The end arrives after the output device's latency (AirPlay adds seconds), and the output idles 0.5 s later.
+        let idled = await Hardening.wait(timeout: .seconds(8)) { !engine.isPlaying && !engine.isOutputRunning }
+        XCTAssertTrue(idled, "A 0.4 s track must end and release the output device")
         XCTAssertFalse(engine.isPlaying)
         XCTAssertEqual(engine.playbackProgress, 1)
         XCTAssertFalse(engine.isOutputRunning, "The engine must idle once the track has ended")
