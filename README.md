@@ -7,7 +7,7 @@ Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the o
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="Assets/screenshot-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="Assets/screenshot-light.png">
-  <img alt="The Isolate window: four channel strips for vocals, drums, bass and other, with the studio display above them and the playback controls below" src="Assets/screenshot-dark.png">
+  <img alt="The Isolate window: the library sidebar on the left, four channel strips for vocals, drums, bass and other, the studio display with a 32-band spectrum above them, and the playback controls below" src="Assets/screenshot-dark.png">
 </picture>
 
 **[Download Isolate for macOS](https://github.com/neokumar1/Isolate/releases/latest)** · Apple silicon · macOS 14 or later · Free and open source (MIT)
@@ -59,6 +59,8 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 - Import files or whole folders with ⌘O or by dragging them onto the window. MP3, WAV, FLAC, M4A (AAC or ALAC), AIFF and CAF are supported. Surround files are downmixed to stereo, and iCloud Drive files that aren't on your Mac yet are downloaded first.
 - While a song separates, Isolate shows the file name, chunk count, time remaining and measured speed. You can cancel one song or a whole batch, and if you allow notifications, Isolate tells you when an import finishes while it is in the background.
 - Separated songs are cached by their audio content. Importing the same audio again, even from a different folder, reuses its stems instead of separating it again.
+
+<img alt="Separation in progress: a large percentage, the file name, the current stage and a Cancel Import button" src="Assets/screenshot-separating.png" width="640">
 
 **Mix**
 

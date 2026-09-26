@@ -71,7 +71,7 @@ final class SuiteHardeningTests: XCTestCase {
         let end = clock.now + .milliseconds(700)
         while clock.now < end {
             try await Task.sleep(for: .milliseconds(15))
-            for index in peaks.indices { peaks[index] = max(peaks[index], engine.stemPeaks[index]) }
+            for index in peaks.indices { peaks[index] = max(peaks[index], engine.stemMeters[index].peak) }
         }
         for (index, name) in DemucsEngine.stemNames.enumerated() {
             XCTAssertEqual(peaks[index], amplitudes[index], accuracy: 0.03, "The \(name) meter shows another stem")
@@ -83,7 +83,7 @@ final class SuiteHardeningTests: XCTestCase {
         let soloEnd = clock.now + .milliseconds(400)
         while clock.now < soloEnd {
             try await Task.sleep(for: .milliseconds(15))
-            for index in soloed.indices { soloed[index] = max(soloed[index], engine.stemPeaks[index]) }
+            for index in soloed.indices { soloed[index] = max(soloed[index], engine.stemMeters[index].peak) }
         }
         XCTAssertEqual(soloed[1], amplitudes[1], accuracy: 0.03, "Solo DRUMS must keep the drums file audible")
         for index in [0, 2, 3] {
