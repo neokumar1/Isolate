@@ -135,6 +135,97 @@ final class ExporterFixTests: XCTestCase {
         }
     }
 
+    private struct ZipEntry {
+        let name: String?
+        let centralFlags: UInt16
+        let localFlags: UInt16
+        let method: UInt16
+    }
+
+    /// Reads a small archive without a comment or Zip64 records, as /usr/bin/zip writes for these tests.
+    private func entries(in archive: URL) throws -> [ZipEntry] {
+        let bytes = [UInt8](try Data(contentsOf: archive))
+        func u16(_ index: Int) -> UInt16 { UInt16(bytes[index]) | UInt16(bytes[index + 1]) << 8 }
+        func u32(_ index: Int) -> Int { Int(u16(index)) | Int(u16(index + 2)) << 16 }
+        let end = bytes.count - 22
+        XCTAssertEqual(u32(end), 0x0605_4B50)
+        var position = u32(end + 16)
+        var result: [ZipEntry] = []
+        for _ in 0..<Int(u16(end + 10)) {
+            XCTAssertEqual(u32(position), 0x0201_4B50)
+            let nameLength = Int(u16(position + 28))
+            let local = u32(position + 42)
+            XCTAssertEqual(u32(local), 0x0403_4B50)
+            result.append(ZipEntry(name: String(bytes: bytes[(position + 46)..<(position + 46 + nameLength)], encoding: .utf8),
+                                   centralFlags: u16(position + 8), localFlags: u16(local + 6), method: u16(position + 10)))
+            position += 46 + nameLength + Int(u16(position + 30)) + Int(u16(position + 32))
+        }
+        return result
+    }
+
+    func testStemArchiveFlagsNonASCIINamesAsUTF8() throws {
+        let sources = try stems(amplitudes: [0.2, 0.2, 0.2, 0.2])
+        let title = "Beyoncé 音楽 🎵"
+        let archive = directory.appending(path: "unicode.zip")
+        try AudioExporter.archive(sources: sources, title: title, format: .wav, to: archive) { _ in }
+        let found = try entries(in: archive)
+        XCTAssertEqual(found.map(\.name), DemucsEngine.stemNames.map { "\(AudioExporter.safeFilename(title))_\($0).wav" })
+        for entry in found {
+            XCTAssertNotEqual(entry.centralFlags & 0x0800, 0, "The central header must declare a UTF-8 name")
+            XCTAssertNotEqual(entry.localFlags & 0x0800, 0, "The local header must declare a UTF-8 name")
+            XCTAssertEqual(entry.method, 0, "Audio entries are stored")
+        }
+        let check = Process()
+        check.executableURL = URL(filePath: "/usr/bin/unzip")
+        check.arguments = ["-tq", archive.path]
+        check.standardOutput = FileHandle.nullDevice
+        try check.run()
+        check.waitUntilExit()
+        XCTAssertEqual(check.terminationStatus, 0, "Setting the flag must keep the archive valid")
+
+        let ascii = directory.appending(path: "ascii.zip")
+        try AudioExporter.archive(sources: sources, title: "Plain", format: .wav, to: ascii) { _ in }
+        XCTAssertTrue(try entries(in: ascii).allSatisfy { $0.centralFlags & 0x0800 == 0 && $0.localFlags & 0x0800 == 0 })
+    }
+
+    func testUTF8NameFlagFollowsZip64Records() throws {
+        // One stored entry whose local header offset lives in the Zip64 extra field,
+        // located through Zip64 end records, as in stem archives over 4 GB.
+        var bytes: [UInt8] = []
+        func le(_ value: UInt64, _ size: Int) { bytes += (0..<size).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) } }
+        let name = Array("é.wav".utf8)
+        let contents = Array("data".utf8)
+        le(0x0403_4B50, 4); le(45, 2); le(0, 2); le(0, 2); le(0, 4); le(0, 4)
+        le(UInt64(contents.count), 4); le(UInt64(contents.count), 4); le(UInt64(name.count), 2); le(0, 2)
+        bytes += name + contents
+        let directoryOffset = bytes.count
+        le(0x0201_4B50, 4); le(45, 2); le(45, 2); le(0, 2); le(0, 2); le(0, 4); le(0, 4)
+        le(UInt64(contents.count), 4); le(UInt64(contents.count), 4); le(UInt64(name.count), 2); le(12, 2); le(0, 2)
+        le(0, 2); le(0, 2); le(0, 4); le(0xFFFF_FFFF, 4)
+        bytes += name
+        le(0x0001, 2); le(8, 2); le(0, 8)
+        let directorySize = bytes.count - directoryOffset
+        let record = bytes.count
+        le(0x0606_4B50, 4); le(44, 8); le(45, 2); le(45, 2); le(0, 4); le(0, 4)
+        le(1, 8); le(1, 8); le(UInt64(directorySize), 8); le(UInt64(directoryOffset), 8)
+        le(0x0706_4B50, 4); le(0, 4); le(UInt64(record), 8); le(1, 4)
+        le(0x0605_4B50, 4); le(0, 2); le(0, 2); le(0xFFFF, 2); le(0xFFFF, 2); le(0xFFFF_FFFF, 4); le(0xFFFF_FFFF, 4); le(0, 2)
+        let archive = directory.appending(path: "zip64.zip")
+        try Data(bytes).write(to: archive)
+
+        try AudioExporter.markUTF8Names(in: archive)
+        let patched = [UInt8](try Data(contentsOf: archive))
+        XCTAssertEqual(patched.count, bytes.count)
+        XCTAssertEqual(patched[6], 0x00)
+        XCTAssertEqual(patched[7], 0x08, "Local header flag")
+        XCTAssertEqual(patched[directoryOffset + 8], 0x00)
+        XCTAssertEqual(patched[directoryOffset + 9], 0x08, "Central header flag")
+        var unchanged = patched
+        unchanged[7] = 0
+        unchanged[directoryOffset + 9] = 0
+        XCTAssertEqual(unchanged, bytes, "Only the two flag bytes change")
+    }
+
     func testMixRenderReportsThrottledProgressUpToCompletion() throws {
         let source = try audio("long.wav", frames: 441_000) { self.tone($0) }
         let log = ProgressLog()

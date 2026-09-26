@@ -205,6 +205,8 @@ enum AudioExporter {
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw DemucsError.conversionFailed("Could not create the stem archive.") }
+        // Best effort: an unflagged name still extracts correctly on macOS.
+        try? markUTF8Names(in: archive)
         try Task.checkCancellation()
         try publish(archive, to: destination)
         progress(1)
@@ -238,6 +240,75 @@ enum AudioExporter {
                 reported = percent
                 progress(Double(input.framePosition) / Double(input.length))
             }
+        }
+    }
+
+    /// /usr/bin/zip stores UTF-8 names without general purpose bit 11, so Windows and other readers
+    /// decode non-ASCII names as CP437. Set the bit in the central and local header of each such entry.
+    static func markUTF8Names(in archive: URL) throws {
+        let invalid = DemucsError.conversionFailed("Could not read the stem archive.")
+        let handle = try FileHandle(forUpdating: archive)
+        defer { try? handle.close() }
+        func read(_ offset: UInt64, _ count: Int) throws -> [UInt8] {
+            try handle.seek(toOffset: offset)
+            guard count > 0, let data = try handle.read(upToCount: count), data.count == count else { throw invalid }
+            return [UInt8](data)
+        }
+        func setFlag(at offset: UInt64, _ flags: UInt16) throws {
+            let value = flags | 0x0800
+            try handle.seek(toOffset: offset)
+            try handle.write(contentsOf: Data([UInt8(value & 0xFF), UInt8(value >> 8)]))
+        }
+        // The end record is 22 bytes plus a comment of up to 65,535 bytes.
+        let size = try handle.seekToEnd()
+        let tailStart = size - min(size, 65_557)
+        let tail = try read(tailStart, Int(size - tailStart))
+        guard let end = stride(from: tail.count - 22, through: 0, by: -1).first(where: {
+            tail.uint32(at: $0) == 0x0605_4B50 && $0 + 22 + Int(tail.uint16(at: $0 + 20)) == tail.count
+        }) else { throw invalid }
+        var directorySize = UInt64(tail.uint32(at: end + 12))
+        var directoryOffset = UInt64(tail.uint32(at: end + 16))
+        if end >= 20, tail.uint32(at: end - 20) == 0x0706_4B50 {
+            let record = try read(tail.uint64(at: end - 12), 56)
+            guard record.uint32(at: 0) == 0x0606_4B50 else { throw invalid }
+            directorySize = record.uint64(at: 40)
+            directoryOffset = record.uint64(at: 48)
+        }
+        guard directorySize < 1 << 24 else { throw invalid }
+        let directory = try read(directoryOffset, Int(directorySize))
+        var position = 0
+        while position + 46 <= directory.count {
+            guard directory.uint32(at: position) == 0x0201_4B50 else { throw invalid }
+            let nameEnd = position + 46 + Int(directory.uint16(at: position + 28))
+            let extraEnd = nameEnd + Int(directory.uint16(at: position + 30))
+            let next = extraEnd + Int(directory.uint16(at: position + 32))
+            guard next <= directory.count else { throw invalid }
+            let name = directory[(position + 46)..<nameEnd]
+            if name.contains(where: { $0 >= 0x80 }), String(bytes: name, encoding: .utf8) != nil {
+                var local = UInt64(directory.uint32(at: position + 42))
+                if local == 0xFFFF_FFFF {
+                    // The Zip64 extra field lists only the saturated sizes before the offset.
+                    var field = nameEnd
+                    var offset: UInt64?
+                    while field + 4 <= extraEnd {
+                        let length = Int(directory.uint16(at: field + 2))
+                        if directory.uint16(at: field) == 0x0001 {
+                            var value = field + 4
+                            if directory.uint32(at: position + 24) == 0xFFFF_FFFF { value += 8 }
+                            if directory.uint32(at: position + 20) == 0xFFFF_FFFF { value += 8 }
+                            if value + 8 <= min(field + 4 + length, extraEnd) { offset = directory.uint64(at: value) }
+                        }
+                        field += 4 + length
+                    }
+                    guard let offset else { throw invalid }
+                    local = offset
+                }
+                let header = try read(local, 8)
+                guard header.uint32(at: 0) == 0x0403_4B50 else { throw invalid }
+                try setFlag(at: local + 6, header.uint16(at: 6))
+                try setFlag(at: directoryOffset + UInt64(position) + 8, directory.uint16(at: position + 8))
+            }
+            position = next
         }
     }
 
@@ -278,4 +349,11 @@ enum AudioExporter {
         eq.bypass = gains.low == 0 && gains.mid == 0 && gains.high == 0
         return eq
     }
+}
+
+/// Little-endian reads for ZIP records. Callers check bounds first.
+private extension Array where Element == UInt8 {
+    func uint16(at offset: Int) -> UInt16 { UInt16(self[offset]) | UInt16(self[offset + 1]) << 8 }
+    func uint32(at offset: Int) -> UInt32 { UInt32(uint16(at: offset)) | UInt32(uint16(at: offset + 2)) << 16 }
+    func uint64(at offset: Int) -> UInt64 { UInt64(uint32(at: offset)) | UInt64(uint32(at: offset + 4)) << 32 }
 }
