@@ -197,6 +197,12 @@ final class EngineFixTests: XCTestCase {
         XCTAssertEqual(AudioEngineManager.minimumLoopProgress(duration: nil), 0.02)
 
         let engine = AudioEngineManager()
+        engine.setLoopStart(0.4)
+        engine.toggleLoop()
+        XCTAssertEqual(engine.loopStartProgress, 0, "Loop markers need a loaded track")
+        XCTAssertFalse(engine.isLooping)
+
+        await engine.loadTrack(try cancellingTrack())
         engine.setLoopEnd(0.3)
         engine.setLoopStart(0.8)
         XCTAssertEqual(engine.loopStartProgress, 0.8)
@@ -209,7 +215,6 @@ final class EngineFixTests: XCTestCase {
         XCTAssertEqual(engine.loopEndProgress, 0.2, "An end before the old start begins a new region")
         XCTAssertTrue(engine.isLooping)
 
-        await engine.loadTrack(try cancellingTrack())
         engine.resetLoop()
         engine.setLoopStart(0.5)
         engine.setLoopEnd(0.51)

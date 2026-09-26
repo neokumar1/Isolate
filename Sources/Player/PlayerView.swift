@@ -1675,7 +1675,8 @@ struct TransportBar: View {
                     }
                 } else {
                     engineManager.seek(toPercentage: engineManager.playbackProgress)
-                    if wasPlayingBeforeDrag {
+                    // Releasing at the very end stops, unless looping wraps it to A.
+                    if wasPlayingBeforeDrag && (engineManager.playbackProgress < 1 || engineManager.isLooping) {
                         engineManager.togglePlayback()
                     }
                     wasPlayingBeforeDrag = false
@@ -1901,10 +1902,13 @@ struct TransportBar: View {
         let state = engineManager.exportState
         let isExporting = engineManager.isExporting
         return Button(action: {
-            // Stays enabled while exporting so the progress label is not dimmed.
-            guard !engineManager.isExporting else { return }
             Haptics.playClick()
-            engineManager.exportStems()
+            // While exporting, the same control cancels the render.
+            if engineManager.isExporting {
+                engineManager.cancelExport()
+            } else {
+                engineManager.exportStems()
+            }
         }) {
             ZStack {
                 switch state {
@@ -1913,7 +1917,7 @@ struct TransportBar: View {
                         .fontWeight(.bold)
                         .foregroundColor(theme.textPrimary)
                 case .exporting(let stage, let percent):
-                    Text(metrics.isTight ? "\(Int(percent * 100))%" : "\(stage) \(Int(percent * 100))%")
+                    Text(isExportHovered ? "CANCEL" : (metrics.isTight ? "\(Int(percent * 100))%" : "\(stage) \(Int(percent * 100))%"))
                         .fontWeight(.bold)
                         .foregroundColor(theme.textPrimary)
                 case .completed:
@@ -1948,9 +1952,14 @@ struct TransportBar: View {
             .contentShape(Rectangle())
         }
         .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting)
+        .accessibilityLabel(isExporting ? "Cancel export" : "Export stems")
+        .help(isExporting ? "Cancel the export in progress" : "Export four stems as a ZIP (⇧⌘E)")
         .contextMenu {
             Button("Export Mix…") { engineManager.exportMix() }
                 .disabled(isExporting)
+            if isExporting {
+                Button("Cancel Export") { engineManager.cancelExport() }
+            }
         }
         .buttonStyle(.plain)
         .onHover { hovering in

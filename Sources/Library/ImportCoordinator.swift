@@ -174,12 +174,9 @@ final class ImportCoordinator {
     }
 
     /// Finder's name without the extension, so "AC/DC" is not shown as "AC:DC".
+    /// Shares the player's rule so library and Now Playing titles always agree.
     nonisolated static func title(for url: URL) -> String {
-        let name = FileManager.default.displayName(atPath: url.path)
-        // Finder omits the extension from displayName only when it is hidden.
-        let suffix = "." + url.pathExtension
-        guard !url.pathExtension.isEmpty, name.lowercased().hasSuffix(suffix.lowercased()) else { return name }
-        return String(name.dropLast(suffix.count))
+        AudioEngineManager.displayTitle(for: url)
     }
 
     /// Deletes a stem folder that a reimport replaced, unless a track still uses it.

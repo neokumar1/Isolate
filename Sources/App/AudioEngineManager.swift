@@ -178,6 +178,7 @@ public final class AudioEngineManager {
     public var loopEndProgress: Double = 1.0
     
     public func toggleLoop() {
+        guard hasLoadedTrack else { return }
         Haptics.playClick()
         isLooping.toggle()
     }
@@ -191,7 +192,7 @@ public final class AudioEngineManager {
     }
 
     public func setLoopStart(_ progress: Double) {
-        guard progress.isFinite else { return }
+        guard hasLoadedTrack, progress.isFinite else { return }
         let gap = Self.minimumLoopProgress(duration: totalTrackDuration)
         // A start at or past the current end begins a new region instead of clamping backwards.
         if progress >= loopEndProgress { loopEndProgress = 1.0 }
@@ -201,7 +202,7 @@ public final class AudioEngineManager {
     }
     
     public func setLoopEnd(_ progress: Double) {
-        guard progress.isFinite else { return }
+        guard hasLoadedTrack, progress.isFinite else { return }
         let gap = Self.minimumLoopProgress(duration: totalTrackDuration)
         if progress <= loopStartProgress { loopStartProgress = 0.0 }
         loopEndProgress = min(1.0, max(progress, loopStartProgress + gap))
@@ -880,15 +881,23 @@ public final class AudioEngineManager {
                 showError("AUDIO SOURCE NOT FOUND: '\(track.title)'. Reimport the original file to rebuild its stems.")
                 return
             }
+            let previousStems = track.vocalStemURL.deletingLastPathComponent()
             if let data = await loadAndSplitAudio(url: track.originalURL) {
+                // The entry may have been deleted while its stems were rebuilt.
+                guard let context = track.modelContext else {
+                    unloadTrack()
+                    return
+                }
                 track.vocalStemURL = data.vocalStemURL
                 track.drumStemURL = data.drumStemURL
                 track.bassStemURL = data.bassStemURL
                 track.otherStemURL = data.otherStemURL
                 currentTrackID = track.id
                 updateTrackTitle(id: track.id, newTitle: track.title)
-                do { try track.modelContext?.save() }
-                catch { showError("Could not save the recovered track: \(error.localizedDescription)") }
+                do {
+                    try context.save()
+                    if !isExporting { ImportCoordinator.removeReplacedCache(previousStems, context: context) }
+                } catch { showError("Could not save the recovered track: \(error.localizedDescription)") }
             }
         }
     }
@@ -1258,7 +1267,7 @@ public final class AudioEngineManager {
 
     func stemExportMessage(format: String) -> String {
         let eq = stemExportIncludesEQ ? "with channel EQ applied" : "without EQ"
-        return "Four individual stems in \(format) \(eq). Levels, pan, speed and pitch are excluded."
+        return "Four individual stems in \(format) \(eq). Levels, pan, speed and pitch are excluded. If any stem would clip, all four are lowered together to stay below full scale."
     }
 
     /// Compare Original exports the source instead of the stem mix, so name and describe it that way.
@@ -1319,30 +1328,53 @@ public final class AudioEngineManager {
         panel.message = text.message
         guard panel.runModal() == .OK, let destination = panel.url,
               exportSnapshotIsCurrent(generation) else { return }
-        beginExport {
+        beginExport { [self] in
             let temporary = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).wav")
             defer { try? FileManager.default.removeItem(at: temporary) }
-            try AudioExporter.render(sources: sources, to: temporary, masterEQ: masterEQ, rate: rate, pitch: pitch, limitPeak: true)
+            try AudioExporter.render(sources: sources, to: temporary, masterEQ: masterEQ, rate: rate, pitch: pitch, limitPeak: true) { progress in
+                Task { @MainActor [self] in
+                    guard case .exporting = self.exportState else { return }
+                    // Rendering reports completion before the file is published.
+                    let shown = min(progress, 0.99)
+                    self.exportProgress = shown
+                    self.exportState = .exporting(stage: "RENDERING", percent: shown)
+                }
+            }
             try AudioExporter.publish(temporary, to: destination)
             return destination
         }
     }
 
+    @ObservationIgnored private var exportTask: Task<Void, Never>?
+
+    /// Stops an export in progress; the destination is left untouched.
+    public func cancelExport() {
+        exportTask?.cancel()
+    }
+
     private func beginExport(_ operation: @escaping @Sendable () throws -> URL) {
         exportState = .exporting(stage: "RENDERING", percent: 0)
         exportProgress = 0
-        Task {
+        exportTask = Task {
             do {
-                let destination = try await Task.detached(priority: .userInitiated, operation: operation).value
+                let worker = Task.detached(priority: .userInitiated, operation: operation)
+                let destination = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
                 exportState = .completed
                 exportProgress = 1
                 NSWorkspace.shared.activateFileViewerSelecting([destination])
                 try? await Task.sleep(for: .seconds(2))
+            } catch is CancellationError {
+                // Cancelled by the user or at quit; nothing to report.
             } catch {
                 showError("Export failed: \(error.localizedDescription)")
             }
             exportState = .idle
             exportProgress = 0
+            exportTask = nil
         }
     }
 

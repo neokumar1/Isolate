@@ -143,6 +143,10 @@ struct SplittingProgressModal: View {
     /// True while About or Settings is drawn on top. Escape then closes that
     /// card and must never reach CANCEL IMPORT underneath.
     var isCovered = false
+    /// The file being separated and its place in a multi-file import.
+    var fileName: String? = nil
+    var batchIndex = 0
+    var batchCount = 0
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
 
@@ -158,6 +162,13 @@ struct SplittingProgressModal: View {
                 Text("\(Int(engineManager.splitProgress * 100))%")
                     .font(.custom("DotGothic16-Regular", size: 48))
                     .foregroundStyle(theme.textPrimary)
+                if let fileName {
+                    Text(batchCount > 1 ? "\(batchIndex) OF \(batchCount) · \(fileName)" : fileName)
+                        .font(.custom("DotGothic16-Regular", size: 14))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 Text(engineManager.splitStatusMessage)
                     .font(.custom("DotGothic16-Regular", size: 14))
                     .foregroundStyle(theme.textSecondary)
@@ -182,7 +193,7 @@ struct SplittingProgressModal: View {
                     Haptics.playClick()
                     engineManager.cancelSplitAudio()
                 }) {
-                    Text(isCancelling ? "CANCELLING…" : "CANCEL IMPORT")
+                    Text(isCancelling ? "CANCELLING…" : (batchCount > 1 ? "CANCEL ALL (\(batchCount - batchIndex + 1) LEFT)" : "CANCEL IMPORT"))
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
                         .foregroundStyle(isCancelling ? theme.textMuted : theme.accentRed)
@@ -331,8 +342,12 @@ struct ContentView: View {
             if let message { AccessibilityNotification.Announcement("Error: \(message)").post() }
         }
         .overlay {
-            if engineManager.isSplitting {
-                SplittingProgressModal(isCovered: isShowingAboutModal || isShowingSettingsModal || isShowingDeleteModal)
+            // Stay up between the files of a batch instead of flashing the player.
+            if engineManager.isSplitting || (importer.batchCount > 1 && importer.batchIndex < importer.batchCount) {
+                SplittingProgressModal(isCovered: isShowingAboutModal || isShowingSettingsModal || isShowingDeleteModal,
+                                       fileName: importer.currentFileName,
+                                       batchIndex: importer.batchIndex,
+                                       batchCount: importer.batchCount)
             } else if isTargeted {
                 Text("DROP AUDIO TO IMPORT")
                     .font(.custom("DotGothic16-Regular", size: 24))
@@ -497,6 +512,9 @@ struct ContentView: View {
         .onAppear {
             theme.updateWindowAppearance()
             appMoveHelper.checkLocationOnStartup()
+            // Reclaim staging folders left by a quit or crash mid-separation.
+            // The engine skips this while a separation is running.
+            Task { await DemucsEngine.shared.removeAbandonedStaging() }
             configureSystemControls(tracks)
             if let notice = LibraryStore.takeStartupNotice() {
                 engineManager.showError(notice)
