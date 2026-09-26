@@ -2368,83 +2368,102 @@ struct HUDTopBar: View {
 }
 
 // MARK: - 32-Band Dot-Matrix FFT Spectrum Visualizer
+/// 32 bars of 14 blocks drawn in one Canvas rather than 448 shape views. Block edges are
+/// rounded to device pixels in window coordinates, the way SwiftUI placed the former
+/// per-block views, so the output matches them.
 struct Spectrum32BandView: View {
     @Environment(AudioEngineManager.self) private var engineManager
-    
-    private var magnitudes: [Float] {
-        engineManager.masterMeter.spectrum
+    @Environment(\.displayScale) private var displayScale
+    @State private var theme = ThemeManager.shared
+
+    private static let barCount = 32
+    private static let blockCount = 14
+    private static let barSpacing: CGFloat = 2.0
+    private static let blockSpacing: CGFloat = 1.5
+
+    /// Items plus the gaps between them, added in the order a stack adds them. Summing
+    /// differently can flip an edge that lands exactly on a half pixel.
+    private static func stackLength(count: Int, item: CGFloat, spacing: CGFloat) -> CGFloat {
+        var length: CGFloat = 0
+        for index in 0..<count {
+            length += item
+            if index < count - 1 { length += spacing }
+        }
+        return length
     }
-    
+
     var body: some View {
+        // Read observable state here rather than in the renderer so each reading redraws.
+        let magnitudes = engineManager.masterMeter.spectrum
+        let barColor = theme.spectrumBarDefault
+        let peakColor = theme.accentRed
+        let unlitOpacity = theme.isDark ? 0.05 : 0.08
+        let scale = max(1, displayScale)
+
         GeometryReader { geo in
-            let totalWidth = geo.size.width
-            let totalHeight = geo.size.height
-            let barCount = 32
-            let spacing: CGFloat = 2.0
-            let totalSpacing = spacing * CGFloat(barCount - 1)
-            let barWidth = max(2.0, (totalWidth - totalSpacing) / CGFloat(barCount))
-            
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    let mag = index < magnitudes.count ? CGFloat(magnitudes[index]) : 0.0
-                    FFT32BarColumn(magnitude: mag, height: totalHeight, width: barWidth, barIndex: index)
+            let size = geo.size
+            let origin = geo.frame(in: .global).origin
+            Canvas { context, _ in
+                let barCount = Self.barCount
+                let blockCount = Self.blockCount
+                let barWidth = max(2.0, (size.width - Self.barSpacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+                let blockHeight = max(1.5, (size.height - Self.blockSpacing * CGFloat(blockCount - 1)) / CGFloat(blockCount))
+                // Bars are centered and blocks bottom-aligned, as in the former HStack and VStacks.
+                let rowWidth = Self.stackLength(count: barCount, item: barWidth, spacing: Self.barSpacing)
+                let columnHeight = Self.stackLength(count: blockCount, item: blockHeight, spacing: Self.blockSpacing)
+                // Positions accumulate in window space as the stacks laid them out, then round
+                // to device pixels; the canvas itself sits at its rounded origin.
+                func snapped(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+                let canvasX = snapped(origin.x), canvasY = snapped(origin.y)
+                let block = RoundedRectangle(cornerRadius: 0.5)
+
+                var x = origin.x + (size.width - rowWidth) / 2
+                for index in 0..<barCount {
+                    let magnitude = index < magnitudes.count ? CGFloat(magnitudes[index]) : 0.0
+                    let activeBlocksFloat = max(0.0, min(CGFloat(blockCount), magnitude * CGFloat(blockCount)))
+                    let minX = snapped(x) - canvasX
+                    let maxX = snapped(x + barWidth) - canvasX
+
+                    // Top block first, as the VStack listed them.
+                    var y = origin.y + (size.height - columnHeight)
+                    for blockIdx in (0..<blockCount).reversed() {
+                        let blockBottomLevel = CGFloat(blockIdx)
+                        let fillFraction: CGFloat = {
+                            if activeBlocksFloat >= blockBottomLevel + 1 {
+                                return 1.0
+                            } else if activeBlocksFloat <= blockBottomLevel {
+                                return 0.0
+                            } else {
+                                return activeBlocksFloat - blockBottomLevel
+                            }
+                        }()
+
+                        let isTopTwoBlocks = blockIdx >= (blockCount - 2)
+                        let isUpperMidBlock = blockIdx >= (blockCount - 5)
+                        let activeColor: Color = {
+                            if isTopTwoBlocks {
+                                // Peak blocks light red only while signal reaches them.
+                                return fillFraction > 0 ? peakColor : barColor
+                            } else if isUpperMidBlock {
+                                return barColor
+                            } else {
+                                return barColor.opacity(0.88)
+                            }
+                        }()
+
+                        let minY = snapped(y) - canvasY
+                        let maxY = snapped(y + blockHeight) - canvasY
+                        let rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                        context.fill(
+                            block.path(in: rect),
+                            with: .color(activeColor.opacity(fillFraction > 0 ? max(0.2, fillFraction) : unlitOpacity))
+                        )
+                        y = y + blockHeight + Self.blockSpacing
+                    }
+                    x = x + barWidth + Self.barSpacing
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-    }
-}
-
-struct FFT32BarColumn: View {
-    @State private var theme = ThemeManager.shared
-    let magnitude: CGFloat
-    let height: CGFloat
-    let width: CGFloat
-    let barIndex: Int
-    
-    private let blockCount = 14
-    private let blockSpacing: CGFloat = 1.5
-    
-    var body: some View {
-        let totalSpacing = blockSpacing * CGFloat(blockCount - 1)
-        let blockHeight = max(1.5, (height - totalSpacing) / CGFloat(blockCount))
-        let activeBlocksFloat = max(0.0, min(CGFloat(blockCount), magnitude * CGFloat(blockCount)))
-        
-        VStack(spacing: blockSpacing) {
-            ForEach((0..<blockCount).reversed(), id: \.self) { blockIdx in
-                let blockBottomLevel = CGFloat(blockIdx)
-                let blockTopLevel = CGFloat(blockIdx + 1)
-                
-                let fillFraction: CGFloat = {
-                    if activeBlocksFloat >= blockTopLevel {
-                        return 1.0
-                    } else if activeBlocksFloat <= blockBottomLevel {
-                        return 0.0
-                    } else {
-                        return activeBlocksFloat - blockBottomLevel
-                    }
-                }()
-                
-                let isTopTwoBlocks = blockIdx >= (blockCount - 2)
-                let isUpperMidBlock = blockIdx >= (blockCount - 5)
-                
-                let activeColor: Color = {
-                    if isTopTwoBlocks {
-                        // Peak blocks light red only while signal reaches them.
-                        return fillFraction > 0 ? theme.accentRed : theme.spectrumBarDefault
-                    } else if isUpperMidBlock {
-                        return theme.spectrumBarDefault
-                    } else {
-                        return theme.spectrumBarDefault.opacity(0.88)
-                    }
-                }()
-                
-                RoundedRectangle(cornerRadius: 0.5)
-                    .fill(activeColor.opacity(fillFraction > 0 ? max(0.2, fillFraction) : (theme.isDark ? 0.05 : 0.08)))
-                    .frame(width: width, height: blockHeight)
-            }
-        }
-        .frame(width: width, height: height, alignment: .bottom)
     }
 }
 
