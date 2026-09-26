@@ -88,6 +88,7 @@ enum AudioExporter {
         engine.attach(eq)
         engine.connect(sum, to: timePitch, format: audioFormat)
         engine.connect(timePitch, to: eq, format: audioFormat)
+        var latency: AVAudioFramePosition = 0
         if limitPeak {
             let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
                 componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
@@ -95,6 +96,9 @@ enum AudioExporter {
             engine.attach(limiter)
             engine.connect(eq, to: limiter, format: audioFormat)
             engine.connect(limiter, to: engine.mainMixerNode, format: audioFormat)
+            // Drop the limiter's look-ahead so the mix stays aligned with the source and keeps its ending.
+            let frames = limiter.latency * audioFormat.sampleRate
+            latency = frames.isFinite ? AVAudioFramePosition(min(max(frames, 0), 4096).rounded()) : 0
         } else {
             engine.connect(eq, to: engine.mainMixerNode, format: audioFormat)
         }
@@ -111,15 +115,20 @@ enum AudioExporter {
         guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: 4096) else {
             throw DemucsError.invalidAudioFormat
         }
-        let frameCount = AVAudioFramePosition(ceil(Double(files[0].length) / Double(rate)))
+        // Time/pitch spreads the final frames past the stretched length and reports no latency,
+        // so render a fixed tail to keep the ending.
+        let tail: AVAudioFramePosition = timePitch.bypass ? 0 : 4096
+        let frameCount = AVAudioFramePosition(ceil(Double(files[0].length) / Double(rate))) + tail + latency
         var stalled = 0
         while engine.manualRenderingSampleTime < frameCount {
             try Task.checkCancellation()
-            let count = AVAudioFrameCount(min(4096, frameCount - engine.manualRenderingSampleTime))
             let before = engine.manualRenderingSampleTime
+            // Blocks never straddle the discarded look-ahead.
+            let end = before < latency ? latency : frameCount
+            let count = AVAudioFrameCount(min(4096, end - before))
             switch try engine.renderOffline(count, to: buffer) {
             case .success:
-                try output.write(from: buffer)
+                if before >= latency { try output.write(from: buffer) }
             case .cannotDoInCurrentContext, .insufficientDataFromInputNode:
                 break
             case .error:
