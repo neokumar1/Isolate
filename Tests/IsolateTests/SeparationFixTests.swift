@@ -468,4 +468,151 @@ final class SeparationFixTests: XCTestCase {
         XCTAssertNoThrow(try StemCache.ensureSpace(forFrames: nil))
         XCTAssertNoThrow(try StemCache.ensureSpace(forFrames: 44_100))
     }
+
+    // MARK: - Replaced caches (library-3)
+
+    func testReimportRemovesReplacedCacheOnlyWhenNoTrackUsesIt() async throws {
+        let container = try ModelContainer(for: TrackModel.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let source = try stereo("reimport.wav", amplitude: 0.22)
+        let current = try cache(for: source)
+        defer { try? FileManager.default.removeItem(at: current) }
+        func staleCache() throws -> URL {
+            let stale = StemCache.root.appending(path: "stale-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+            for name in DemucsEngine.stemNames + ["original"] {
+                try FileManager.default.copyItem(at: source, to: stale.appending(path: "\(name).wav"))
+            }
+            return stale
+        }
+        func record(id: String, stems: URL) -> TrackModel {
+            TrackModel(id: id, title: "Reimport", originalURL: source,
+                       vocalStemURL: stems.appending(path: "vocals.wav"), bassStemURL: stems.appending(path: "bass.wav"),
+                       drumStemURL: stems.appending(path: "drums.wav"), otherStemURL: stems.appending(path: "other.wav"))
+        }
+        let engine = AudioEngineManager()
+        let importer = ImportCoordinator()
+
+        let orphaned = try staleCache()
+        let track = record(id: source.path, stems: orphaned)
+        context.insert(track)
+        try context.save()
+        importer.importFiles([source], context: context, engine: engine)
+        while importer.isImporting { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(track.vocalStemURL.deletingLastPathComponent().standardizedFileURL, current.standardizedFileURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphaned.path), "The replaced cache must be deleted")
+
+        let shared = try staleCache()
+        defer { try? FileManager.default.removeItem(at: shared) }
+        track.vocalStemURL = shared.appending(path: "vocals.wav")
+        track.drumStemURL = shared.appending(path: "drums.wav")
+        track.bassStemURL = shared.appending(path: "bass.wav")
+        track.otherStemURL = shared.appending(path: "other.wav")
+        context.insert(record(id: "another-source", stems: shared))
+        try context.save()
+        importer.importFiles([source], context: context, engine: engine)
+        while importer.isImporting { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(track.vocalStemURL.deletingLastPathComponent().standardizedFileURL, current.standardizedFileURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shared.path), "A cache another track uses must be kept")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: current.path))
+
+        // Unchanged bytes map to the folder the track already uses.
+        importer.importFiles([source], context: context, engine: engine)
+        while importer.isImporting { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNotNil(StemCache.validFiles(in: current))
+
+        // Folders outside the cache root are never deleted.
+        ImportCoordinator.removeReplacedCache(directory, context: context)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+        engine.unloadTrack()
+    }
+
+    // MARK: - Batch failures (separation-2, separation-10)
+
+    func testBatchFailuresAreSummarisedByName() {
+        XCTAssertNil(ImportCoordinator.summary(failures: [], total: 3, notImported: 0))
+        XCTAssertEqual(ImportCoordinator.summary(failures: [("a.mp3", "Damaged.")], total: 1, notImported: 0),
+                       "Could not import 'a.mp3': Damaged.")
+        let many = (1...5).map { ("\($0).flac", "Reason \($0).") }
+        let summary = try? XCTUnwrap(ImportCoordinator.summary(failures: many, total: 9, notImported: 2))
+        XCTAssertEqual(summary, "5 of 9 files could not be imported. '1.flac': Reason 1. '2.flac': Reason 2. '3.flac': Reason 3. (+2 more) Import cancelled; 2 remaining files were not imported.")
+        XCTAssertEqual(ImportCoordinator.summary(failures: [], total: 4, notImported: 1),
+                       "Import cancelled; 1 remaining file was not imported.")
+    }
+
+    func testBatchReportsEveryFailedFileAndResetsBatchState() async throws {
+        let container = try ModelContainer(for: TrackModel.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let good = try stereo("good.wav", amplitude: 0.23)
+        let cached = try cache(for: good)
+        defer { try? FileManager.default.removeItem(at: cached) }
+        let first = directory.appending(path: "first.wav")
+        let second = directory.appending(path: "second.m4a")
+        try Data(repeating: 0x42, count: 2048).write(to: first)
+        try Data(repeating: 0x43, count: 2048).write(to: second)
+        let importer = ImportCoordinator()
+        let engine = AudioEngineManager()
+        importer.importFiles([first, good, second], context: container.mainContext, engine: engine)
+        var sawBatch = false
+        while importer.isImporting {
+            if importer.batchCount == 3, importer.currentFileName != nil { sawBatch = true }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(sawBatch)
+        let message = try XCTUnwrap(engine.errorMessage)
+        XCTAssertTrue(message.hasPrefix("2 of 3 files could not be imported."), message)
+        XCTAssertTrue(message.contains("'first.wav'") && message.contains("'second.m4a'"), message)
+        XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<TrackModel>()), 1)
+        XCTAssertNil(importer.currentFileName)
+        XCTAssertEqual(importer.batchIndex, 0)
+        XCTAssertEqual(importer.batchCount, 0)
+        engine.unloadTrack()
+    }
+
+    // MARK: - Folders and titles (separation-11, separation-12)
+
+    func testFoldersExpandToSupportedAudioInFinderOrder() throws {
+        let fm = FileManager.default
+        let album = directory.appending(path: "Album")
+        try fm.createDirectory(at: album.appending(path: "Disc 2"), withIntermediateDirectories: true)
+        for name in ["10 c.flac", "02 b.mp3", "1 a.wav", "notes.txt", ".hidden.wav", "Disc 2/01 d.m4a", "cover.AIFC"] {
+            try Data().write(to: album.appending(path: name))
+        }
+        let loose = directory.appending(path: "single.mp3")
+        try Data().write(to: loose)
+        let found = ImportCoordinator.audioFiles(in: [loose, album, album.appending(path: "02 b.mp3")])
+        let base = directory.resolvingSymlinksInPath().path + "/"
+        XCTAssertEqual(found.map { $0.resolvingSymlinksInPath().path.replacingOccurrences(of: base, with: "") },
+                       ["single.mp3", "Album/1 a.wav", "Album/02 b.mp3", "Album/10 c.flac", "Album/cover.AIFC", "Album/Disc 2/01 d.m4a"])
+    }
+
+    func testFolderWithoutAudioShowsAnError() async throws {
+        let container = try ModelContainer(for: TrackModel.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let folder = directory.appending(path: "Documents")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("text".utf8).write(to: folder.appending(path: "readme.txt"))
+        let importer = ImportCoordinator()
+        let engine = AudioEngineManager()
+        importer.importFiles([folder], context: container.mainContext, engine: engine)
+        while importer.isImporting { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(engine.errorMessage?.contains("folder") == true)
+    }
+
+    func testTitlesUseFinderDisplayNames() async throws {
+        XCTAssertEqual(ImportCoordinator.title(for: directory.appending(path: "Song v1.2.mp3")), "Song v1.2")
+        let container = try ModelContainer(for: TrackModel.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        // Finder shows a POSIX ":" as "/".
+        let source = try stereo("AC:DC - Back.wav", amplitude: 0.24)
+        XCTAssertEqual(ImportCoordinator.title(for: source), "AC/DC - Back")
+        let cached = try cache(for: source)
+        defer { try? FileManager.default.removeItem(at: cached) }
+        let importer = ImportCoordinator()
+        let engine = AudioEngineManager()
+        importer.importFiles([source], context: container.mainContext, engine: engine)
+        while importer.isImporting { try await Task.sleep(for: .milliseconds(20)) }
+        let track = try XCTUnwrap(try container.mainContext.fetch(FetchDescriptor<TrackModel>()).first)
+        XCTAssertEqual(track.title, "AC/DC - Back")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(engine.trackTitle, "AC/DC - Back", "Now Playing must keep the library title after metadata loads")
+        engine.unloadTrack()
+    }
 }
