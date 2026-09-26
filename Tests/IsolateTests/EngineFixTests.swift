@@ -73,7 +73,10 @@ final class EngineFixTests: XCTestCase {
             XCTAssertGreaterThan(peak, 0.05, "\(label): stem \(index) did not play", file: file, line: line)
         }
         // The waveform floor is 0.05; any inter-stem offset leaves uncancelled noise far above it.
-        XCTAssertLessThan(reading.master, 0.06, "\(label): stems started out of sync", file: file, line: line)
+        let report = engine.lastStartReport.map {
+            "attempts \($0.attempts), lead \(String(format: "%.3f", $0.lead)) s, calls \(String(format: "%.3f", $0.callDuration)) s, together \($0.startedTogether)"
+        } ?? "no start report"
+        XCTAssertLessThan(reading.master, 0.06, "\(label): stems started out of sync (\(report))", file: file, line: line)
     }
 
     func testStemsStaySampleAlignedAcrossStartSeekAndPauseResume() async throws {

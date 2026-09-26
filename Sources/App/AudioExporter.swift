@@ -61,6 +61,51 @@ enum AudioExporter {
                                rate: rate, pitch: pitch, limitPeak: limitPeak) { progress?($0) }
     }
 
+    private static func makePeakLimiter() -> AVAudioUnitEffect {
+        AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+            componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
+    }
+
+    /// The peak limiter's look-ahead delay in frames. `AVAudioNode.latency` reads 0 on
+    /// macOS 15 before rendering starts, so measure it once with an impulse instead.
+    static let peakLimiterDelay: AVAudioFramePosition = measurePeakLimiterDelay() ?? 0
+
+    static func measurePeakLimiterDelay() -> AVAudioFramePosition? {
+        final class Impulse: @unchecked Sendable { var pending = true }
+        let format = StreamingAudio.format
+        let engine = AVAudioEngine()
+        let impulse = Impulse()
+        let source = AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
+            for buffer in UnsafeMutableAudioBufferListPointer(bufferList) {
+                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                data.update(repeating: 0, count: Int(frameCount))
+                if impulse.pending, frameCount > 0 { data[0] = 0.5 }
+            }
+            impulse.pending = false
+            return noErr
+        }
+        let limiter = makePeakLimiter()
+        engine.attach(source)
+        engine.attach(limiter)
+        engine.connect(source, to: limiter, format: format)
+        engine.connect(limiter, to: engine.mainMixerNode, format: format)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096),
+              (try? engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)) != nil,
+              (try? engine.start()) != nil else { return nil }
+        defer { engine.stop() }
+        var position: AVAudioFramePosition = 0
+        while position < 8192 {
+            guard (try? engine.renderOffline(4096, to: buffer)) == .success,
+                  let left = buffer.floatChannelData?[0] else { return nil }
+            for index in 0..<Int(buffer.frameLength) where abs(left[index]) > 0.05 {
+                return position + AVAudioFramePosition(index)
+            }
+            position += AVAudioFramePosition(buffer.frameLength)
+        }
+        return nil
+    }
+
     /// Returns the largest sample magnitude written, measured before any fixed-point conversion.
     private static func renderMeasured(sources: [Source], to destination: URL, settings: [String: Any],
                                        masterEQ: EQ, rate: Float, pitch: Float, limitPeak: Bool,
@@ -103,15 +148,12 @@ enum AudioExporter {
         engine.connect(timePitch, to: eq, format: audioFormat)
         var latency: AVAudioFramePosition = 0
         if limitPeak {
-            let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
-                componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
-                componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
+            let limiter = makePeakLimiter()
             engine.attach(limiter)
             engine.connect(eq, to: limiter, format: audioFormat)
             engine.connect(limiter, to: engine.mainMixerNode, format: audioFormat)
             // Drop the limiter's look-ahead so the mix stays aligned with the source and keeps its ending.
-            let frames = limiter.latency * audioFormat.sampleRate
-            latency = frames.isFinite ? AVAudioFramePosition(min(max(frames, 0), 4096).rounded()) : 0
+            latency = peakLimiterDelay
         } else {
             engine.connect(eq, to: engine.mainMixerNode, format: audioFormat)
         }

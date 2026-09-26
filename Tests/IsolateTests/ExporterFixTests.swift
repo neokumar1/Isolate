@@ -360,4 +360,13 @@ final class ExporterFixTests: XCTestCase {
             XCTAssertNil(name.rangeOfCharacter(from: CharacterSet(charactersIn: "/:\\?*\"<>|")), name)
         }
     }
+
+    func testPeakLimiterDelayIsMeasuredRatherThanReported() {
+        // macOS 15 reports no latency before rendering, which shifted limited mixes by 88 frames.
+        let measured = AudioExporter.measurePeakLimiterDelay()
+        XCTAssertNotNil(measured, "The limiter probe must render")
+        XCTAssertGreaterThan(measured ?? 0, 0, "Apple's peak limiter always looks ahead")
+        XCTAssertLessThan(measured ?? 4096, 4096)
+        XCTAssertEqual(AudioExporter.peakLimiterDelay, measured)
+    }
 }

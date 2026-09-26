@@ -1506,6 +1506,7 @@ public final class AudioEngineManager {
     private func stopPlayers() {
         // Invalidate callbacks before stop() invokes outstanding completions.
         playbackSessionID = UUID()
+        pausedFrame = nil
         vocalPlayer.stop()
         drumPlayer.stop()
         bassPlayer.stop()
@@ -1522,6 +1523,14 @@ public final class AudioEngineManager {
         guard fileVocals != nil else { return }
         // Players left running by pausePlayback() resume together with the engine.
         let resumesPausedPlayers = vocalPlayer.isPlaying
+        if !resumesPausedPlayers, let frame = pausedFrame, let vocals = fileVocals, frame < vocals.length {
+            // The pause did not keep the players armed: restart all five from where it stopped.
+            stopPlayers()
+            timePitchNode.reset()
+            seekFrameOffset = frame
+            schedulePlayers(from: frame)
+        }
+        pausedFrame = nil
         if !engine.isRunning {
             do {
                 try engine.start()
@@ -1537,26 +1546,43 @@ public final class AudioEngineManager {
         NowPlayingManager.shared.updateNowPlayingPlaybackState()
     }
 
+    /// How the most recent synchronized start went; read by tests and useful in bug reports.
+    struct StartReport: Sendable {
+        var attempts: Int
+        var lead: TimeInterval
+        var callDuration: TimeInterval
+        var startedTogether: Bool
+    }
+    private(set) var lastStartReport: StartReport?
+
     /// play(at:) waits for about one output IO cycle per player, and a player whose start
     /// time has already passed begins on a later cycle than the others. Lead by the whole
     /// call sequence plus the render-ahead margin; if the calls still overran it, reschedule
-    /// from the same frame and retry with a longer lead.
+    /// from the same frame and retry with a lead sized from the measured calls. Some devices
+    /// report a smaller IO buffer than they render with, so the measurement wins.
     private func startPlayersTogether() {
         var players = [vocalPlayer, drumPlayer, bassPlayer, otherPlayer]
         if audioFile != nil { players.append(originalPlayer) }
-        let cycle = outputCycleDuration()
-        let margin = 4 * cycle + engine.outputNode.presentationLatency + 0.005
+        var cycle = outputCycleDuration()
+        var margin = 4 * cycle + engine.outputNode.presentationLatency + 0.005
         var lead = Double(players.count + 1) * cycle + margin
-        for attempt in 1...3 {
-            let startHostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)
+        let attempts = 4
+        for attempt in 1...attempts {
+            let issued = mach_absolute_time()
+            let startHostTime = issued + AVAudioTime.hostTime(forSeconds: lead)
             let startTime = AVAudioTime(hostTime: startHostTime)
             for player in players { player.play(at: startTime) }
-            let startedTogether = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: margin) <= startHostTime
-            guard !startedTogether, attempt < 3 else { return }
+            let finished = mach_absolute_time()
+            let took = AVAudioTime.seconds(forHostTime: finished - issued)
+            cycle = max(cycle, took / Double(players.count))
+            margin = 4 * cycle + engine.outputNode.presentationLatency + 0.005
+            let startedTogether = finished + AVAudioTime.hostTime(forSeconds: margin) <= startHostTime
+            lastStartReport = StartReport(attempts: attempt, lead: lead, callDuration: took, startedTogether: startedTogether)
+            guard !startedTogether, attempt < attempts else { return }
             stopPlayers()
             timePitchNode.reset()
             schedulePlayers(from: seekFrameOffset)
-            lead *= 2
+            lead = min(2, max(lead * 2, took * 1.5 + margin))
         }
     }
 
@@ -1575,6 +1601,7 @@ public final class AudioEngineManager {
     /// keeps buffered tails for a seamless resume, and releases the output device so the Mac
     /// can idle-sleep. playSynced() restarts the engine to resume.
     private func pausePlayback() {
+        pausedFrame = currentPlaybackFrame()
         engine.pause()
         playbackClock.timer?.invalidate()
         isPlaying = false
@@ -1584,6 +1611,17 @@ public final class AudioEngineManager {
 
     /// Engine state for tests; false while paused or stopped.
     var isOutputRunning: Bool { engine.isRunning }
+
+    /// Where a pause stopped, so a resume that has to restart the players continues there
+    /// rather than at the last seek. Cleared whenever the players are stopped or rescheduled.
+    @ObservationIgnored private var pausedFrame: AVAudioFramePosition?
+
+    private func currentPlaybackFrame() -> AVAudioFramePosition? {
+        guard let vocals = fileVocals, let nodeTime = vocalPlayer.lastRenderTime,
+              let playerTime = vocalPlayer.playerTime(forNodeTime: nodeTime) else { return nil }
+        let frame = seekFrameOffset + playerTime.sampleTime
+        return min(max(0, frame), vocals.length)
+    }
     
     @MainActor
     public func togglePlayback() {

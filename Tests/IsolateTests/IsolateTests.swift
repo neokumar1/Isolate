@@ -20,7 +20,13 @@ final class IsolateTests: XCTestCase {
         let hopSize = DemucsEngine.hopSize
         let mean: Float = 0.05
         let deviation: Float = 0.2
-        let signal = (0..<(chunkSize + hopSize)).map { Float(0.3 * sin(Double($0) * 0.0123) + 0.1 * sin(Double($0) * 0.00071)) + mean }
+        // Explicit types keep this within older compilers' type-checking limits.
+        let signal: [Float] = (0..<(chunkSize + hopSize)).map { (index: Int) -> Float in
+            let t = Double(index)
+            let fast: Double = 0.3 * sin(t * 0.0123)
+            let slow: Double = 0.1 * sin(t * 0.00071)
+            return Float(fast + slow) + mean
+        }
         var window = [Float](repeating: 0, count: chunkSize)
         vDSP_hann_window(&window, vDSP_Length(chunkSize), Int32(vDSP_HANN_DENORM))
         // Contiguous Float32, and Float16 stored time-major so accumulate() must follow the strides.
