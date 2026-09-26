@@ -182,16 +182,29 @@ public final class AudioEngineManager {
         isLooping.toggle()
     }
     
+    /// Shortest A–B region in seconds, so short phrases can be looped on long tracks.
+    nonisolated static let minimumLoopSeconds = 0.5
+
+    nonisolated static func minimumLoopProgress(duration: Double?) -> Double {
+        guard let duration, duration > 0 else { return 0.02 }
+        return min(0.5, minimumLoopSeconds / duration)
+    }
+
     public func setLoopStart(_ progress: Double) {
         guard progress.isFinite else { return }
-        loopStartProgress = max(0.0, min(progress, loopEndProgress - 0.02))
+        let gap = Self.minimumLoopProgress(duration: totalTrackDuration)
+        // A start at or past the current end begins a new region instead of clamping backwards.
+        if progress >= loopEndProgress { loopEndProgress = 1.0 }
+        loopStartProgress = max(0.0, min(progress, loopEndProgress - gap))
         isLooping = true
         Haptics.playClick()
     }
     
     public func setLoopEnd(_ progress: Double) {
         guard progress.isFinite else { return }
-        loopEndProgress = min(1.0, max(progress, loopStartProgress + 0.02))
+        let gap = Self.minimumLoopProgress(duration: totalTrackDuration)
+        if progress <= loopStartProgress { loopStartProgress = 0.0 }
+        loopEndProgress = min(1.0, max(progress, loopStartProgress + gap))
         isLooping = true
         Haptics.playClick()
     }
@@ -234,6 +247,8 @@ public final class AudioEngineManager {
     public var errorMessage: String? = nil
     
     private var playbackSessionID = UUID()
+    /// Changes whenever the loaded track is replaced or unloaded.
+    @ObservationIgnored private var loadGeneration = 0
     
     // MARK: - Stem Volumes, Mute, Solo (Default 1.0 = Unity Gain / 0 dB)
     public var vocalVolume: Double = 1.0 { didSet { applyVolumes() } }
@@ -553,6 +568,8 @@ public final class AudioEngineManager {
             guard let reading = processor.process(buffer) else { return }
             Task { @MainActor [weak self] in
                 guard let self, self.isPlaying else { return }
+                // Compare Original silences the stem sum after these taps.
+                if stem != nil && self.isBypassed && self.canBypass { return }
                 if let stem { self.stemPeaks[stem] = reading.peak }
                 switch stem {
                 case 0: self.vocalEQMagnitudes = reading.spectrum
@@ -616,6 +633,11 @@ public final class AudioEngineManager {
         if isBypassed && canBypass {
             stemsSumMixer.outputVolume = 0.0
             originalPlayer.volume = 1.0
+            stemPeaks = Array(repeating: 0, count: 4)
+            vocalEQMagnitudes = Array(repeating: 0, count: 7)
+            drumEQMagnitudes = Array(repeating: 0, count: 7)
+            bassEQMagnitudes = Array(repeating: 0, count: 7)
+            otherEQMagnitudes = Array(repeating: 0, count: 7)
             return
         }
         
@@ -840,6 +862,9 @@ public final class AudioEngineManager {
     
     public func loadTrack(_ track: TrackModel) async {
         guard !isSplitting else { return }
+        // Reselecting the loaded track keeps its mix, loop, speed and position.
+        if track.id == currentTrackID, let loaded = fileVocals?.url,
+           loaded.standardizedFileURL == track.vocalStemURL.standardizedFileURL { return }
         lastImportCancelled = false
         let urls = [track.vocalStemURL, track.drumStemURL, track.bassStemURL, track.otherStemURL]
         do {
@@ -850,7 +875,8 @@ public final class AudioEngineManager {
             if !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled") { playSynced() }
         } catch {
             guard FileManager.default.fileExists(atPath: track.originalURL.path) else {
-                unloadTrack()
+                // A broken entry must not stop a different track that is playing.
+                if currentTrackID == track.id { unloadTrack() }
                 showError("AUDIO SOURCE NOT FOUND: '\(track.title)'. Reimport the original file to rebuild its stems.")
                 return
             }
@@ -890,6 +916,7 @@ public final class AudioEngineManager {
     @MainActor
     public func unloadTrack() {
         playbackSessionID = UUID()
+        loadGeneration += 1
         metadataTask?.cancel()
         metadataRequestID = UUID()
         // 1. Hard stop all audio players & invalidate playback timers
@@ -898,6 +925,9 @@ public final class AudioEngineManager {
         bassPlayer.stop()
         otherPlayer.stop()
         originalPlayer.stop()
+        // Release the output device and drop the previous track's buffered tail.
+        engine.pause()
+        timePitchNode.reset()
         isPlaying = false
         playbackClock.timer?.invalidate()
         playbackClock.timer = nil
@@ -967,7 +997,8 @@ public final class AudioEngineManager {
         etaRemainingString = "ESTIMATING..."
         splitStatusMessage = "CHECKING AUDIO..."
         liveSpeedSubtitle = "ON-DEVICE CORE ML PROCESSING"
-        if isPlaying { togglePlayback() }
+        // togglePlayback() ignores requests while splitting, so pause directly.
+        if isPlaying { pausePlayback() }
         let requestID = UUID()
         splitRequestID = requestID
         let task = Task { [weak self] in
@@ -1003,8 +1034,10 @@ public final class AudioEngineManager {
             guard !lastImportCancelled else { return nil }
             try installFiles(stems)
             currentTrackID = url.path
-            let title = url.deletingPathExtension().lastPathComponent
+            let title = Self.displayTitle(for: url)
             currentTrackName = title.uppercased()
+            // Keep the library title in Now Playing, matching later loads of this track.
+            titleOverride = title
             trackTitle = title
             extractMetadata(url: url)
             splitProgress = 1
@@ -1033,6 +1066,43 @@ public final class AudioEngineManager {
     @ObservationIgnored private var titleOverride: String?
     private var metadataRequestID = UUID()
 
+    /// The Finder name without its extension; POSIX names store "/" as ":".
+    nonisolated static func displayTitle(for url: URL) -> String {
+        let name = FileManager.default.displayName(atPath: url.path)
+        let suffix = "." + url.pathExtension
+        // Finder may already hide the extension, so only strip one that is present.
+        guard suffix.count > 1, name.count > suffix.count,
+              name.lowercased().hasSuffix(suffix.lowercased()) else { return name }
+        return String(name.dropLast(suffix.count))
+    }
+
+    /// Embedded covers can be far larger than any view. Decode a bounded thumbnail
+    /// (off the main actor at the call site) rather than the full-resolution image.
+    nonisolated static func artworkImage(from data: Data, maxPixelSize: Int = 1024) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? Int,
+           let height = properties[kCGImagePropertyPixelHeight] as? Int,
+           width * height > 100_000_000 {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// Opening the source can block on sleeping network or external volumes.
+    nonisolated static func probeFormat(_ url: URL) -> (sampleRate: String, bitDepth: String)? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let bitDepth = (file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int) ?? 0
+        return (String(format: "%.1f kHz", file.fileFormat.sampleRate / 1000),
+                bitDepth > 0 ? "\(bitDepth)-BIT" : "COMPRESSED")
+    }
+
     private func extractMetadata(url: URL) {
         metadataTask?.cancel()
         let requestID = UUID()
@@ -1046,14 +1116,14 @@ public final class AudioEngineManager {
             var foundTitle: String? = nil
             var foundArtist: String? = nil
             var foundAlbum: String? = nil
-            var foundArt: NSImage? = nil
+            var foundArt: CGImage? = nil
             
             do {
                 let metadata = try await asset.load(.commonMetadata)
                 for item in metadata {
                     if item.commonKey == .commonKeyArtwork {
                         if let data = (try? await item.load(.value)) as? Data {
-                            foundArt = NSImage(data: data)
+                            foundArt = await Task.detached(priority: .utility) { Self.artworkImage(from: data) }.value
                         }
                     } else if item.commonKey == .commonKeyTitle {
                         if let titleStr = (try? await item.load(.value)) as? String {
@@ -1085,7 +1155,7 @@ public final class AudioEngineManager {
 
                     if foundArt == nil && (item.commonKey == .commonKeyArtwork || item.identifier?.rawValue.contains("APIC") == true || item.identifier?.rawValue.contains("artwork") == true) {
                         if let data = (try? await item.load(.value)) as? Data {
-                            foundArt = NSImage(data: data)
+                            foundArt = await Task.detached(priority: .utility) { Self.artworkImage(from: data) }.value
                         }
                     }
                     if foundTitle == nil && (item.commonKey == .commonKeyTitle || item.identifier?.rawValue.contains("TIT2") == true || item.identifier?.rawValue.contains("title") == true) {
@@ -1109,7 +1179,7 @@ public final class AudioEngineManager {
             }
             
             let finalArt = foundArt
-            let finalTitle = foundTitle ?? url.deletingPathExtension().lastPathComponent
+            let finalTitle = foundTitle ?? Self.displayTitle(for: url)
             let finalArtist = foundArtist ?? "Isolate"
             let finalAlbum = foundAlbum ?? "4-Stem Neural Audio"
             let ext = url.pathExtension.uppercased()
@@ -1118,21 +1188,14 @@ public final class AudioEngineManager {
             let finalBPM = foundBPM ?? "BPM UNKNOWN"
             let finalKey = foundKey ?? "KEY UNKNOWN"
 
-            let (computedSampleRate, computedBitDepth): (String, String) = {
-                guard let f = try? AVAudioFile(forReading: url) else {
-                    return ("44.1 kHz", "24-BIT PCM")
-                }
-                let sr = f.fileFormat.sampleRate
-                let srStr = String(format: "%.1f kHz", sr / 1000)
-                let bd = (f.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int) ?? 0
-                return (srStr, bd > 0 ? "\(bd)-BIT" : "COMPRESSED")
-            }()
-            let finalSampleRate = computedSampleRate
-            let finalBitDepth = computedBitDepth
+            // This task inherits the main actor; open the source file on a worker instead.
+            let probed = await Task.detached(priority: .utility) { Self.probeFormat(url) }.value
+            let finalSampleRate = probed?.sampleRate ?? "44.1 kHz"
+            let finalBitDepth = probed?.bitDepth ?? "24-BIT PCM"
             
             await MainActor.run {
                 guard !Task.isCancelled, let self, self.metadataRequestID == requestID else { return }
-                self.albumArt = finalArt
+                self.albumArt = finalArt.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
                 self.trackTitle = self.titleOverride ?? finalTitle
                 self.trackArtist = finalArtist
                 self.trackAlbum = finalAlbum
@@ -1178,16 +1241,57 @@ public final class AudioEngineManager {
         }
     }
 
+    /// Export names keep the library title's casing; the player shows it uppercased.
+    var exportTitle: String {
+        let title = titleOverride ?? trackTitle
+        return title.isEmpty ? currentTrackName : title
+    }
+
+    /// Whether any stem file will have its channel EQ rendered in.
+    var stemExportIncludesEQ: Bool {
+        guard shouldBakeEQOnExport, !isGlobalEQBypassed else { return false }
+        return (0..<4).contains { index in
+            let eq = getStemEQ(index)
+            return !eq.isBypassed && (abs(eq.low) >= 0.01 || abs(eq.mid) >= 0.01 || abs(eq.high) >= 0.01)
+        }
+    }
+
+    func stemExportMessage(format: String) -> String {
+        let eq = stemExportIncludesEQ ? "with channel EQ applied" : "without EQ"
+        return "Four individual stems in \(format) \(eq). Levels, pan, speed and pitch are excluded."
+    }
+
+    /// Compare Original exports the source instead of the stem mix, so name and describe it that way.
+    var mixExportPanelText: (name: String, message: String) {
+        let base = AudioExporter.safeFilename(exportTitle)
+        guard isBypassed, audioFile != nil else {
+            return ("\(base)_Mix.wav", "Export the full track with current levels, pan, EQ, speed and pitch as 24-bit WAV.")
+        }
+        return ("\(base)_Original.wav",
+                "Compare Original is on: exports the original track with master EQ, speed and pitch as 24-bit WAV.")
+    }
+
+    /// Remote media commands can load another track while a modal save panel is open.
+    private func exportSnapshotIsCurrent(_ generation: Int) -> Bool {
+        guard generation == loadGeneration, hasLoadedTrack, !isExporting, !isSplitting else {
+            showError("The track changed while the save panel was open. Nothing was exported.")
+            return false
+        }
+        return true
+    }
+
     public func exportStems() {
         guard hasLoadedTrack, !isExporting, !isSplitting else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(AudioExporter.safeFilename(currentTrackName))_Stems.zip"
-        panel.allowedContentTypes = [.zip]
-        panel.message = "Four individual stems in \(AppSettings.shared.defaultExportFormat). Channel levels, pan, speed and pitch are excluded."
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let generation = loadGeneration
         let sources = exportSources(includeMix: false)
-        let title = currentTrackName
+        let title = exportTitle
         let format = AudioExporter.Format(rawValue: AppSettings.shared.defaultExportFormat) ?? .wav
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(AudioExporter.safeFilename(title))_Stems.zip"
+        panel.allowedContentTypes = [.zip]
+        panel.message = stemExportMessage(format: AppSettings.shared.defaultExportFormat)
+        guard panel.runModal() == .OK, let destination = panel.url,
+              exportSnapshotIsCurrent(generation) else { return }
         beginExport { [self] in
             try AudioExporter.archive(sources: sources, title: title, format: format, to: destination) { progress in
                 Task { @MainActor [self] in
@@ -1202,16 +1306,19 @@ public final class AudioEngineManager {
 
     public func exportMix() {
         guard hasLoadedTrack, !isExporting, !isSplitting else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(AudioExporter.safeFilename(currentTrackName))_Mix.wav"
-        panel.allowedContentTypes = [.wav]
-        panel.message = "Export the full track with current levels, pan, EQ, speed and pitch as 24-bit WAV."
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let generation = loadGeneration
+        let text = mixExportPanelText
         let sources = isBypassed && audioFile != nil ? [AudioExporter.Source(url: audioFile!.url)] : exportSources(includeMix: true)
         let gains = getStemEQ(4)
         let masterEQ = isGlobalEQBypassed || gains.isBypassed ? AudioExporter.EQ() : .init(low: gains.low, mid: gains.mid, high: gains.high)
         let rate = Float(playbackRate)
         let pitch = Float(pitchShiftSemitones)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = text.name
+        panel.allowedContentTypes = [.wav]
+        panel.message = text.message
+        guard panel.runModal() == .OK, let destination = panel.url,
+              exportSnapshotIsCurrent(generation) else { return }
         beginExport {
             let temporary = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).wav")
             defer { try? FileManager.default.removeItem(at: temporary) }
@@ -1242,14 +1349,26 @@ public final class AudioEngineManager {
     // MARK: - Synchronized Playback Graph Scheduling
     
     private func onPlaybackEnded() {
-        guard isPlaying else { return }
-        if isLooping {
-            seek(toPercentage: loopStartProgress)
+        if isPlaying && isLooping {
+            seek(toPercentage: loopStartProgress, flushTail: false)
         } else {
+            // Also reached when a pause lands while this completion is queued: the players
+            // have nothing left, so the next Play must restart instead of resuming them.
             stopPlayers()
             playbackProgress = 1
             updateTimeString(for: 1)
             NowPlayingManager.shared.updateNowPlayingPlaybackState()
+            releaseOutputAfterTail()
+        }
+    }
+
+    /// Lets the limiter and time/pitch tails play out, then idles the output device
+    /// so the Mac can sleep. playSynced() restarts the engine.
+    private func releaseOutputAfterTail() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !self.isPlaying else { return }
+            self.engine.pause()
         }
     }
 
@@ -1270,6 +1389,8 @@ public final class AudioEngineManager {
     @MainActor
     private func playSynced() {
         guard fileVocals != nil else { return }
+        // Players left running by pausePlayback() resume together with the engine.
+        let resumesPausedPlayers = vocalPlayer.isPlaying
         if !engine.isRunning {
             do {
                 try engine.start()
@@ -1278,35 +1399,68 @@ public final class AudioEngineManager {
                 return
             }
         }
-        let startHostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: 0.03)
-        let startTime = AVAudioTime(hostTime: startHostTime)
-        
-        vocalPlayer.play(at: startTime)
-        drumPlayer.play(at: startTime)
-        bassPlayer.play(at: startTime)
-        otherPlayer.play(at: startTime)
-        if audioFile != nil { originalPlayer.play(at: startTime) }
+        if !resumesPausedPlayers { startPlayersTogether() }
         
         self.isPlaying = true
         self.startPlaybackTimer()
         NowPlayingManager.shared.updateNowPlayingPlaybackState()
     }
+
+    /// play(at:) waits for about one output IO cycle per player, and a player whose start
+    /// time has already passed begins on a later cycle than the others. Lead by the whole
+    /// call sequence plus the render-ahead margin; if the calls still overran it, reschedule
+    /// from the same frame and retry with a longer lead.
+    private func startPlayersTogether() {
+        var players = [vocalPlayer, drumPlayer, bassPlayer, otherPlayer]
+        if audioFile != nil { players.append(originalPlayer) }
+        let cycle = outputCycleDuration()
+        let margin = 4 * cycle + engine.outputNode.presentationLatency + 0.005
+        var lead = Double(players.count + 1) * cycle + margin
+        for attempt in 1...3 {
+            let startHostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)
+            let startTime = AVAudioTime(hostTime: startHostTime)
+            for player in players { player.play(at: startTime) }
+            let startedTogether = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: margin) <= startHostTime
+            guard !startedTogether, attempt < 3 else { return }
+            stopPlayers()
+            timePitchNode.reset()
+            schedulePlayers(from: seekFrameOffset)
+            lead *= 2
+        }
+    }
+
+    /// One output IO cycle, never taken as shorter than 512 frames.
+    private func outputCycleDuration() -> TimeInterval {
+        var frames: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        if let unit = engine.outputNode.audioUnit {
+            AudioUnitGetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0, &frames, &size)
+        }
+        let rate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        return Double(max(frames, 512)) / (rate > 0 ? rate : 44_100)
+    }
+
+    /// Pausing the engine rather than each player freezes all five on the same render cycle,
+    /// keeps buffered tails for a seamless resume, and releases the output device so the Mac
+    /// can idle-sleep. playSynced() restarts the engine to resume.
+    private func pausePlayback() {
+        engine.pause()
+        playbackClock.timer?.invalidate()
+        isPlaying = false
+        clearVisualizers()
+        NowPlayingManager.shared.updateNowPlayingPlaybackState()
+    }
+
+    /// Engine state for tests; false while paused or stopped.
+    var isOutputRunning: Bool { engine.isRunning }
     
     @MainActor
     public func togglePlayback() {
         guard fileVocals != nil, !isSplitting else { return }
         if isPlaying {
-            vocalPlayer.pause()
-            drumPlayer.pause()
-            bassPlayer.pause()
-            otherPlayer.pause()
-            originalPlayer.pause()
-            playbackClock.timer?.invalidate()
-            isPlaying = false
-            clearVisualizers()
-            NowPlayingManager.shared.updateNowPlayingPlaybackState()
+            pausePlayback()
         } else {
-            if playbackProgress >= 1 { seek(toPercentage: 0) }
+            if playbackProgress >= 1 { seek(toPercentage: isLooping ? loopStartProgress : 0) }
             playSynced()
         }
     }
@@ -1329,7 +1483,7 @@ public final class AudioEngineManager {
             let progress = max(0, min(1, elapsed / duration))
             
                 if self.isLooping && progress >= self.loopEndProgress {
-                    self.seek(toPercentage: self.loopStartProgress)
+                    self.seek(toPercentage: self.loopStartProgress, flushTail: false)
                     return
                 }
                 
@@ -1376,11 +1530,23 @@ public final class AudioEngineManager {
     }
     
     public func seek(toPercentage percentage: Double) {
+        seek(toPercentage: percentage, flushTail: true)
+    }
+
+    /// Loop wraps keep the time/pitch tail so the end of the region stays audible; other
+    /// seeks flush it so audio from the old position is not heard after the jump.
+    private func seek(toPercentage percentage: Double, flushTail: Bool) {
         guard percentage.isFinite, let vocals = fileVocals,
-              let drums = fileDrums, let bass = fileBass, let other = fileOther else { return }
+              fileDrums != nil, fileBass != nil, fileOther != nil else { return }
         let progress = max(0, min(1, percentage))
+        // Reaching the end while looping wraps to the loop start, like a natural end.
+        if progress >= 1 && isPlaying && isLooping {
+            seek(toPercentage: loopStartProgress, flushTail: flushTail)
+            return
+        }
         let wasPlaying = isPlaying
         stopPlayers()
+        if flushTail { timePitchNode.reset() }
         let totalFrames = vocals.length
         let target = min(totalFrames, max(0, AVAudioFramePosition(Double(totalFrames) * progress)))
         seekFrameOffset = target
@@ -1389,10 +1555,18 @@ public final class AudioEngineManager {
         let duration = totalTrackDuration ?? 0
         NowPlayingManager.shared.updateNowPlayingProgress(elapsed: duration * progress, duration: duration)
         guard target < totalFrames else {
+            engine.pause()
             NowPlayingManager.shared.updateNowPlayingPlaybackState()
             return
         }
-        let count = AVAudioFrameCount(min(Int64(UInt32.max), totalFrames - target))
+        schedulePlayers(from: target)
+        if wasPlaying { playSynced() }
+    }
+
+    private func schedulePlayers(from target: AVAudioFramePosition) {
+        guard let vocals = fileVocals, let drums = fileDrums, let bass = fileBass,
+              let other = fileOther, target < vocals.length else { return }
+        let count = AVAudioFrameCount(min(Int64(UInt32.max), vocals.length - target))
         let session = playbackSessionID
         vocalPlayer.scheduleSegment(vocals, startingFrame: target, frameCount: count, at: nil,
                                     completionCallbackType: .dataPlayedBack) { [weak self] _ in
@@ -1407,6 +1581,5 @@ public final class AudioEngineManager {
         if let audioFile {
             originalPlayer.scheduleSegment(audioFile, startingFrame: target, frameCount: count, at: nil)
         }
-        if wasPlaying { playSynced() }
     }
 }
