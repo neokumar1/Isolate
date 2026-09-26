@@ -107,7 +107,7 @@ struct SettingsModalCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.red)
+                        .foregroundColor(theme.textPrimary)
                     Text("SYSTEM PREFERENCES")
                         .font(.custom("DotGothic16-Regular", size: 18))
                         .fontWeight(.bold)
@@ -125,13 +125,14 @@ struct SettingsModalCard: View {
                         Text("SETTINGS")
                             .font(.custom("DotGothic16-Regular", size: 12))
                             .fontWeight(.bold)
-                            .foregroundColor(selectedTab == 0 ? (theme.isDark ? .black : .white) : theme.textSecondary)
+                            .foregroundColor(selectedTab == 0 ? theme.background : theme.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(selectedTab == 0 ? (theme.isDark ? Color.white : Color.black) : Color.clear)
+                            .background(selectedTab == 0 ? theme.textPrimary : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(selectedTab == 0 ? .isSelected : [])
                     
                     Button(action: {
                         Haptics.playClick()
@@ -140,13 +141,14 @@ struct SettingsModalCard: View {
                         Text("SHORTCUTS")
                             .font(.custom("DotGothic16-Regular", size: 12))
                             .fontWeight(.bold)
-                            .foregroundColor(selectedTab == 1 ? (theme.isDark ? .black : .white) : theme.textSecondary)
+                            .foregroundColor(selectedTab == 1 ? theme.background : theme.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(selectedTab == 1 ? (theme.isDark ? Color.white : Color.black) : Color.clear)
+                            .background(selectedTab == 1 ? theme.textPrimary : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(selectedTab == 1 ? .isSelected : [])
                 }
                 .padding(3)
                 .background(theme.surfaceSecondary)
@@ -156,16 +158,28 @@ struct SettingsModalCard: View {
             Divider()
                 .background(theme.hairline)
             
-            // Content Area based on Tab — Pinned to exact height of 345pt for rock-solid consistency
+            // Content Area based on Tab — Pinned to exact height of 345pt for rock-solid consistency.
+            // The shortcut list is taller than that, so it scrolls instead of clipping.
             Group {
                 if selectedTab == 0 {
                     settingsTabContent
                 } else {
-                    shortcutsTabContent
+                    ScrollView(.vertical) {
+                        shortcutsTabContent
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 16)
+                    }
+                    // Fade the bottom edge so the list reads as scrollable.
+                    .mask(
+                        VStack(spacing: 0) {
+                            Rectangle()
+                            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                                .frame(height: 16)
+                        }
+                    )
                 }
             }
-            .frame(height: 345)
-            .clipped()
+            .frame(height: 345, alignment: .top)
             
             Divider()
                 .background(theme.hairline)
@@ -185,7 +199,7 @@ struct SettingsModalCard: View {
                         .foregroundColor(isResetHovered ? theme.textPrimary : theme.textSecondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(isResetHovered ? theme.surfaceHover : Color.clear)
+                        .background(isResetHovered ? theme.surfaceHover : Color.clear, in: RoundedRectangle(cornerRadius: 3))
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
                                 .stroke(isResetHovered ? theme.border : theme.hairline, lineWidth: 1)
@@ -210,9 +224,9 @@ struct SettingsModalCard: View {
                     Text("CLOSE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.background)
                         .frame(width: 100, height: 32)
-                        .background(isCloseHovered ? Color.red.opacity(0.85) : Color.red)
+                        .background(isCloseHovered ? theme.textPrimary.opacity(0.85) : theme.textPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle())
                 }
@@ -248,6 +262,8 @@ struct SettingsModalCard: View {
                     themeButton("dark", label: "NOTHING DARK")
                     themeButton("light", label: "NOTHING LIGHT")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Theme")
             }
             
             // Setting 2: Default Export Format
@@ -259,6 +275,8 @@ struct SettingsModalCard: View {
                     exportFormatButton("WAV", label: "WAV 24B")
                     exportFormatButton("FLAC", label: "FLAC")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Export format")
             }
             
             // Setting 3: Menu Bar Mini Player
@@ -301,6 +319,8 @@ struct SettingsModalCard: View {
                     sensitivityButton(1.0, label: "1.0x STD")
                     sensitivityButton(1.5, label: "1.5x")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Waveform sensitivity")
             }
         }
         .padding(.vertical, 4)
@@ -309,19 +329,28 @@ struct SettingsModalCard: View {
     // MARK: - Shortcuts Tab Content
     private var shortcutsTabContent: some View {
         VStack(alignment: .leading, spacing: 7) {
+            shortcutRow(keys: ["Space"], description: "Play / Pause playback")
             shortcutRow(keys: ["1", "2", "3", "4"], description: "Solo Vocals, Drums, Bass, Other (Exclusive)")
             shortcutRow(keys: ["V", "D", "B", "O"], description: "Toggle Mute for individual channels")
             shortcutRow(keys: ["A"], description: "Engage Acapella Preset (Solo Vocals)")
             shortcutRow(keys: ["I"], description: "Engage Instrumental Preset (Mute Vocals)")
             shortcutRow(keys: ["R"], description: "Reset 4-Stem Mix to 100% Unity Gain")
             shortcutRow(keys: ["L"], description: "Toggle A-B Region Loop")
-            shortcutRow(keys: ["Space"], description: "Play / Pause playback")
+            shortcutRow(keys: ["[", "]"], description: "Set A-B Loop Start / End at the playhead")
+            shortcutRow(keys: ["⌥", "L"], description: "Clear A-B Loop Markers")
+            shortcutRow(keys: ["⌘", "1-5"], description: "Switch HUD: FFT, Macros, Balance, Telemetry, EQ")
+            shortcutRow(keys: ["⌘", "E"], description: "Bypass All EQ (Stems + Master)")
             shortcutRow(keys: ["⌘", "⌥", "B"], description: "Compare Original and Stem Mix")
             shortcutRow(keys: ["⌘", "⇧", "E"], description: "Export 4-Stem Audio Archive")
             shortcutRow(keys: ["⌘", "⇧", "M"], description: "Export Current Mix as WAV")
             shortcutRow(keys: ["⌘", "O"], description: "Import / Batch Import audio tracks")
             shortcutRow(keys: ["⌘", "B"], description: "Toggle Library Sidebar")
-            shortcutRow(keys: ["Double-Click"], description: "Reset fader or pan dial to Center")
+            shortcutRow(keys: ["⌘", ","], description: "Open Settings")
+            shortcutRow(keys: ["⌘", "0"], description: "Show the Isolate Window")
+            shortcutRow(keys: ["?"], description: "Toggle the Shortcut Cheat Sheet")
+            shortcutRow(keys: ["Esc"], description: "Close the open panel")
+            shortcutRow(keys: ["←", "→", "↑", "↓"], description: "Adjust the focused fader, knob, pan or seek bar")
+            shortcutRow(keys: ["Double-Click"], description: "Reset fader, pan, EQ, pitch or speed")
         }
         .padding(.vertical, 4)
     }
@@ -353,17 +382,18 @@ struct SettingsModalCard: View {
             Text(label)
                 .font(.custom("DotGothic16-Regular", size: 10.5))
                 .fontWeight(.bold)
-                .foregroundColor(isSelected ? .white : theme.textSecondary)
+                .foregroundColor(isSelected ? theme.background : theme.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(isSelected ? Color.red : theme.surfaceSecondary)
+                .background(isSelected ? theme.textPrimary : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.red : theme.hairline, lineWidth: 1)
+                        .stroke(isSelected ? theme.textPrimary : theme.hairline, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
     
     private func themeButton(_ themeName: String, label: String) -> some View {
@@ -376,17 +406,18 @@ struct SettingsModalCard: View {
             Text(label)
                 .font(.custom("DotGothic16-Regular", size: 10))
                 .fontWeight(.bold)
-                .foregroundColor(isSelected ? .white : theme.textSecondary)
+                .foregroundColor(isSelected ? theme.background : theme.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(isSelected ? Color.red : theme.surfaceSecondary)
+                .background(isSelected ? theme.textPrimary : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.red : theme.hairline, lineWidth: 1)
+                        .stroke(isSelected ? theme.textPrimary : theme.hairline, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
     
     private func sensitivityButton(_ value: Double, label: String) -> some View {
@@ -398,17 +429,18 @@ struct SettingsModalCard: View {
             Text(label)
                 .font(.custom("DotGothic16-Regular", size: 10))
                 .fontWeight(.bold)
-                .foregroundColor(isSelected ? .white : theme.textSecondary)
+                .foregroundColor(isSelected ? theme.background : theme.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(isSelected ? Color.red : theme.surfaceSecondary)
+                .background(isSelected ? theme.textPrimary : theme.surfaceSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.red : theme.hairline, lineWidth: 1)
+                        .stroke(isSelected ? theme.textPrimary : theme.hairline, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
     
     private func toggleSwitch(_ label: String, isOn: Binding<Bool>) -> some View {
@@ -420,10 +452,10 @@ struct SettingsModalCard: View {
                 Text("ON")
                     .font(.custom("DotGothic16-Regular", size: 10))
                     .fontWeight(.bold)
-                    .foregroundColor(isOn.wrappedValue ? .white : theme.textMuted)
+                    .foregroundColor(isOn.wrappedValue ? theme.onAccent : theme.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(isOn.wrappedValue ? Color.red : Color.clear)
+                    .background(isOn.wrappedValue ? theme.accentRed : Color.clear)
                 
                 Text("OFF")
                     .font(.custom("DotGothic16-Regular", size: 10))
@@ -456,14 +488,14 @@ struct SettingsModalCard: View {
                         Text(key)
                             .font(.custom("DotGothic16-Regular", size: 11))
                             .fontWeight(.bold)
-                            .foregroundColor(.red)
+                            .foregroundColor(theme.textPrimary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
-                            .background(Color.red.opacity(0.12))
+                            .background(theme.surfaceSecondary)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 3)
-                                    .stroke(Color.red.opacity(0.4), lineWidth: 1)
+                                    .stroke(theme.border, lineWidth: 1)
                             )
                     }
                 }
@@ -472,7 +504,7 @@ struct SettingsModalCard: View {
             
             Text(description)
                 .font(.custom("DotGothic16-Regular", size: 12))
-                .foregroundColor(theme.textPrimary.opacity(0.88))
+                .foregroundColor(theme.textPrimary)
             
             Spacer()
         }
