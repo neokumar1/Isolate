@@ -182,16 +182,29 @@ public final class AudioEngineManager {
         isLooping.toggle()
     }
     
+    /// Shortest A–B region in seconds, so short phrases can be looped on long tracks.
+    nonisolated static let minimumLoopSeconds = 0.5
+
+    nonisolated static func minimumLoopProgress(duration: Double?) -> Double {
+        guard let duration, duration > 0 else { return 0.02 }
+        return min(0.5, minimumLoopSeconds / duration)
+    }
+
     public func setLoopStart(_ progress: Double) {
         guard progress.isFinite else { return }
-        loopStartProgress = max(0.0, min(progress, loopEndProgress - 0.02))
+        let gap = Self.minimumLoopProgress(duration: totalTrackDuration)
+        // A start at or past the current end begins a new region instead of clamping backwards.
+        if progress >= loopEndProgress { loopEndProgress = 1.0 }
+        loopStartProgress = max(0.0, min(progress, loopEndProgress - gap))
         isLooping = true
         Haptics.playClick()
     }
     
     public func setLoopEnd(_ progress: Double) {
         guard progress.isFinite else { return }
-        loopEndProgress = min(1.0, max(progress, loopStartProgress + 0.02))
+        let gap = Self.minimumLoopProgress(duration: totalTrackDuration)
+        if progress <= loopStartProgress { loopStartProgress = 0.0 }
+        loopEndProgress = min(1.0, max(progress, loopStartProgress + gap))
         isLooping = true
         Haptics.playClick()
     }
@@ -840,6 +853,9 @@ public final class AudioEngineManager {
     
     public func loadTrack(_ track: TrackModel) async {
         guard !isSplitting else { return }
+        // Reselecting the loaded track keeps its mix, loop, speed and position.
+        if track.id == currentTrackID, let loaded = fileVocals?.url,
+           loaded.standardizedFileURL == track.vocalStemURL.standardizedFileURL { return }
         lastImportCancelled = false
         let urls = [track.vocalStemURL, track.drumStemURL, track.bassStemURL, track.otherStemURL]
         do {
@@ -850,7 +866,8 @@ public final class AudioEngineManager {
             if !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled") { playSynced() }
         } catch {
             guard FileManager.default.fileExists(atPath: track.originalURL.path) else {
-                unloadTrack()
+                // A broken entry must not stop a different track that is playing.
+                if currentTrackID == track.id { unloadTrack() }
                 showError("AUDIO SOURCE NOT FOUND: '\(track.title)'. Reimport the original file to rebuild its stems.")
                 return
             }

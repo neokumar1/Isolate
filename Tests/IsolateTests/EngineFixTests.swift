@@ -143,6 +143,82 @@ final class EngineFixTests: XCTestCase {
         engine.unloadTrack()
     }
 
+    func testReselectingTheLoadedTrackKeepsMixLoopAndSpeed() async throws {
+        let track = try cancellingTrack()
+        let engine = AudioEngineManager()
+        await engine.loadTrack(track)
+        engine.vocalVolume = 0.5
+        engine.drumPan = -0.5
+        engine.bassSolo = true
+        engine.playbackRate = 0.75
+        engine.setLoopStart(0.2)
+        engine.setLoopEnd(0.4)
+        let sameEntry = TrackModel(id: track.id, title: track.title, originalURL: track.originalURL,
+                                   vocalStemURL: track.vocalStemURL, bassStemURL: track.bassStemURL,
+                                   drumStemURL: track.drumStemURL, otherStemURL: track.otherStemURL)
+        for selection in [track, sameEntry] {
+            await engine.loadTrack(selection)
+            XCTAssertEqual(engine.vocalVolume, 0.5)
+            XCTAssertEqual(engine.drumPan, -0.5)
+            XCTAssertTrue(engine.bassSolo)
+            XCTAssertEqual(engine.playbackRate, 0.75)
+            XCTAssertTrue(engine.isLooping)
+            XCTAssertEqual(engine.loopStartProgress, 0.2, accuracy: 1e-9)
+            XCTAssertEqual(engine.loopEndProgress, 0.4, accuracy: 1e-9)
+        }
+        engine.unloadTrack()
+    }
+
+    func testSelectingABrokenEntryKeepsTheCurrentTrack() async throws {
+        let track = try cancellingTrack(seconds: 1)
+        let engine = AudioEngineManager()
+        await engine.loadTrack(track)
+        engine.vocalVolume = 0.5
+        let missing = directory.appending(path: "missing")
+        let broken = TrackModel(id: missing.appending(path: "gone.mp3").path, title: "Gone",
+                                originalURL: missing.appending(path: "gone.mp3"),
+                                vocalStemURL: missing.appending(path: "vocals.wav"),
+                                bassStemURL: missing.appending(path: "bass.wav"),
+                                drumStemURL: missing.appending(path: "drums.wav"),
+                                otherStemURL: missing.appending(path: "other.wav"))
+        await engine.loadTrack(broken)
+        XCTAssertTrue(engine.errorMessage?.contains("NOT FOUND") == true)
+        XCTAssertEqual(engine.currentTrackID, track.id)
+        XCTAssertTrue(engine.hasLoadedTrack)
+        XCTAssertEqual(engine.vocalVolume, 0.5)
+        engine.unloadTrack()
+    }
+
+    func testLoopMarkersUseAbsoluteMinimumAndStartNewRegions() async throws {
+        // Six minutes: a 4 s phrase must keep its end marker (2% would force 7.2 s).
+        XCTAssertEqual(AudioEngineManager.minimumLoopProgress(duration: 360), 0.5 / 360, accuracy: 1e-12)
+        XCTAssertLessThan(AudioEngineManager.minimumLoopProgress(duration: 360), 4.0 / 360)
+        XCTAssertEqual(AudioEngineManager.minimumLoopProgress(duration: 0.4), 0.5)
+        XCTAssertEqual(AudioEngineManager.minimumLoopProgress(duration: nil), 0.02)
+
+        let engine = AudioEngineManager()
+        engine.setLoopEnd(0.3)
+        engine.setLoopStart(0.8)
+        XCTAssertEqual(engine.loopStartProgress, 0.8)
+        XCTAssertEqual(engine.loopEndProgress, 1.0, "A start after the old end begins a new region")
+        engine.resetLoop()
+        XCTAssertFalse(engine.isLooping)
+        engine.setLoopStart(0.6)
+        engine.setLoopEnd(0.2)
+        XCTAssertEqual(engine.loopStartProgress, 0)
+        XCTAssertEqual(engine.loopEndProgress, 0.2, "An end before the old start begins a new region")
+        XCTAssertTrue(engine.isLooping)
+
+        await engine.loadTrack(try cancellingTrack())
+        engine.resetLoop()
+        engine.setLoopStart(0.5)
+        engine.setLoopEnd(0.51)
+        XCTAssertEqual(engine.loopEndProgress, 0.5 + 0.5 / 6, accuracy: 1e-9)
+        engine.setLoopEnd(0.7)
+        XCTAssertEqual(engine.loopEndProgress, 0.7, accuracy: 1e-9)
+        engine.unloadTrack()
+    }
+
     func testSeekingToTheEndWhileLoopingWrapsToTheLoopStart() async throws {
         let engine = AudioEngineManager()
         await engine.loadTrack(try cancellingTrack())
