@@ -1,6 +1,6 @@
 # Verification report — v1.3.0
 
-Verified September 25–26, 2026. Local results are from an Apple silicon MacBook Pro running macOS 27.0 with Xcode 27.0. Hosted results are from GitHub Actions `macos-15` (macOS 15.7, Xcode 26.3) and `macos-26` (macOS 26.6, Xcode 26.6) runners, which fetch the pinned model (`model-htdemucs-v1`, SHA-256 `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`) so that real inference runs. The historical audit notes below are retained from the previous handoff. The September 26 continuation adds the local verification described next; hosted results predate those changes.
+Verified September 25–26, 2026. Local results are from an Apple silicon MacBook Pro running macOS 27.0 with Xcode 27.0. Hosted results are from GitHub Actions `macos-15` (macOS 15.7, Xcode 26.3) and `macos-26` (macOS 26.6, Xcode 26.6) runners, which fetch the pinned model (`model-htdemucs-v1`, SHA-256 `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`). The historical audit notes below are retained from the previous handoff. [Run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518) passed both hosted jobs after the audio fixes; the installer-artwork and instructions were then checked locally.
 
 ## September 26 continuation
 
@@ -8,26 +8,27 @@ The continuation found and fixed three additional production defects: nonfinite 
 
 Testing three additional real songs found a fourth defect: denormalization added the mix's DC offset to each of the four stems. The sum therefore contained four times the original offset. Restoring one quarter to each stem improved the affected MP3's reconstruction from **5.6 dB to 28.5 dB**. The cache key advances to v5; existing library stems remain playable, and reimporting a track regenerates them with the corrected algorithm. Analytical Float16/Float32 overlap tests and a real-inference DC-offset test cover the change. The old overlap fixture was corrected to model a four-way split instead of expecting a full copy of the source in every stem.
 
-The app now uses a native `AppIcon.icon` package with four SVG stem layers. Xcode 27 compiles light, dark and tintable icon stacks into `Assets.car`, plus the compatibility `AppIcon.icns`. The default, dark and tinted previews were inspected, as were 16 px and 32 px renders. The standalone ICNS contains all ten standard 16–1024 px representations. macOS's system icon service successfully rendered the packaged app's icon, and its compiled compatibility ICNS was extracted and inspected. The DMG background was regenerated at the intended 1320 × 800 px / 144 dpi. Design references: [Apple Icon Composer](https://developer.apple.com/icon-composer/) and [app-icon integration](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
+The app now uses a native `AppIcon.icon` package with four SVG stem layers. Xcode 27 compiles light, dark and tintable icon stacks into `Assets.car`, plus the compatibility `AppIcon.icns`. The default, dark and tinted previews were inspected, as were 16 px and 32 px renders. The standalone ICNS contains all ten standard 16–1024 px representations. macOS's system icon service successfully rendered the packaged app's icon, and its compiled compatibility ICNS was extracted and inspected. The DMG background was regenerated at 1320 × 800 px / 144 dpi with a drag arrow and system requirements. A mounted Finder-window inspection caught footer text hidden by Finder's status bar; the final image shows both requirements lines unobstructed. Xcode 26.3's asset agent crashed on the layered icon on the hosted macOS 15 image, so only that CI job builds with the committed compatibility ICNS; macOS 26 and the release package compile the layered icon. Design references: [Apple Icon Composer](https://developer.apple.com/icon-composer/) and [app-icon integration](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
 
 Current release artifacts were built from base commit `13472da629de9edff9f722fe9f3e70496752c9c7` plus the v1.3.0 release-branch changes. They are local candidates, not published releases.
 
 | Current-checkout check | Result |
 | --- | --- |
 | Release build and packaging | Passed; arm64, version 1.3.0, bundled model and licenses |
-| DMG / ZIP contents | Identical app contents; valid `/Applications` symlink; image verified and mounted read-only |
+| DMG / ZIP contents | Identical app contents; valid `/Applications` symlink, visible install artwork, bundled model; image verified and mounted read-only; both app signatures passed |
 | Signature | `codesign --verify --deep --strict` passed; ad hoc with hardened runtime; **not notarized** |
 | Bundled model | Reference hashes and input/output tensor contract passed |
 | Icon resources | Four vectors; Aqua, Dark Aqua and tintable icon stacks; compatibility ICNS present |
 | Shell, Ruby, YAML, plist, version and whitespace checks | Passed |
 | Final model-required unit/audio suite | **200 tests, 0 failures, 0 skips**, including real-music separation; 476.3 seconds |
 | Final desktop UI suite | **6 tests, 0 failures, 0 skips**; 157.2 seconds |
+| Hosted CI at `de11929` | macOS 15 and 26 Release builds and unit/audio jobs both passed; macOS 26 required real model inference |
 
-Artifact sizes: app **312,954,459 bytes**, DMG **160,863,808 bytes**, ZIP **148,388,618 bytes**. SHA-256:
+Final local installer candidate sizes: app **312,954,459 bytes**, DMG **160,881,848 bytes**, ZIP **148,388,620 bytes**. SHA-256:
 
 ```text
-5f1dd68c9dcb96b98a7e53a61d5b0d98609d8e4ee615f5d0468cd78e8792a87d  Isolate.dmg
-9df3799a9db4607264f54f57abff6c89d3197260f443e93e204bc5307592dac0  Isolate-v1.3.0-macOS.zip
+b79fc710bda28c37edd178d3bcfb512ca5dd1d6c1843078f7cafacff1e63cc88  Isolate.dmg
+c8fdcf291b4ee8bbf567f819de728c0b9e5a9594f469e124af14f8a5bf39b638  Isolate-v1.3.0-macOS.zip
 ```
 
 The build emits Xcode's unrelated App Intents metadata notice and an outdated iOS simulator-service diagnostic on this Mac; native macOS builds succeed. Negative tests deliberately emit decoder and library-open errors while checking safe recovery. The unit result records 16 internal thread-priority inversion warnings during audio tests, and the UI result records one. These checks establish passing behavior, not a silent console or a proof that every scheduling path is optimal.
@@ -108,4 +109,4 @@ A polarity null test plays four stems that cancel exactly only while every playe
 2. **Signing.** Builds are ad-hoc signed and not notarized, and the README walks through first-launch approval. Check the downloaded DMG's first launch on macOS 15 or later and on macOS 14.
 3. **Listening.** Reconstruction measures alignment and scale, not how good the stems sound. Listen to representative music before announcing.
 4. **Not automated:** physical output-device switching (Bluetooth, USB), media keys and the menu bar controller, double-click reset on macOS 26 (hosted runners there drop synthetic clicks; verified on 15 and 27), and the in-place upgrade from a real pre-1.3 library.
-5. **Publication and hosted CI.** These v1.3.0 changes had not been tested on the hosted matrix when this report was prepared. The last inspected run, [36220959338](https://github.com/neokumar1/Isolate/actions/runs/36220959338), passed macOS 26 but failed the macOS 15 realtime-alignment check on an output without a render timeline. The handoff's narrowly scoped host skip is included for the next CI run. The public Latest app is v1.2.7, without the model, and the cask is v1.2.5. After review, merge to `main`, publish the verified release as Latest, and set the cask's version and SHA-256 from the published DMG. See [RELEASE.md](RELEASE.md) and [LAUNCH.md](LAUNCH.md).
+5. **Publication.** The hosted macOS 15 and 26 jobs passed on [run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518). The public Latest app is still v1.2.7, without the model, and the cask is v1.2.5. After review, merge to `main`, verify the downloaded package and first launch, publish v1.3.0 as Latest, and set the cask's version and SHA-256 from the published DMG. See [RELEASE.md](RELEASE.md) and [LAUNCH.md](LAUNCH.md).

@@ -87,6 +87,18 @@ SetFile -a C "$MOUNT_DIR" || echo "Could not set the volume icon flag; the DMG w
 retry hdiutil detach "$MOUNT_DIR" -quiet
 retry hdiutil convert "$WORK_DIR/Isolate-rw.dmg" -ov -format UDZO -o "$WORK_DIR/Isolate.dmg" -quiet
 hdiutil verify "$WORK_DIR/Isolate.dmg" -quiet
+# Verify what people will actually open, not only the source staging folder.
+retry hdiutil attach "$WORK_DIR/Isolate.dmg" -nobrowse -noautoopen -readonly -noverify \
+    -mountpoint "$MOUNT_DIR" -quiet
+[[ -d "$MOUNT_DIR/Isolate.app" && -L "$MOUNT_DIR/Applications" &&
+   "$(readlink "$MOUNT_DIR/Applications")" == /Applications &&
+   -f "$MOUNT_DIR/.DS_Store" && -f "$MOUNT_DIR/.background/dmg_background.png" &&
+   -d "$MOUNT_DIR/Isolate.app/Contents/Resources/HTDemucs.mlmodelc" ]] || {
+    echo "The disk image is missing the drag-to-Applications layout or bundled model." >&2
+    exit 1
+}
+codesign --verify --deep --strict "$MOUNT_DIR/Isolate.app"
+retry hdiutil detach "$MOUNT_DIR" -quiet
 ditto -c -k --keepParent "$APP_BUNDLE" "$WORK_DIR/Isolate-${VERSION}-macOS.zip"
 
 # Publish only complete artifacts; existing build directories are never erased.

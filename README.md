@@ -10,20 +10,27 @@ Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the o
   <img alt="The Isolate window: the library sidebar on the left, four channel strips for vocals, drums, bass and other, the studio display with a 32-band spectrum above them, and the playback controls below" src="Assets/screenshot-dark.png">
 </picture>
 
-**[Download Isolate for macOS](https://github.com/neokumar1/Isolate/releases/latest)** · Apple silicon · macOS 14 or later · Free and open source (MIT)
+**[Download Isolate for macOS](https://github.com/neokumar1/Isolate/releases)** · Apple silicon · macOS 14 or later · Free and open source (MIT)
+
+Choose **v1.3.0 or newer** for an app that includes the separation model. Earlier public releases do not include it. If v1.3.0 is not on the releases page yet, the complete installer has not been published.
 
 ## Download
 
-1. Download **[Isolate.dmg](https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg)** from the [latest release](https://github.com/neokumar1/Isolate/releases/latest).
-2. Open it and drag **Isolate** into **Applications**.
-3. Open Isolate from Applications and approve it once, as described in [First launch](#first-launch).
+1. On the [releases page](https://github.com/neokumar1/Isolate/releases), select **v1.3.0 or newer** and download `Isolate.dmg`.
+2. Open the disk image and drag **Isolate.app** onto the **Applications** shortcut in its Finder window. Quit an older copy of Isolate before replacing it.
+3. Eject the disk image, then open Isolate from Applications and follow [First launch](#first-launch) if macOS blocks it.
+4. Drag a supported audio file or folder onto the Isolate window, or press **⌘O**. Separation happens on your Mac.
 
 | | |
 | --- | --- |
-| Requires | A Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later; macOS 26 or later recommended for separation (see below) |
+| Mac | Apple silicon (M1 or later); Intel Macs are not supported |
+| macOS | 14 Sonoma or later; **26 or later recommended for separation** (see below) |
+| Extra software | None for the v1.3.0+ DMG: the model is included. No Xcode, Python, Homebrew, account or model download is needed |
 | Download | About 160 MB |
 | Installed | About 313 MB, including the separation model |
 | Separated songs | About 106 MB of disk per minute of audio, kept until you delete the song |
+
+Check your chip and macOS version in **Apple menu › About This Mac** before downloading. Keep enough free disk space for the app and the songs you plan to separate. DRM-protected downloads, including Apple Music subscription files, cannot be imported.
 
 **Separation on macOS 14 and 15.** Testing on hosted Macs found that Core ML in macOS 14 and 15 computes Isolate's separation model incorrectly on some of its compute paths (the CPU path on both, and every path available on the macOS 15 test machine), while macOS 26 and 27 are correct on every path. Before it separates anything, Isolate checks the model on a built-in test signal and uses a compute path that passes. If none passes on your Mac, it says so and asks you to update to macOS 26 or later; it never writes stems from a model that failed the check. Separation has been verified end to end on macOS 26 and 27.
 

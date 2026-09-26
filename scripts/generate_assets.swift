@@ -1,4 +1,5 @@
 import Cocoa
+import CoreText
 
 // Run from the repository root with Xcode 27 selected: swift scripts/generate_assets.swift
 
@@ -21,10 +22,52 @@ func createDMGBackground() throws {
     let bitmap = try makeBitmap(width: Int(width * scale), height: Int(height * scale))
     let context = bitmap.context.cgContext
     context.scaleBy(x: scale, y: scale)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = bitmap.context
+    defer { NSGraphicsContext.restoreGraphicsState() }
 
-    // Clean Pure White Background matching reference screenshot
-    context.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0))
+    let fontURL = URL(fileURLWithPath: "Sources/Resources/DotGothic16-Regular.ttf")
+    CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+    guard let titleFont = NSFont(name: "DotGothic16-Regular", size: 18),
+          let labelFont = NSFont(name: "DotGothic16-Regular", size: 11) else {
+        throw AssetError.renderFailed
+    }
+
+    let background = CGColor(red: 0.985, green: 0.985, blue: 0.98, alpha: 1)
+    let ink = NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+    let secondary = NSColor(calibratedRed: 0.28, green: 0.28, blue: 0.30, alpha: 1)
+    let accent = CGColor(red: 0.78, green: 0.08, blue: 0.11, alpha: 1)
+    context.setFillColor(background)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+    func label(_ string: String, at point: CGPoint, font: NSFont, color: NSColor, tracking: CGFloat = 0) {
+        NSAttributedString(string: string, attributes: [
+            .font: font, .foregroundColor: color, .kern: tracking
+        ]).draw(at: point)
+    }
+
+    // Finder places the app and Applications icons around x=170 and x=490.
+    // Keep their labels and hit targets unobstructed; the red arrow occupies
+    // only the gap between them.
+    label("DRAG ISOLATE INTO APPLICATIONS", at: CGPoint(x: 35, y: 340),
+          font: titleFont, color: ink, tracking: 0.35)
+    context.setFillColor(CGColor(red: 0.76, green: 0.76, blue: 0.75, alpha: 1))
+    context.fill(CGRect(x: 35, y: 324, width: 590, height: 0.5))
+
+    context.setFillColor(accent)
+    context.fill(CGRect(x: 292, y: 204, width: 72, height: 4))
+    context.move(to: CGPoint(x: 374, y: 206))
+    context.addLine(to: CGPoint(x: 357, y: 218))
+    context.addLine(to: CGPoint(x: 357, y: 194))
+    context.closePath()
+    context.fillPath()
+
+    context.setFillColor(CGColor(red: 0.76, green: 0.76, blue: 0.75, alpha: 1))
+    context.fill(CGRect(x: 35, y: 133, width: 590, height: 0.5))
+    label("APPLE SILICON (M1+)  /  macOS 14 OR LATER", at: CGPoint(x: 35, y: 108),
+          font: labelFont, color: ink, tracking: 0.1)
+    label("macOS 26+ RECOMMENDED FOR SEPARATION  /  MODEL INCLUDED", at: CGPoint(x: 35, y: 87),
+          font: labelFont, color: secondary, tracking: 0.1)
     bitmap.context.flushGraphics()
 
     // 144 dpi, so Finder draws these pixels into the 660 x 400 pt window.
@@ -103,4 +146,4 @@ func run(_ executable: String, _ arguments: [String]) throws -> String {
 
 enum AssetError: Error { case renderFailed, iconConversionFailed }
 try createDMGBackground()
-try createAppIcon()
+if !CommandLine.arguments.contains("--dmg-only") { try createAppIcon() }

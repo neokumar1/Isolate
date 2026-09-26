@@ -63,6 +63,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 ### Interface & accessibility
 
 - A layered Nothing-inspired app icon uses macOS 27's system lighting and appearance treatments, with an automatically generated icon for older macOS versions.
+- The disk image now labels the drag-to-Applications action and shows the Mac, macOS and bundled-model requirements beside the app.
 - Red is reserved for active and interrupting states such as solo, mute, loop, play, clipping, export progress and errors. Resting controls are neutral, and Compare Original is amber.
 - Text colors meet at least 4.5:1 contrast in both themes, and Increase Contrast is supported.
 - The header, studio display and transport no longer truncate in smaller windows, and the seek bar stays usable down to the minimum window size. ⌘1 to ⌘5 hide the library when the display would not fit beside it.

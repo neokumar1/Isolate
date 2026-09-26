@@ -17,13 +17,15 @@ if [[ -z "${CHANGES//[[:space:]]/}" ]]; then
 fi
 
 cat <<EOF
-Isolate splits songs into vocals, drums, bass and other on your Mac, then lets you mix, loop and export them. Requires a Mac with Apple silicon and macOS 14 Sonoma or later; macOS 26 or later is recommended, because Core ML in macOS 14 and 15 computes the separation model incorrectly on some compute paths. Isolate checks this before separating and asks you to update if needed. The separation model is included, and nothing is uploaded.
+Isolate splits songs into vocals, drums, bass and other on your Mac, then lets you mix, loop and export them. Requires Apple silicon (M1 or later) and macOS 14 Sonoma or later; macOS 26 or later is recommended, because Core ML in macOS 14 and 15 computes the separation model incorrectly on some compute paths. Isolate checks this before separating and asks you to update if needed. The separation model is included. You do not need Xcode, Python, Homebrew, an account or a separate model download; nothing is uploaded. Check your chip and macOS version in Apple menu › About This Mac.
 
 ## Download
 
-- **Isolate.dmg** (recommended): open it and drag Isolate into Applications.
+- **Isolate.dmg** (recommended): open it and drag Isolate.app onto the Applications shortcut. Quit an older copy first, then eject the disk image and launch from Applications.
 - Isolate-${TAG}-macOS.zip: the same app in a ZIP.
 - SHA256SUMS.txt: checksums for both files.
+
+The download is about 160 MB. The installed app uses about 313 MB; separated songs use about 106 MB of disk per minute of audio. After installation, drag an MP3, WAV, FLAC, M4A, AAC, AIFF or CAF file or folder onto the app window, or press Command-O. DRM-protected downloads are not supported.
 
 ## First launch
 

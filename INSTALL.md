@@ -1,14 +1,15 @@
 # Install and build Isolate
 
-Isolate needs a Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later. macOS 26 or later is recommended: on macOS 14 and 15, Core ML computes the separation model incorrectly on some compute paths, so Isolate checks the model first and may ask you to update (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
+Isolate needs a Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later. Check both in **Apple menu › About This Mac**. macOS 26 or later is recommended: on macOS 14 and 15, Core ML computes the separation model incorrectly on some compute paths, so Isolate checks the model first and may ask you to update (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)). The v1.3.0+ disk image includes the model; you do not need Xcode, Python, Homebrew, an account or a separate model download.
 
 ## Disk image (recommended)
 
-1. Download `Isolate.dmg` from the [latest release](https://github.com/neokumar1/Isolate/releases/latest). It is about 160 MB.
-2. Open the disk image and drag Isolate into Applications. Quit a running copy before replacing it.
-3. Open Isolate from Applications and approve the first launch as described in the README's [First launch](README.md#first-launch) section.
+1. On the [releases page](https://github.com/neokumar1/Isolate/releases), choose **v1.3.0 or newer** and download `Isolate.dmg` (about 160 MB). Earlier public releases do not bundle the separation model; if v1.3.0 is not listed yet, the complete installer has not been published.
+2. Open the disk image and drag **Isolate.app** onto its **Applications** shortcut. Quit a running copy before replacing it.
+3. Eject the disk image, open Isolate from Applications and follow the README's [First launch](README.md#first-launch) steps if macOS blocks it.
+4. Drag an MP3, WAV, FLAC, M4A, AAC, AIFF or CAF file or a folder onto the app window, or press **⌘O** to browse. Files with DRM, including Apple Music subscription downloads, are not supported.
 
-The app takes about 313 MB once installed, because the separation model is inside it (`Isolate.app/Contents/Resources/HTDemucs.mlmodelc`). Releases are ad-hoc signed and are not notarized by Apple. Approve Isolate in **System Settings › Privacy & Security** rather than disabling Gatekeeper or clearing quarantine attributes.
+The app takes about 313 MB once installed, because the separation model is inside it (`Isolate.app/Contents/Resources/HTDemucs.mlmodelc`). Allow about 106 MB more per minute of audio you separate. Releases are ad-hoc signed and are not notarized by Apple. Approve Isolate in **System Settings › Privacy & Security** rather than disabling Gatekeeper or clearing quarantine attributes.
 
 To check a download, compare `shasum -a 256 Isolate.dmg` with the value in the release's `SHA256SUMS.txt`. A checksum published in the same release confirms the file arrived intact; it does not prove who published it.
 
@@ -16,7 +17,7 @@ If you open Isolate straight from the disk image, it offers to move itself to Ap
 
 ## Homebrew
 
-The cask lives in this repository rather than in Homebrew's main tap, so tap it by URL:
+The cask is still pinned to an older public release. **Wait until its version is v1.3.0 or newer** before using it for separation. The cask lives in this repository rather than in Homebrew's main tap, so tap it by URL:
 
 ```sh
 brew tap neokumar1/isolate https://github.com/neokumar1/Isolate
@@ -27,7 +28,7 @@ Homebrew quarantines the app like a browser download, so the first launch needs 
 
 ## Terminal installer
 
-`install.sh` installs the latest release into `/Applications`. Download and read it before running it:
+`install.sh` installs the public Latest release into `/Applications`. **Use it only after Latest is v1.3.0 or newer**; the currently published v1.2.7 app does not bundle the model. Download and read the installer before running it:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/neokumar1/Isolate/main/install.sh
