@@ -435,19 +435,19 @@ struct ContentView: View {
                 }
             } else if appMoveHelper.shouldShowMoveModal && !engineManager.isSplitting {
                 // MARK: - Window-Centered Move to Applications Prompt
+                // Dismissing only lasts for this launch; the prompt appears only
+                // while running from a disk image, where asking again is correct.
                 ZStack {
                     theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
-                            AppPreferences.defaults.set(true, forKey: "hasDeclinedMoveToApplications")
-                            appMoveHelper.shouldShowMoveModal = false
+                            appMoveHelper.dismissMoveModal()
                         }
                     
                     MoveToApplicationsModalCard(
                         appMoveHelper: appMoveHelper,
                         onDismiss: {
-                            AppPreferences.defaults.set(true, forKey: "hasDeclinedMoveToApplications")
-                            appMoveHelper.shouldShowMoveModal = false
+                            appMoveHelper.dismissMoveModal()
                         }
                     )
                 }
@@ -697,12 +697,20 @@ struct MoveToApplicationsModalCard: View {
                     .foregroundColor(theme.textPrimary)
             }
             
-            Text("Isolate works best when installed in your Applications folder.\nWould you like to move it now and eject the installer?")
+            Text("Isolate works best when installed in your Applications folder.\nWould you like to move it there and relaunch?")
                 .font(.custom("DotGothic16-Regular", size: 13))
                 .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
+            
+            if let prompt = appMoveHelper.replacementPrompt {
+                Text(prompt)
+                    .font(.custom("DotGothic16-Regular", size: 12))
+                    .foregroundColor(theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             
             if let error = appMoveHelper.moveErrorMessage {
                 Text(error)
@@ -739,7 +747,8 @@ struct MoveToApplicationsModalCard: View {
                 // Move Button
                 Button(action: {
                     Haptics.playClick()
-                    appMoveHelper.moveToApplications()
+                    // A second click after the prompt confirms replacing the installed copy.
+                    appMoveHelper.moveToApplications(replacingExisting: appMoveHelper.replacementPrompt != nil)
                 }) {
                     HStack(spacing: 6) {
                         if appMoveHelper.isMoving {
@@ -748,12 +757,12 @@ struct MoveToApplicationsModalCard: View {
                         } else {
                             Image(systemName: "arrow.right.circle.fill")
                         }
-                        Text(appMoveHelper.isMoving ? "INSTALLING..." : "MOVE & RELAUNCH")
+                        Text(appMoveHelper.isMoving ? "INSTALLING..." : (appMoveHelper.replacementPrompt == nil ? "MOVE & RELAUNCH" : "REPLACE & RELAUNCH"))
                             .font(.custom("DotGothic16-Regular", size: 13))
                             .fontWeight(.bold)
                     }
                     .foregroundColor(isInstallHovered ? .black : .white)
-                    .frame(width: 180, height: 36)
+                    .frame(width: 200, height: 36)
                     .background(isInstallHovered ? Color.white : Color.red)
                     .overlay(
                         RoundedRectangle(cornerRadius: 3)
