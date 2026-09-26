@@ -140,8 +140,15 @@ final class IsolateAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct SplittingProgressModal: View {
+    /// True while About or Settings is drawn on top. Escape then closes that
+    /// card and must never reach CANCEL IMPORT underneath.
+    var isCovered = false
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
+
+    static func cancelShortcut(isCovered: Bool) -> KeyboardShortcut? {
+        isCovered ? nil : .cancelAction
+    }
 
     var body: some View {
         ZStack {
@@ -172,8 +179,8 @@ struct SplittingProgressModal: View {
                 Button(engineManager.lastImportCancelled ? "CANCELLING…" : "CANCEL IMPORT") {
                     engineManager.cancelSplitAudio()
                 }
-                .keyboardShortcut(.cancelAction)
-                .disabled(engineManager.lastImportCancelled)
+                .keyboardShortcut(Self.cancelShortcut(isCovered: isCovered))
+                .disabled(engineManager.lastImportCancelled || isCovered)
                 .tint(.red)
             }
             .padding(36)
@@ -263,7 +270,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay {
                     // Tap anywhere in PlayerView to dismiss active 3-dots library menu
-                    if activeMenuTrackID != nil {
+                    if isSidebarVisible && activeMenuTrackID != nil {
                         Color.black.opacity(0.001)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -292,9 +299,21 @@ struct ContentView: View {
                 }
             }
         }
+        .onChange(of: engineManager.isSplitting) { _, splitting in
+            // Media keys can start a recovery separation while a delete card is
+            // open; deleting that track mid-separation would orphan its stems.
+            if splitting {
+                isShowingDeleteModal = false
+                trackToDelete = nil
+                activeMenuTrackID = nil
+            }
+        }
+        .onChange(of: isSidebarVisible) { _, visible in
+            if !visible { activeMenuTrackID = nil }
+        }
         .overlay {
             if engineManager.isSplitting {
-                SplittingProgressModal()
+                SplittingProgressModal(isCovered: isShowingAboutModal || isShowingSettingsModal || isShowingDeleteModal)
             } else if isTargeted {
                 Text("DROP AUDIO TO IMPORT")
                     .font(.custom("DotGothic16-Regular", size: 24))
@@ -359,6 +378,10 @@ struct ContentView: View {
                         onDelete: {
                             guard !engineManager.isExporting else {
                                 engineManager.showError("Wait for the export to finish before deleting this track.")
+                                return
+                            }
+                            guard !engineManager.isSplitting else {
+                                engineManager.showError("Wait for separation to finish before deleting this track.")
                                 return
                             }
                             let wasActive = engineManager.currentTrackID == track.id
@@ -636,6 +659,7 @@ struct AboutModalCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .onHover { hovering in
                     if hovering && !isCloseHovered { Haptics.playClick() }
                     isCloseHovered = hovering
@@ -765,6 +789,16 @@ struct RenameModalCard: View {
     @State private var isSaveHovered = false
     @FocusState private var isTitleFocused: Bool
     
+    /// Long enough for any real title; a pasted paragraph would otherwise push
+    /// the delete confirmation's buttons off screen.
+    static let maxTitleLength = 200
+
+    static func sanitizedTitle(_ text: String) -> String? {
+        let title = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxTitleLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : title
+    }
+    
     var body: some View {
         VStack(spacing: 22) {
             Text("RENAME TRACK")
@@ -780,6 +814,9 @@ struct RenameModalCard: View {
                 .background(theme.surface)
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red, lineWidth: 1).allowsHitTesting(false))
                 .foregroundColor(theme.textPrimary)
+                .onChange(of: renameText) { _, text in
+                    if text.count > Self.maxTitleLength { renameText = String(text.prefix(Self.maxTitleLength)) }
+                }
             
             HStack(spacing: 16) {
                 // Cancel Button
@@ -806,9 +843,8 @@ struct RenameModalCard: View {
                 // Save Button
                 Button(action: {
                     Haptics.playClick()
-                    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        onSave(trimmed)
+                    if let title = Self.sanitizedTitle(renameText) {
+                        onSave(title)
                     } else {
                         onCancel()
                     }
@@ -856,13 +892,20 @@ struct DeleteModalCard: View {
                 .font(.custom("DotGothic16-Regular", size: 22))
                 .foregroundColor(.red)
             
-            Text("Are you sure you want to delete '\(trackTitle)' and its isolated stems?")
-                .font(.custom("DotGothic16-Regular", size: 14))
-                .foregroundColor(theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 8)
+            VStack(spacing: 4) {
+                Text("Are you sure you want to delete")
+                Text("'\(trackTitle)'")
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text("and its isolated stems?")
+            }
+            .font(.custom("DotGothic16-Regular", size: 14))
+            .foregroundColor(theme.textSecondary)
+            .multilineTextAlignment(.center)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
+            .accessibilityElement(children: .combine)
             
             HStack(spacing: 16) {
                 // Cancel Button
