@@ -216,4 +216,43 @@ final class FinalEngineTests: XCTestCase {
         XCTAssertLessThan(gaps.max() ?? 0, 0.2, "A wrap after the pause went silent too long: \(milliseconds(gaps))")
         engine.unloadTrack()
     }
+
+    // MARK: - Reselecting the loaded track
+
+    func testReselectingAFinishedTrackPlaysItAgain() async throws {
+        let short = try noiseTrack(seconds: 0.4, scales: [1, 1, 1, 1], folder: "short")
+        let engine = AudioEngineManager()
+        await engine.loadTrack(short)
+        try Hardening.requirePlayback(engine)
+        engine.vocalVolume = 0.5
+        let ended = await Hardening.wait(timeout: .seconds(8)) { !engine.isPlaying && engine.playbackProgress == 1 }
+        XCTAssertTrue(ended, "A 0.4 s track must play to its end")
+
+        await engine.loadTrack(short)
+        XCTAssertTrue(engine.isPlaying, "Selecting the finished track must play it again")
+        XCTAssertLessThan(engine.playbackProgress, 1)
+        XCTAssertEqual(engine.vocalVolume, 0.5, "Replaying keeps the mix")
+
+        // Without autoplay, selecting only loads; a finished track stays where it ended.
+        let endedAgain = await Hardening.wait(timeout: .seconds(8)) { !engine.isPlaying && engine.playbackProgress == 1 }
+        XCTAssertTrue(endedAgain)
+        AppPreferences.defaults.set(true, forKey: "isAutoPlayDisabled")
+        await engine.loadTrack(short)
+        XCTAssertFalse(engine.isPlaying)
+        XCTAssertEqual(engine.playbackProgress, 1)
+        AppPreferences.defaults.set(false, forKey: "isAutoPlayDisabled")
+
+        // Mid-track, reselecting neither restarts nor resumes.
+        let long = try noiseTrack(seconds: 6, scales: [1, 1, 1, 1], folder: "long")
+        await engine.loadTrack(long)
+        try Hardening.requirePlayback(engine)
+        try await Task.sleep(for: .milliseconds(300))
+        engine.togglePlayback()
+        let position = engine.playbackProgress
+        XCTAssertGreaterThan(position, 0)
+        await engine.loadTrack(long)
+        XCTAssertFalse(engine.isPlaying)
+        XCTAssertEqual(engine.playbackProgress, position)
+        engine.unloadTrack()
+    }
 }

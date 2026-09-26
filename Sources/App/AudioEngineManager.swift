@@ -962,9 +962,14 @@ public final class AudioEngineManager {
     
     public func loadTrack(_ track: TrackModel) async {
         guard !isSplitting else { return }
-        // Reselecting the loaded track keeps its mix, loop, speed and position.
+        // Reselecting the loaded track keeps its mix, loop, speed and position; once it has
+        // played to the end, reselecting it plays it again like selecting any other track.
         if track.id == currentTrackID, let loaded = fileVocals?.url,
-           loaded.standardizedFileURL == track.vocalStemURL.standardizedFileURL { return }
+           loaded.standardizedFileURL == track.vocalStemURL.standardizedFileURL {
+            if !isPlaying, playbackProgress >= 1,
+               !AppPreferences.defaults.bool(forKey: "isAutoPlayDisabled") { togglePlayback() }
+            return
+        }
         lastImportCancelled = false
         let urls = [track.vocalStemURL, track.drumStemURL, track.bassStemURL, track.otherStemURL]
         do {
