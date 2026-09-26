@@ -58,7 +58,9 @@ jobs:
       - name: Build Apple Silicon release
         run: xcodebuild build -project Isolate.xcodeproj -scheme Isolate -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO
       - name: Run unit and audio regression tests
-        run: xcodebuild test -project Isolate.xcodeproj -scheme Isolate -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO
+        # Exercise the same release configuration already built above. A second
+        # Debug icon compile can crash Xcode 26.3's AssetCatalogAgent on macOS 15.
+        run: xcodebuild test -project Isolate.xcodeproj -scheme Isolate -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES
       - name: Preserve test results
         if: always()
         uses: actions/upload-artifact@v7.0.1
