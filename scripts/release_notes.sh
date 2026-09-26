@@ -17,7 +17,7 @@ if [[ -z "${CHANGES//[[:space:]]/}" ]]; then
 fi
 
 cat <<EOF
-Isolate splits songs into vocals, drums, bass and other on your Mac, then lets you mix, loop and export them. Requires a Mac with Apple silicon and macOS 14 Sonoma or later. The separation model is included, and nothing is uploaded.
+Isolate splits songs into vocals, drums, bass and other on your Mac, then lets you mix, loop and export them. Requires a Mac with Apple silicon and macOS 14 Sonoma or later; macOS 26 or later is recommended, because Core ML in macOS 14 and 15 computes the separation model incorrectly on some compute paths. Isolate checks this before separating and asks you to update if needed. The separation model is included, and nothing is uploaded.
 
 ## Download
 
