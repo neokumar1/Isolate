@@ -85,9 +85,13 @@ final class EngineFixTests: XCTestCase {
         try requirePlayback(engine)
         try await assertStemsAligned(engine, "autoplay")
 
-        engine.seek(toPercentage: 0.4)
-        XCTAssertTrue(engine.isPlaying)
-        try await assertStemsAligned(engine, "seek while playing")
+        // A host-time start misaligned about one seek in five on a real Mac, so one seek
+        // proves little: every one of these must land all players on the same frame.
+        for (index, position) in [0.4, 0.1, 0.6, 0.25, 0.75, 0.5].enumerated() {
+            engine.seek(toPercentage: position)
+            XCTAssertTrue(engine.isPlaying)
+            try await assertStemsAligned(engine, "seek \(index + 1) while playing")
+        }
 
         for cycle in 0..<4 {
             engine.togglePlayback()

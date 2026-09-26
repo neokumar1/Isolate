@@ -1555,11 +1555,12 @@ public final class AudioEngineManager {
     }
     private(set) var lastStartReport: StartReport?
 
-    /// play(at:) waits for about one output IO cycle per player, and a player whose start
-    /// time has already passed begins on a later cycle than the others. Lead by the whole
-    /// call sequence plus the render-ahead margin; if the calls still overran it, reschedule
-    /// from the same frame and retry with a lead sized from the measured calls. Some devices
-    /// report a smaller IO buffer than they render with, so the measurement wins.
+    /// Starts all players on one frame of the engine's render timeline. A host-time start
+    /// makes each play(at:) wait about one IO cycle and, measured on a real Mac, still
+    /// misaligned about one seek in five; a sample-time start returns immediately and lands
+    /// every player on the same render frame. Before the engine has rendered once there is
+    /// no timeline yet, so the first start falls back to a host time with a lead that covers
+    /// the blocking calls, rescheduling and retrying with a measured lead if they overran it.
     private func startPlayersTogether() {
         var players = [vocalPlayer, drumPlayer, bassPlayer, otherPlayer]
         if audioFile != nil { players.append(originalPlayer) }
@@ -1570,7 +1571,7 @@ public final class AudioEngineManager {
         for attempt in 1...attempts {
             let issued = mach_absolute_time()
             let startHostTime = issued + AVAudioTime.hostTime(forSeconds: lead)
-            let startTime = AVAudioTime(hostTime: startHostTime)
+            let startTime = renderTimelineStart(after: lead) ?? AVAudioTime(hostTime: startHostTime)
             for player in players { player.play(at: startTime) }
             let finished = mach_absolute_time()
             let took = AVAudioTime.seconds(forHostTime: finished - issued)
@@ -1584,6 +1585,21 @@ public final class AudioEngineManager {
             schedulePlayers(from: seekFrameOffset)
             lead = min(2, max(lead * 2, took * 1.5 + margin))
         }
+    }
+
+    /// A start `lead` seconds ahead in the players' own render timeline (44.1 kHz), waiting
+    /// briefly for the first render after the engine starts. The output node runs at the
+    /// device rate, so its timeline must never be used for the players.
+    private func renderTimelineStart(after lead: TimeInterval) -> AVAudioTime? {
+        var now = vocalPlayer.lastRenderTime
+        let deadline = Date().addingTimeInterval(0.1)
+        while !(now?.isSampleTimeValid ?? false), engine.isRunning, Date() < deadline {
+            usleep(2_000)
+            now = vocalPlayer.lastRenderTime
+        }
+        guard let now, now.isSampleTimeValid, now.sampleRate > 0 else { return nil }
+        return AVAudioTime(sampleTime: now.sampleTime + AVAudioFramePosition((lead * now.sampleRate).rounded()),
+                           atRate: now.sampleRate)
     }
 
     /// One output IO cycle, never taken as shorter than 512 frames.
