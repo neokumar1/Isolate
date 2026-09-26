@@ -336,9 +336,11 @@ final class IsolateUITests: XCTestCase {
         app.typeText(directory.path)
         app.typeKey(.return, modifierFlags: [])
         saveButton.click()
-        // From the start of the render until COMPLETED clears (about 2 s), EXPORT cancels instead.
-        XCTAssertTrue(app.buttons["Cancel export"].waitForExistence(timeout: 3),
-                      "VoiceOver must announce the EXPORT control as Cancel export while exporting")
+        // During the render EXPORT cancels instead; a short render may already show
+        // COMPLETED (about 2 s) by the first check.
+        let busyExport = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel export", "Export complete"])).firstMatch
+        XCTAssertTrue(busyExport.waitForExistence(timeout: 3),
+                      "VoiceOver must announce the EXPORT control as Cancel export while exporting, then Export complete")
         let exported = directory.appending(path: "Renamed UI Track_Mix.wav")
         let written = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             FileManager.default.fileExists(atPath: exported.path)
