@@ -53,16 +53,18 @@ enum AudioExporter {
     static let stemPeakCeiling = Float(pow(10, -0.1 / 20))
 
     /// Render on a worker task using a separate graph; live playback is untouched.
+    /// `progress` receives the rendered fraction on the rendering thread, at most once per whole percent.
     static func render(sources: [Source], to destination: URL, format: Format = .wav,
                        masterEQ: EQ = EQ(), rate: Float = 1, pitch: Float = 0,
-                       limitPeak: Bool = false) throws {
-        _ = try renderMeasured(sources: sources, to: destination, settings: format.settings,
-                               masterEQ: masterEQ, rate: rate, pitch: pitch, limitPeak: limitPeak)
+                       limitPeak: Bool = false, progress: (@Sendable (Double) -> Void)? = nil) throws {
+        _ = try renderMeasured(sources: sources, to: destination, settings: format.settings, masterEQ: masterEQ,
+                               rate: rate, pitch: pitch, limitPeak: limitPeak) { progress?($0) }
     }
 
     /// Returns the largest sample magnitude written, measured before any fixed-point conversion.
     private static func renderMeasured(sources: [Source], to destination: URL, settings: [String: Any],
-                                       masterEQ: EQ, rate: Float, pitch: Float, limitPeak: Bool) throws -> Float {
+                                       masterEQ: EQ, rate: Float, pitch: Float, limitPeak: Bool,
+                                       progress: (Double) -> Void) throws -> Float {
         guard !sources.isEmpty, rate.isFinite, rate > 0 else { throw DemucsError.invalidAudioFormat }
         let engine = AVAudioEngine()
         let audioFormat = StreamingAudio.format
@@ -132,6 +134,7 @@ enum AudioExporter {
         let frameCount = AVAudioFramePosition(ceil(Double(files[0].length) / Double(rate))) + tail + latency
         var stalled = 0
         var peak: Float = 0
+        var reported: AVAudioFramePosition = 0
         while engine.manualRenderingSampleTime < frameCount {
             try Task.checkCancellation()
             let before = engine.manualRenderingSampleTime
@@ -152,6 +155,11 @@ enum AudioExporter {
             }
             stalled = before == engine.manualRenderingSampleTime ? stalled + 1 : 0
             guard stalled < 100 else { throw DemucsError.conversionFailed("Offline rendering stopped making progress.") }
+            let percent = engine.manualRenderingSampleTime * 100 / frameCount
+            if percent > reported {
+                reported = percent
+                progress(Double(engine.manualRenderingSampleTime) / Double(frameCount))
+            }
         }
         return peak
     }
@@ -169,27 +177,31 @@ enum AudioExporter {
         // Render in Float32 first, then lower all four by one gain so their balance and sum are kept.
         var rendered: [URL] = []
         var peak: Float = 0
+        // Rendering fills 0-40% and encoding 40-80%; the archive step reports 80%.
         for (index, source) in sources.enumerated() {
             let url = directory.appending(path: "render-\(index).wav")
             peak = max(peak, try renderMeasured(sources: [source], to: url, settings: StreamingAudio.settings,
-                                                masterEQ: EQ(), rate: 1, pitch: 0, limitPeak: false))
+                                                masterEQ: EQ(), rate: 1, pitch: 0, limitPeak: false) {
+                progress((Double(index) + $0) / 10)
+            })
             rendered.append(url)
-            progress(Double(index + 1) / 10)
         }
         let gain = peak > stemPeakCeiling ? stemPeakCeiling / peak : 1
         var names: [String] = []
         for (index, url) in rendered.enumerated() {
             let name = "\(safeFilename(title))_\(DemucsEngine.stemNames[index]).\(format.fileExtension)"
             names.append(name)
-            try encode(url, to: directory.appending(path: name), format: format, gain: gain)
+            try encode(url, to: directory.appending(path: name), format: format, gain: gain) {
+                progress(0.4 + (Double(index) + $0) / 10)
+            }
             try? fm.removeItem(at: url)
-            progress(0.4 + Double(index + 1) / 10)
         }
         let archive = directory.appending(path: "stems.zip")
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/zip")
         process.currentDirectoryURL = directory
-        process.arguments = ["-q", archive.path, "--"] + names
+        // Store entries: PCM and FLAC barely deflate, and compressing them was the slowest export step.
+        process.arguments = ["-q", "-0", archive.path, "--"] + names
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw DemucsError.conversionFailed("Could not create the stem archive.") }
@@ -200,13 +212,15 @@ enum AudioExporter {
     }
 
     /// Converts rendered Float32 audio to the export format, scaling every sample by `gain`.
-    private static func encode(_ source: URL, to destination: URL, format: Format, gain: Float) throws {
+    private static func encode(_ source: URL, to destination: URL, format: Format, gain: Float,
+                               progress: (Double) -> Void) throws {
         let input = try AVAudioFile(forReading: source)
         let output = try AVAudioFile(forWriting: destination, settings: format.settings)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 65_536) else {
             throw DemucsError.invalidAudioFormat
         }
         var scale = gain
+        var reported: AVAudioFramePosition = 0
         while input.framePosition < input.length {
             try Task.checkCancellation()
             try input.read(into: buffer)
@@ -219,6 +233,11 @@ enum AudioExporter {
                 }
             }
             try output.write(from: buffer)
+            let percent = input.framePosition * 100 / input.length
+            if percent > reported {
+                reported = percent
+                progress(Double(input.framePosition) / Double(input.length))
+            }
         }
     }
 

@@ -2,6 +2,24 @@ import XCTest
 import AVFoundation
 @testable import Isolate
 
+/// Collects progress reports made on the rendering thread.
+private final class ProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+
+    var values: [Double] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ value: Double) {
+        lock.lock()
+        storage.append(value)
+        lock.unlock()
+    }
+}
+
 @MainActor
 final class ExporterFixTests: XCTestCase {
     private var directory: URL!
@@ -115,6 +133,32 @@ final class ExporterFixTests: XCTestCase {
         for (exported, original) in zip(output, input) {
             XCTAssertEqual(exported, original, accuracy: 2e-7)
         }
+    }
+
+    func testMixRenderReportsThrottledProgressUpToCompletion() throws {
+        let source = try audio("long.wav", frames: 441_000) { self.tone($0) }
+        let log = ProgressLog()
+        try AudioExporter.render(sources: [.init(url: source)], to: directory.appending(path: "mix.wav"),
+                                 rate: 0.5, limitPeak: true) { log.append($0) }
+        let values = log.values
+        XCTAssertGreaterThan(values.count, 10, "Progress must move during the render, not only at the end")
+        XCTAssertLessThanOrEqual(values.count, 100, "Reports are limited to one per whole percent")
+        XCTAssertEqual(values.last, 1)
+        XCTAssertEqual(values, values.sorted())
+        XCTAssertEqual(Set(values).count, values.count)
+        XCTAssertGreaterThan(values.first ?? 0, 0)
+    }
+
+    func testStemArchiveProgressMovesThroughRenderingAndEncoding() throws {
+        let log = ProgressLog()
+        try AudioExporter.archive(sources: try stems(amplitudes: [0.2, 0.2, 0.2, 0.2]), title: "Progress",
+                                  format: .flac, to: directory.appending(path: "progress.zip")) { log.append($0) }
+        let values = log.values
+        XCTAssertEqual(values, values.sorted())
+        XCTAssertTrue(values.contains { $0 > 0 && $0 < 0.4 }, "Stem rendering reports progress")
+        XCTAssertTrue(values.contains { $0 > 0.4 && $0 < 0.8 }, "Stem encoding reports progress")
+        XCTAssertTrue(values.contains(0.8), "The archive step starts at 80%")
+        XCTAssertEqual(values.last, 1)
     }
 
     func testLimitedMixIsSampleAlignedAndKeepsItsLastFrames() throws {
