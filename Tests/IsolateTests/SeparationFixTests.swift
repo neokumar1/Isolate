@@ -205,4 +205,101 @@ final class SeparationFixTests: XCTestCase {
             XCTAssertTrue(expectedWeights.map(\.bitPattern) == actualWeights.map(\.bitPattern))
         }
     }
+
+    // MARK: - Multichannel downmix (separation-1)
+
+    func testCentreOnlySurroundDecodesToBothSides() throws {
+        for source in [
+            try surround("centre.wav", tag: kAudioChannelLayoutTag_MPEG_5_1_A, active: 2),
+            try plainWAV("centre-plain.wav", channels: 6, active: 2),
+            try surroundALAC("centre.caf", active: 2),
+            try surround("centre.flac", tag: kAudioChannelLayoutTag_MPEG_5_1_A, active: 2, sampleRate: 48_000,
+                         settings: [AVFormatIDKey: kAudioFormatFLAC, AVEncoderBitDepthHintKey: 16])
+        ] {
+            let decoded = directory.appending(path: "decoded-\(source.lastPathComponent).wav")
+            let stats = try StreamingAudio.decode(source, to: decoded)
+            let level = try rms(decoded)
+            XCTAssertEqual(stats.frames, 44_100, accuracy: 2, source.lastPathComponent)
+            XCTAssertGreaterThan(level.left, 0.05, "Centre content must reach the left channel: \(source.lastPathComponent)")
+            XCTAssertEqual(level.left, level.right, accuracy: level.left * 0.01, source.lastPathComponent)
+        }
+    }
+
+    func testSurroundChannelsKeepTheirSide() throws {
+        let leftSurround = try surround("ls.wav", tag: kAudioChannelLayoutTag_MPEG_5_1_A, active: 4)
+        _ = try StreamingAudio.decode(leftSurround, to: directory.appending(path: "ls-decoded.wav"))
+        var level = try rms(directory.appending(path: "ls-decoded.wav"))
+        XCTAssertGreaterThan(level.left, 0.05)
+        XCTAssertLessThan(level.right, 0.001)
+        let rearRight = try plainWAV("quad.wav", channels: 4, active: 3)
+        _ = try StreamingAudio.decode(rearRight, to: directory.appending(path: "quad-decoded.wav"))
+        level = try rms(directory.appending(path: "quad-decoded.wav"))
+        XCTAssertGreaterThan(level.right, 0.05)
+        XCTAssertLessThan(level.left, 0.001)
+    }
+
+    // MARK: - Truncated sources (separation-5)
+
+    func testTruncatedFLACFailsInsteadOfImportingPartOfTheSong() throws {
+        let frames = 44_100 * 6
+        let flac = directory.appending(path: "song.flac")
+        do {
+            let buffer = AVAudioPCMBuffer(pcmFormat: StreamingAudio.format, frameCapacity: AVAudioFrameCount(frames))!
+            buffer.frameLength = buffer.frameCapacity
+            var generator = SystemRandomNumberGenerator()
+            for frame in 0..<frames {
+                let noise = Float.random(in: -0.1...0.1, using: &generator)
+                buffer.floatChannelData![0][frame] = tone(frame, amplitude: 0.3) + noise
+                buffer.floatChannelData![1][frame] = tone(frame, amplitude: 0.2) - noise
+            }
+            let file = try AVAudioFile(forWriting: flac, settings: [
+                AVFormatIDKey: kAudioFormatFLAC, AVSampleRateKey: 44_100, AVNumberOfChannelsKey: 2,
+                AVEncoderBitDepthHintKey: 16
+            ], commonFormat: .pcmFormatFloat32, interleaved: false)
+            try file.write(from: buffer)
+        }
+        XCTAssertEqual(StreamingAudio.declaredFrames(of: flac), frames)
+        XCTAssertEqual(try StreamingAudio.decode(flac, to: directory.appending(path: "whole.wav")).frames, frames)
+
+        let bytes = try Data(contentsOf: flac)
+        let truncated = directory.appending(path: "truncated.flac")
+        try bytes.prefix(bytes.count / 2).write(to: truncated)
+        XCTAssertThrowsError(try StreamingAudio.decode(truncated, to: directory.appending(path: "part.wav"))) { error in
+            guard case DemucsError.unreadableSource(let message) = error else { return XCTFail("\(error)") }
+            XCTAssertTrue(message.contains("damaged or incomplete"), message)
+            XCTAssertTrue(message.contains("of 0:06"), message)
+        }
+    }
+
+    func testResampledSourcesAreNotMistakenForTruncatedOnes() throws {
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false)!
+        let frames = 48_000 * 3
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames))!
+        buffer.frameLength = buffer.frameCapacity
+        for frame in 0..<frames { buffer.floatChannelData![0][frame] = tone(frame); buffer.floatChannelData![1][frame] = tone(frame) }
+        let url = directory.appending(path: "48k.flac")
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: [
+                AVFormatIDKey: kAudioFormatFLAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVEncoderBitDepthHintKey: 16
+            ], commonFormat: .pcmFormatFloat32, interleaved: false)
+            try file.write(from: buffer)
+        }
+        XCTAssertEqual(StreamingAudio.declaredFrames(of: url), 44_100 * 3)
+        XCTAssertEqual(try StreamingAudio.decode(url, to: directory.appending(path: "out.wav")).frames, 44_100 * 3, accuracy: 2)
+    }
+
+    // MARK: - Readable decode errors (separation-2)
+
+    func testDecodeFailuresUsePlainLanguage() throws {
+        let fake = directory.appending(path: "notes.mp3")
+        try Data(repeating: 0x41, count: 4096).write(to: fake)
+        XCTAssertThrowsError(try StreamingAudio.decode(fake, to: directory.appending(path: "out.wav"))) { error in
+            guard case DemucsError.unreadableSource(let message) = error else { return XCTFail("\(error)") }
+            let longestNumber = message.split(whereSeparator: { !$0.isNumber }).map(\.count).max() ?? 0
+            XCTAssertLessThan(longestNumber, 7, "Raw OSStatus numbers must not be shown: \(message)")
+        }
+        XCTAssertTrue(StreamingAudio.describe(kAudioFileInvalidFileError).contains("'dta?'"))
+        XCTAssertTrue(StreamingAudio.describe(kAudioCodecBadDataError).hasPrefix("The file appears to be damaged"))
+        XCTAssertEqual(StreamingAudio.describe(-50), "The file could not be decoded. It may be damaged or unsupported (Core Audio -50).")
+    }
 }

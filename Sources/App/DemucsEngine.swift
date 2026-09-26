@@ -9,6 +9,8 @@ public enum DemucsError: LocalizedError, Sendable {
     case compilationFailed(String)
     case assetReaderFailed(String)
     case conversionFailed(String)
+    /// A source file that cannot be read; the message is already user-facing.
+    case unreadableSource(String)
     case invalidAudioFormat
     case cancelled
 
@@ -18,6 +20,7 @@ public enum DemucsError: LocalizedError, Sendable {
         case .compilationFailed(let msg): return "Model Compilation Failed: \(msg)"
         case .assetReaderFailed(let msg): return "Audio Reading Failed: \(msg)"
         case .conversionFailed(let msg): return "Audio Conversion Failed: \(msg)"
+        case .unreadableSource(let msg): return msg
         case .invalidAudioFormat: return "Invalid Audio Format"
         case .cancelled: return "Operation Cancelled"
         }

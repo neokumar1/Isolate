@@ -15,7 +15,7 @@ enum StemCache {
         defer { try? handle.close() }
         var hash = SHA256()
         // Increment when the separation algorithm or model contract changes.
-        hash.update(data: Data("Isolate-streaming-v3".utf8))
+        hash.update(data: Data("Isolate-streaming-v4".utf8))
         while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
             try Task.checkCancellation()
             hash.update(data: data)
