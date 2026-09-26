@@ -1444,6 +1444,8 @@ public final class AudioEngineManager {
                     self.exportState = .exporting(stage: "RENDERING", percent: shown)
                 }
             }
+            // A cancel after the last rendered block must still keep the destination.
+            try Task.checkCancellation()
             try AudioExporter.publish(temporary, to: destination)
             return destination
         }
@@ -1467,6 +1469,8 @@ public final class AudioEngineManager {
                 } onCancel: {
                     worker.cancel()
                 }
+                // Exports check for cancellation up to the final swap, so returning means the
+                // destination was replaced, even if Cancel arrived during that swap.
                 exportState = .completed
                 exportProgress = 1
                 NSWorkspace.shared.activateFileViewerSelecting([destination])

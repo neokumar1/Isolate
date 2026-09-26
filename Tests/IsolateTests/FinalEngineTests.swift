@@ -255,4 +255,32 @@ final class FinalEngineTests: XCTestCase {
         XCTAssertEqual(engine.playbackProgress, position)
         engine.unloadTrack()
     }
+
+    // MARK: - Export cancellation
+
+    func testPublishCancelledAfterRenderingKeepsTheDestination() async throws {
+        let fm = FileManager.default
+        let folder = directory.appending(path: "Exports")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let source = directory.appending(path: "rendered.bin")
+        try Data("new render".utf8).write(to: source)
+        let existing = folder.appending(path: "Song_Mix.wav")
+        try Data("previous export".utf8).write(to: existing)
+        let absent = folder.appending(path: "Song_Stems.zip")
+        for destination in [existing, absent] {
+            let publish = Task.detached {
+                // Cancel lands once rendering is done, as when Cancel is clicked at 99%.
+                withUnsafeCurrentTask { $0?.cancel() }
+                try AudioExporter.publish(source, to: destination)
+            }
+            do {
+                try await publish.value
+                XCTFail("A cancelled publish must not complete")
+            } catch {
+                XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: existing), Data("previous export".utf8), "The previous export is kept")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: folder.path), ["Song_Mix.wav"], "Nothing new or staged is left behind")
+    }
 }
