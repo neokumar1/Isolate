@@ -37,7 +37,14 @@ jobs:
         with:
           xcode-version: latest-stable
       - run: brew install xcodegen
-      - run: xcodegen generate
+      - name: Generate Xcode project
+        run: |
+          if [[ "${{ matrix.runner }}" == macos-15 ]]; then
+            ruby scripts/ci_legacy_icon.rb
+            xcodegen generate --spec project.ci-legacy.yml
+          else
+            xcodegen generate
+          fi
       - name: Check scripts, version metadata and whitespace
         run: |
           for script in install.sh scripts/*.sh; do bash -n "$script"; done
@@ -58,8 +65,7 @@ jobs:
       - name: Build Apple Silicon release
         run: xcodebuild build -project Isolate.xcodeproj -scheme Isolate -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO
       - name: Run unit and audio regression tests
-        # Exercise the same release configuration already built above. A second
-        # Debug icon compile can crash Xcode 26.3's AssetCatalogAgent on macOS 15.
+        # Exercise the release configuration already built above.
         run: xcodebuild test -project Isolate.xcodeproj -scheme Isolate -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData -only-testing:IsolateTests CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES
       - name: Preserve test results
         if: always()
