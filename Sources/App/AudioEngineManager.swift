@@ -1138,10 +1138,12 @@ public final class AudioEngineManager {
             splitRequestID = UUID()
         }
         do {
-            let stems = try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
+            let stems = try await whileKeepingAwake("Separating stems") {
+                try await withTaskCancellationHandler {
+                    try await task.value
+                } onCancel: {
+                    task.cancel()
+                }
             }
             try Task.checkCancellation()
             guard !lastImportCancelled else { return nil }
@@ -1458,16 +1460,19 @@ public final class AudioEngineManager {
         exportTask?.cancel()
     }
 
-    private func beginExport(_ operation: @escaping @Sendable () throws -> URL) {
+    /// Runs `operation` off the main actor. Internal for tests.
+    func beginExport(_ operation: @escaping @Sendable () throws -> URL) {
         exportState = .exporting(stage: "RENDERING", percent: 0)
         exportProgress = 0
         exportTask = Task {
             do {
-                let worker = Task.detached(priority: .userInitiated, operation: operation)
-                let destination = try await withTaskCancellationHandler {
-                    try await worker.value
-                } onCancel: {
-                    worker.cancel()
+                let destination = try await whileKeepingAwake("Exporting audio") {
+                    let worker = Task.detached(priority: .userInitiated, operation: operation)
+                    return try await withTaskCancellationHandler {
+                        try await worker.value
+                    } onCancel: {
+                        worker.cancel()
+                    }
                 }
                 // Exports check for cancellation up to the final swap, so returning means the
                 // destination was replaced, even if Cancel arrived during that swap.
@@ -1484,6 +1489,14 @@ public final class AudioEngineManager {
             exportProgress = 0
             exportTask = nil
         }
+    }
+
+    /// Keeps the Mac from idle-sleeping and the app out of App Nap while `work` runs, since
+    /// separations and exports can run unattended for minutes. The display may still sleep.
+    private func whileKeepingAwake<T>(_ reason: String, _ work: () async throws -> T) async rethrows -> T {
+        let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: reason)
+        defer { ProcessInfo.processInfo.endActivity(activity) }
+        return try await work()
     }
 
     // MARK: - Synchronized Playback Graph Scheduling

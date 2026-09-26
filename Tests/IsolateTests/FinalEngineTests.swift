@@ -283,4 +283,51 @@ final class FinalEngineTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: existing), Data("previous export".utf8), "The previous export is kept")
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: folder.path), ["Song_Mix.wav"], "Nothing new or staged is left behind")
     }
+
+    // MARK: - Sleep assertions
+
+    /// Names of this process's assertions that keep the Mac from idle-sleeping.
+    nonisolated private static func idleSleepAssertions() -> [String] {
+        var unmanaged: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&unmanaged) == kIOReturnSuccess,
+              let byProcess = unmanaged?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return [] }
+        return (byProcess[NSNumber(value: getpid())] ?? []).compactMap { assertion in
+            guard assertion[kIOPMAssertionTypeKey] as? String == "PreventUserIdleSystemSleep" else { return nil }
+            return assertion[kIOPMAssertionNameKey] as? String
+        }
+    }
+
+    func testSeparationAndExportKeepTheMacAwakeUntilTheyFinish() async throws {
+        // A cached result, so the separation finishes without running the model.
+        let track = try noiseTrack(seconds: 1, scales: [1, 1, 1, 1])
+        let cache = StemCache.root.appending(path: try StemCache.key(for: track.originalURL))
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let stems = track.originalURL.deletingLastPathComponent()
+        for name in DemucsEngine.stemNames + ["original"] {
+            try FileManager.default.copyItem(at: stems.appending(path: "\(name).wav"), to: cache.appending(path: "\(name).wav"))
+        }
+        AppPreferences.defaults.set(true, forKey: "isAutoPlayDisabled")
+        let engine = AudioEngineManager()
+        let request = Task { await engine.loadAndSplitAudio(url: track.originalURL) }
+        let deadline = Date.now.addingTimeInterval(5)
+        while !engine.isSplitting && Date.now < deadline { await Task.yield() }
+        XCTAssertTrue(engine.isSplitting)
+        // The split cannot finish while this test holds the main actor.
+        XCTAssertTrue(Self.idleSleepAssertions().contains("Separating stems"), "Assertions: \(Self.idleSleepAssertions())")
+        _ = await request.value
+        XCTAssertFalse(Self.idleSleepAssertions().contains("Separating stems"), "The assertion must end with the separation")
+
+        let heldDuringExport = OSAllocatedUnfairLock(initialState: false)
+        engine.beginExport {
+            heldDuringExport.withLock { $0 = Self.idleSleepAssertions().contains("Exporting audio") }
+            // Leave quietly instead of revealing a file in Finder.
+            throw CancellationError()
+        }
+        let finished = await Hardening.wait(timeout: .seconds(5)) { engine.exportState == .idle }
+        XCTAssertTrue(finished)
+        XCTAssertTrue(heldDuringExport.withLock { $0 }, "An export must keep the Mac awake")
+        XCTAssertFalse(Self.idleSleepAssertions().contains("Exporting audio"), "The assertion must end with the export")
+        engine.unloadTrack()
+    }
 }
