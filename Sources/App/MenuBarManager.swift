@@ -6,8 +6,11 @@ import SwiftUI
 public final class MenuBarManager: NSObject, NSMenuDelegate {
     public static let shared = MenuBarManager()
     
-    private var statusItem: NSStatusItem?
+    private(set) var statusItem: NSStatusItem?
     private weak var engineManager: AudioEngineManager?
+    /// Opens or fronts the main window through SwiftUI, which can recreate it
+    /// after it was closed; set by the app scene.
+    var openMainWindow: (() -> Void)?
     private var playlistProvider: (() -> [TrackModel])?
     private var trackSelectHandler: ((TrackModel) -> Void)?
     
@@ -55,6 +58,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             button.image = createMenuBarIcon(frame: 0, isPlaying: engineManager?.isPlaying ?? false)
             button.imagePosition = .imageOnly
             button.toolTip = "Isolate - 4-Stem Neural Audio"
+            // The icon is image-only, so VoiceOver needs an explicit name.
+            button.setAccessibilityLabel("Isolate")
         }
         
         let menu = NSMenu()
@@ -69,6 +74,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         animationTimer = nil
         
         guard statusItem != nil else { return }
+        statusItem?.button?.setAccessibilityValue(isPlaying ? "Playing" : "Paused")
         if isPlaying && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             animationTimer = Timer.scheduledTimer(withTimeInterval: 0.14, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -248,10 +254,19 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     }
     
     @objc private func bringWindowToFront() {
-        NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first {
+        NSApp.activate()
+        if let openMainWindow {
+            openMainWindow()
+        } else if let window = Self.mainWindowCandidate(in: NSApp.windows) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    /// The status item's own borderless window is also in `NSApp.windows` (and
+    /// is first when the main window is closed), so only a titled window counts.
+    static func mainWindowCandidate(in windows: [NSWindow]) -> NSWindow? {
+        windows.first { !($0 is NSPanel) && $0.styleMask.contains(.titled) }
     }
     
     @objc private func quitApp() {
