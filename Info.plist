@@ -19,12 +19,26 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.8</string>
+	<string>1.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.2.8</string>
+	<string>1.3.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.music</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Isolate reads songs you imported from your Desktop folder to show their details and rebuild their stems.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Isolate reads songs you imported from your Documents folder to show their details and rebuild their stems.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Isolate reads songs you imported from your Downloads folder to show their details and rebuild their stems.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Neo Kumar. MIT License.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Isolate reads songs you imported from network drives to show their details and rebuild their stems.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Isolate reads songs you imported from external drives to show their details and rebuild their stems.</string>
 </dict>
 </plist>
