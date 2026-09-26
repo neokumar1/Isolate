@@ -1005,10 +1005,14 @@ struct DeleteModalCard: View {
 struct WindowAccessor: NSViewRepresentable {
     final class Coordinator: NSObject {
         weak var window: NSWindow?
-        
+
+        static let frameAutosaveName = "IsolateMainWindow"
+        static let defaultContentSize = NSSize(width: 1280, height: 800)
+
         func attach(to window: NSWindow) {
             guard self.window !== window else { return }
             self.window = window
+            Self.restoreOrApplyDefaultFrame(to: window)
             
             NotificationCenter.default.removeObserver(self)
             NotificationCenter.default.addObserver(
@@ -1035,6 +1039,27 @@ struct WindowAccessor: NSViewRepresentable {
         
         @objc private func windowDidExitFullScreen() {
             window?.toolbar?.isVisible = true
+        }
+
+        /// SwiftUI's defaultSize is lost once the window is restyled, so new users
+        /// saw the minimum-size layout. Restore the user's last frame, or open at
+        /// the default size on first launch. UI tests always get the default.
+        static func restoreOrApplyDefaultFrame(to window: NSWindow) {
+            guard !window.styleMask.contains(.fullScreen) else { return }
+            if !AppPreferences.isTesting, window.setFrameUsingName(frameAutosaveName) {
+                window.setFrameAutosaveName(frameAutosaveName)
+                return
+            }
+            let visible = (window.screen ?? NSScreen.main)?.visibleFrame.size ?? defaultContentSize
+            window.setContentSize(fittedContentSize(visible: visible, minimum: window.minSize))
+            window.center()
+            if !AppPreferences.isTesting { window.setFrameAutosaveName(frameAutosaveName) }
+        }
+
+        /// The default size, shrunk to fit small displays but never below the minimum.
+        static func fittedContentSize(visible: NSSize, minimum: NSSize) -> NSSize {
+            NSSize(width: max(minimum.width, min(defaultContentSize.width, visible.width - 40)),
+                   height: max(minimum.height, min(defaultContentSize.height, visible.height - 60)))
         }
     }
     
