@@ -16,6 +16,16 @@ xcodebuild test -project Isolate.xcodeproj -scheme Isolate \
 
 Unit tests create synthetic audio rather than relying on personal music files. With the model installed (see [MODEL.md](MODEL.md)), `TEST_RUNNER_ISOLATE_REQUIRE_MODEL=1` makes the inference tests fail instead of skipping when the model cannot run; Xcode strips `TEST_RUNNER_` when forwarding the variable, and setting only `ISOLATE_REQUIRE_MODEL` in the invoking shell does not enforce the gate. A few real-time engine tests skip when no audio output device can start, as on hosted runners.
 
+Before a release, also separate real music. Point `TEST_RUNNER_ISOLATE_REAL_AUDIO_DIR` at a folder of a few songs in different formats (for example an ALAC `.m4a`, a long MP3 and a file with punctuation in its name); the files are only read:
+
+```sh
+TEST_RUNNER_ISOLATE_REAL_AUDIO_DIR="$HOME/Music/Isolate check" TEST_RUNNER_ISOLATE_REQUIRE_MODEL=1 \
+  xcodebuild test -project Isolate.xcodeproj -scheme Isolate -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath build/DerivedData -only-testing:IsolateTests/RealMusicSmokeTests CODE_SIGNING_ALLOWED=NO
+```
+
+It checks that every song separates into four finite stereo stems with the original's length, that each stem carries audio, and that the stems add back up to the decoded original within 10 dB, and it prints the speed and reconstruction per song. Correct separations of full mixes measure about 28–33 dB. Ordinary runs skip it.
+
 UI tests take over the mouse and keyboard, so run them on a logged-in desktop you are not using, with Xcode UI automation permission. They launch an isolated empty library and keep screenshots in the `.xcresult` bundle. The complete import, playback, export and delete workflow needs the local model.
 
 ## Version

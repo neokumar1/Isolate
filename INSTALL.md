@@ -1,6 +1,6 @@
 # Install and build Isolate
 
-Isolate needs a Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later.
+Isolate needs a Mac with Apple silicon (M1 or later) and macOS 14 Sonoma or later. macOS 26 or later is recommended: on macOS 14 and 15, Core ML computes the separation model incorrectly on some compute paths, so Isolate checks the model first and may ask you to update (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
 
 ## Disk image (recommended)
 

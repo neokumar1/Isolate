@@ -10,7 +10,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 
 ### Playback
 
-- All four stems now start on the same audio cycle. Starting from a stop (play, seek, loop wrap, changing songs or output devices) waits for a lead sized to the output device instead of a fixed 30 ms, and reschedules if the start would be missed.
+- All five players (four stems and the original) now start on the same audio frame after play, seek, loop wrap, song changes and output-device changes. Previously stems could start 9–42 ms apart, and about one seek in five came out of sync. Starting also no longer stalls the window for about 50 ms.
 - Pause and resume keep the stems aligned and resume instantly. Pausing, unloading a song and the end of a song (after 0.5 s) release the audio device.
 - Seeking no longer plays a moment of audio from the old position through the speed and pitch processor.
 - The shortest A–B loop is now 0.5 seconds rather than 2% of the song, so short phrases in long songs can be looped. Setting A after B, or B before A, starts a new loop instead of snapping back into the old one.
@@ -21,6 +21,8 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 - Importing a song now pauses the one that is playing.
 
 ### Separation & import
+
+- Isolate now checks the separation model on a built-in test signal before using it. Core ML in macOS 14 and 15 computes the model incorrectly on some compute paths; Isolate picks one that passes, or asks you to update to macOS 26 instead of producing broken stems.
 
 - Import whole folders by dragging them onto the window or choosing them with ⌘O. Files are added in Finder order, a file is never imported twice in one batch, and AIFC files are accepted.
 - Batch imports show "N OF M" with the file name, can be cancelled as a whole, and end with one summary naming each file that failed and why.
@@ -79,6 +81,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 ### Performance
 
 - Separation reads each chunk of model output in one pass. The stems are bit-for-bit the same.
+- Mix exports use the peak limiter's measured delay, so they stay sample-aligned with the source on every macOS version.
 - Isolate releases the separation model after 60 seconds without a separation, and reloads it when needed.
 - The meters and the player do less drawing work for each audio update, and Now Playing is no longer republished every second.
 

@@ -84,3 +84,7 @@ Isolate can keep playing with its window closed. Choose **Window › Show Isolat
 ## Reporting a problem
 
 Open an issue at <https://github.com/neokumar1/Isolate/issues> with the Isolate version (shown in About), the macOS version, your Mac model, the audio format, sample rate and length, the steps you took, and the exact message. Please don't attach copyrighted or private audio; a short clip you're free to share, or a description of the file, is enough.
+
+## "This version of macOS computes the separation model incorrectly"
+
+Core ML in macOS 14 and 15 produces wrong output from Isolate's separation model on some compute paths. Isolate tests the model before every separation session and uses a path that passes; this message means none did on your Mac, so Isolate refused rather than create broken stems. Update to macOS 26 or later (every Apple silicon Mac can run it) and import the song again. Songs you already separated keep playing and exporting normally.
