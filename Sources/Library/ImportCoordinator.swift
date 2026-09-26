@@ -42,17 +42,15 @@ final class ImportCoordinator {
                 batchCount = 0
             }
             // Listing a large dropped folder must not block the main actor.
-            let audio = await Task.detached {
-                let files = Self.audioFiles(in: urls)
-                // Let iCloud Drive fetch queued files while earlier ones separate.
-                for url in files where StreamingAudio.isCloudPlaceholder(url) {
-                    try? FileManager.default.startDownloadingUbiquitousItem(at: url)
-                }
-                return files
-            }.value
+            let audio = await Task.detached { Self.audioFiles(in: urls) }.value
             guard !audio.isEmpty else {
                 engine.showError("Choose MP3, WAV, FLAC, M4A, AAC, AIFF or CAF audio files, or a folder that contains them.")
                 return
+            }
+            // A library track re-separated while the folder was listed holds the engine.
+            // Wait for it; otherwise every file in the batch fails at once.
+            while engine.isSplitting, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(200))
             }
             batchCount = audio.count
             var count = 0
@@ -64,6 +62,8 @@ final class ImportCoordinator {
                 guard !Task.isCancelled else { break }
                 batchIndex = index + 1
                 currentFileName = Self.title(for: url)
+                // Requested here, one file ahead, so a cancelled batch stops asking.
+                Self.prefetch(Self.upcoming(after: index, in: audio))
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 let path = url.path
@@ -171,6 +171,27 @@ final class ImportCoordinator {
             found.forEach(add)
         }
         return files
+    }
+
+    /// How many queued files iCloud Drive fetches ahead of the one separating. The next
+    /// download overlaps this separation, and a cancelled batch leaves at most this
+    /// many extra downloads running instead of the rest of the folder.
+    nonisolated static let prefetchCount = 1
+
+    /// The queued files to fetch while the file at `index` separates.
+    nonisolated static func upcoming(after index: Int, in files: [URL]) -> ArraySlice<URL> {
+        files.dropFirst(index + 1).prefix(prefetchCount)
+    }
+
+    /// Starts iCloud Drive downloads for evicted files, off the main actor.
+    nonisolated static func prefetch(_ files: ArraySlice<URL>) {
+        guard !files.isEmpty else { return }
+        let files = Array(files)
+        Task.detached(priority: .utility) {
+            for url in files where StreamingAudio.isCloudPlaceholder(url) {
+                try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+            }
+        }
     }
 
     /// Finder's name without the extension, so "AC/DC" is not shown as "AC:DC".
