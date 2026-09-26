@@ -214,7 +214,6 @@ public struct PlayerView: View {
                 midGain: $engine.vocalEQMid,
                 highGain: $engine.vocalEQHigh,
                 isEQBypassed: $engine.vocalEQBypassed,
-                eqMagnitudes: engine.vocalEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -234,7 +233,6 @@ public struct PlayerView: View {
                 midGain: $engine.drumEQMid,
                 highGain: $engine.drumEQHigh,
                 isEQBypassed: $engine.drumEQBypassed,
-                eqMagnitudes: engine.drumEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -254,7 +252,6 @@ public struct PlayerView: View {
                 midGain: $engine.bassEQMid,
                 highGain: $engine.bassEQHigh,
                 isEQBypassed: $engine.bassEQBypassed,
-                eqMagnitudes: engine.bassEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -274,7 +271,6 @@ public struct PlayerView: View {
                 midGain: $engine.otherEQMid,
                 highGain: $engine.otherEQHigh,
                 isEQBypassed: $engine.otherEQBypassed,
-                eqMagnitudes: engine.otherEQMagnitudes,
                 isAnySoloed: anySolo,
                 isAnyMuted: anyMuted,
                 isPlaying: engine.isPlaying,
@@ -374,7 +370,6 @@ struct StemChannelView: View {
     @Binding var midGain: Float
     @Binding var highGain: Float
     @Binding var isEQBypassed: Bool
-    let eqMagnitudes: [Float]
     let isAnySoloed: Bool
     let isAnyMuted: Bool
     let isPlaying: Bool
@@ -463,9 +458,9 @@ struct StemChannelView: View {
             .padding(.top, isCompactHeight ? 1 : 2)
             
             // Dynamic Island Symmetrical Dot-Matrix Waveform per stem
-            StemDynamicWaveformView(
+            StemMeterWaveformView(
+                meter: engineManager.stemMeters[channelIndex],
                 title: title,
-                magnitudes: eqMagnitudes,
                 effectiveVolume: effectiveVolume,
                 isPlaying: isPlaying
             )
@@ -517,7 +512,7 @@ struct StemChannelView: View {
             .padding(.top, isCompactHeight ? 0 : 2)
             
             // Hardware Fader with Decibel Scale & Machined Thumb
-            CustomFader(value: $volume, label: title, peak: engineManager.stemPeaks[channelIndex])
+            MeteredFader(meter: engineManager.stemMeters[channelIndex], value: $volume, label: title)
                 .frame(minHeight: isCompactHeight ? 75 : 120, maxHeight: .infinity)
             
             // Mute & Solo Hardware Switches
@@ -1041,6 +1036,37 @@ struct StemEQChannelStripView: View {
     }
 }
 
+// MARK: - Meter Leaf Views
+// Only these read a stem's meter, so a tap reading re-renders the waveform or clip LED
+// that shows it instead of the channel strip around it.
+
+struct StemMeterWaveformView: View {
+    let meter: StemMeter
+    let title: String
+    let effectiveVolume: Double
+    let isPlaying: Bool
+
+    var body: some View {
+        StemDynamicWaveformView(
+            title: title,
+            magnitudes: meter.spectrum,
+            effectiveVolume: effectiveVolume,
+            isPlaying: isPlaying
+        )
+    }
+}
+
+/// Reads only the clip state, so peak readings below full scale leave the fader alone.
+struct MeteredFader: View {
+    let meter: StemMeter
+    @Binding var value: Double
+    let label: String
+
+    var body: some View {
+        CustomFader(value: $value, label: label, isClipping: meter.isClipping)
+    }
+}
+
 // MARK: - Dynamic Island Symmetrical Dot-Matrix Stem Waveform View
 struct StemDynamicWaveformView: View {
     let title: String
@@ -1184,7 +1210,8 @@ struct AlbumArtView: View {
     var size: CGFloat = 100
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
-    @State private var dotMatrix: [[DotMatrixCell]]? = nil
+    /// Dot colours, built once per artwork rather than on every redraw.
+    @State private var dotColors: [[Color]]? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHighRes = false
     
@@ -1204,23 +1231,24 @@ struct AlbumArtView: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: size, height: size)
                         .clipped()
-                } else if let matrix = dotMatrix {
+                } else if let colors = dotColors {
+                    // The dots swell slightly with the music. The engine rounds the level, so
+                    // changes of a small fraction of a pixel do not redraw all 2,500 dots.
+                    let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterMeter.artworkEnergy) : 0.0
+                    let pulse = engineManager.isPlaying && !reduceMotion ? 1.0 + (audioEnergy * 0.05) : 1.0
+
                     // Real-Time 50x50 Full-Color RGB Dot-Matrix LED Screen
                     Canvas { context, sz in
                         let gridSize = 50
                         let cellWidth = sz.width / CGFloat(gridSize)
                         let cellHeight = sz.height / CGFloat(gridSize)
-                        
-                        let audioEnergy = engineManager.isPlaying ? Double(engineManager.masterWaveformAmplitudes.reduce(0, +) / Float(max(1, engineManager.masterWaveformAmplitudes.count))) : 0.0
-                        let pulse = engineManager.isPlaying && !reduceMotion ? 1.0 + (audioEnergy * 0.05) : 1.0
-                        
+
                         // Uniform, crisp circular LED dot radius across all luminance levels (fill ratio 0.90)
                         let baseDotRadius = (cellWidth * 0.5) * 0.90
                         let dotRadius = min(cellWidth * 0.48, baseDotRadius * CGFloat(pulse))
                         
                         for y in 0..<gridSize {
                             for x in 0..<gridSize {
-                                let cell = matrix[y][x]
                                 let centerX = CGFloat(x) * cellWidth + (cellWidth * 0.5)
                                 let centerY = CGFloat(y) * cellHeight + (cellHeight * 0.5)
                                 
@@ -1230,13 +1258,7 @@ struct AlbumArtView: View {
                                     width: dotRadius * 2,
                                     height: dotRadius * 2
                                 )
-                                
-                                let dotColor = Color(
-                                    red: Double(cell.r),
-                                    green: Double(cell.g),
-                                    blue: Double(cell.b)
-                                )
-                                context.fill(Path(ellipseIn: dotRect), with: .color(dotColor))
+                                context.fill(Path(ellipseIn: dotRect), with: .color(colors[y][x]))
                             }
                         }
                     }
@@ -1311,11 +1333,14 @@ struct AlbumArtView: View {
     }
     
     private func updateMatrix(for img: NSImage?) {
-        guard let img = img else {
-            dotMatrix = nil
+        guard let img = img,
+              let matrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50) else {
+            dotColors = nil
             return
         }
-        dotMatrix = DotMatrixImageProcessor.generateColorDotMatrix(from: img, gridSize: 50)
+        dotColors = matrix.map { row in
+            row.map { cell in Color(red: Double(cell.r), green: Double(cell.g), blue: Double(cell.b)) }
+        }
     }
 }
 
@@ -2347,7 +2372,7 @@ struct Spectrum32BandView: View {
     @Environment(AudioEngineManager.self) private var engineManager
     
     private var magnitudes: [Float] {
-        engineManager.masterEQMagnitudes
+        engineManager.masterMeter.spectrum
     }
     
     var body: some View {
@@ -2567,7 +2592,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.vocalPan,
                 isMuted: engineManager.vocalMuted,
                 isSolo: engineManager.vocalSolo,
-                magnitudes: engineManager.vocalEQMagnitudes,
+                meter: engineManager.stemMeters[0],
                 accentColor: theme.textPrimary
             )
             StemChannelCardView(
@@ -2577,7 +2602,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.drumPan,
                 isMuted: engineManager.drumMuted,
                 isSolo: engineManager.drumSolo,
-                magnitudes: engineManager.drumEQMagnitudes,
+                meter: engineManager.stemMeters[1],
                 accentColor: theme.textPrimary
             )
             StemChannelCardView(
@@ -2587,7 +2612,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.bassPan,
                 isMuted: engineManager.bassMuted,
                 isSolo: engineManager.bassSolo,
-                magnitudes: engineManager.bassEQMagnitudes,
+                meter: engineManager.stemMeters[2],
                 accentColor: theme.textPrimary
             )
             StemChannelCardView(
@@ -2597,7 +2622,7 @@ struct StemBalanceHUDView: View {
                 pan: engineManager.otherPan,
                 isMuted: engineManager.otherMuted,
                 isSolo: engineManager.otherSolo,
-                magnitudes: engineManager.otherEQMagnitudes,
+                meter: engineManager.stemMeters[3],
                 accentColor: theme.textPrimary
             )
         }
@@ -2615,7 +2640,7 @@ struct StemChannelCardView: View {
     let pan: Float
     let isMuted: Bool
     let isSolo: Bool
-    let magnitudes: [Float]
+    let meter: StemMeter
     let accentColor: Color
     
     private var isAudible: Bool {
@@ -2623,17 +2648,10 @@ struct StemChannelCardView: View {
         return !isMuted && (!anySolo || isSolo)
     }
     
-    private var clampedEnergy: CGFloat {
-        guard engineManager.isPlaying && isAudible else { return 0.0 }
-        let avg = magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))
-        let energy = CGFloat(avg) * 2.8
-        return max(0.0, min(1.0, energy))
-    }
-    
     var body: some View {
         VStack(spacing: 3) {
             headerRow
-            vuMeterRow
+            StemVUMeterRow(meter: meter, isActive: engineManager.isPlaying && isAudible)
             actionsRow
         }
         .frame(maxWidth: .infinity)
@@ -2658,22 +2676,6 @@ struct StemChannelCardView: View {
                 .font(.custom("DotGothic16-Regular", size: 8.0))
                 .foregroundColor(isMuted || isSolo ? theme.accentRed : theme.textMuted)
         }
-    }
-    
-    private var vuMeterRow: some View {
-        HStack(spacing: 1.5) {
-            ForEach(0..<10, id: \.self) { seg in
-                let segThreshold = CGFloat(seg + 1) / 10.0
-                let isLit = clampedEnergy >= segThreshold
-                let isPeak = seg >= 8
-                let segColor: Color = isPeak ? theme.accentRed : theme.spectrumBarDefault
-                
-                Rectangle()
-                    .fill(isLit ? segColor : theme.knobArcTrack)
-                    .frame(height: 5)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 1))
     }
     
     private var actionsRow: some View {
@@ -2725,6 +2727,38 @@ struct StemChannelCardView: View {
             .accessibilityValue(isSolo ? "On" : "Off")
             .help("Solo \(name.capitalized)")
         }
+    }
+}
+
+/// The balance card's 10-segment VU row. It reads the stem meter itself, so readings
+/// re-render this row and not the card's labels and buttons.
+struct StemVUMeterRow: View {
+    let meter: StemMeter
+    let isActive: Bool
+    @State private var theme = ThemeManager.shared
+    
+    private var clampedEnergy: CGFloat {
+        guard isActive else { return 0.0 }
+        let magnitudes = meter.spectrum
+        let avg = magnitudes.reduce(0, +) / Float(max(1, magnitudes.count))
+        let energy = CGFloat(avg) * 2.8
+        return max(0.0, min(1.0, energy))
+    }
+    
+    var body: some View {
+        HStack(spacing: 1.5) {
+            ForEach(0..<10, id: \.self) { seg in
+                let segThreshold = CGFloat(seg + 1) / 10.0
+                let isLit = clampedEnergy >= segThreshold
+                let isPeak = seg >= 8
+                let segColor: Color = isPeak ? theme.accentRed : theme.spectrumBarDefault
+                
+                Rectangle()
+                    .fill(isLit ? segColor : theme.knobArcTrack)
+                    .frame(height: 5)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 1))
     }
 }
 
@@ -2895,7 +2929,7 @@ struct HUDEqualizerCurveView: View {
                     gridLines(w: w, h: h, midY: midY, x100: x100, x1k: x1k, x10k: x10k)
                     
                     // 2. Real-time FFT Backdrop
-                    fftBackdrop(w: w, h: h)
+                    HUDSpectrumBackdrop(stemIndex: selectedStemIndex, height: h)
                     
                     // 3. Mathematical Biquad Curve Path
                     curvePath(w: w, h: h, midY: midY)
@@ -3136,31 +3170,6 @@ struct HUDEqualizerCurveView: View {
             .position(x: x10k, y: h - 5)
     }
     
-    @ViewBuilder
-    private func fftBackdrop(w: CGFloat, h: CGFloat) -> some View {
-        let mags: [Float] = {
-            switch selectedStemIndex {
-            case 0: return engineManager.vocalEQMagnitudes
-            case 1: return engineManager.drumEQMagnitudes
-            case 2: return engineManager.bassEQMagnitudes
-            case 3: return engineManager.otherEQMagnitudes
-            default: return engineManager.masterEQMagnitudes
-            }
-        }()
-        
-        HStack(alignment: .bottom, spacing: 2) {
-            ForEach(0..<min(24, mags.count), id: \.self) { i in
-                let mag = CGFloat(mags[i])
-                let barH = max(2.0, min(h, mag * h * 1.5))
-                Rectangle()
-                    .fill(theme.spectrumBarDefault.opacity(0.10))
-                    .frame(height: barH)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .opacity(engineManager.isPlaying ? 1.0 : 0.0)
-    }
-    
     private func curvePath(w: CGFloat, h: CGFloat, midY: CGFloat) -> Path {
         let low = currentLow
         let mid = currentMid
@@ -3275,6 +3284,34 @@ struct HUDEqualizerCurveView: View {
         default:
             break
         }
+    }
+}
+
+/// Live spectrum behind the HUD EQ curve (index 4 is the master). Reading the meter here
+/// re-renders only these bars on each tap reading, not the curve, grid and nodes.
+struct HUDSpectrumBackdrop: View {
+    @Environment(AudioEngineManager.self) private var engineManager
+    @State private var theme = ThemeManager.shared
+    let stemIndex: Int
+    let height: CGFloat
+    
+    var body: some View {
+        let h = height
+        let mags = engineManager.stemMeters.indices.contains(stemIndex)
+            ? engineManager.stemMeters[stemIndex].spectrum
+            : engineManager.masterMeter.spectrum
+        
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<min(24, mags.count), id: \.self) { i in
+                let mag = CGFloat(mags[i])
+                let barH = max(2.0, min(h, mag * h * 1.5))
+                Rectangle()
+                    .fill(theme.spectrumBarDefault.opacity(0.10))
+                    .frame(height: barH)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .opacity(engineManager.isPlaying ? 1.0 : 0.0)
     }
 }
 

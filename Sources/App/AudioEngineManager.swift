@@ -22,6 +22,78 @@ public enum ExportState: Equatable, Sendable {
     case completed
 }
 
+// MARK: - Live Meters
+// Each tap writes to its own observable meter, and only small leaf views read them, so a
+// reading re-renders the meter that shows it instead of the whole mixer.
+
+/// Latest reading from one stem's channel tap.
+@MainActor
+@Observable
+public final class StemMeter {
+    /// Sample peak of the latest reading.
+    public internal(set) var peak: Float = 0
+    /// True while the latest peak is at or above full scale. The fader's clip LED reads
+    /// this rather than `peak`, so readings below full scale do not re-render it.
+    public internal(set) var isClipping = false
+    /// Smoothed band levels (0-1), low to high.
+    public internal(set) var spectrum: [Float]
+
+    init(bandCount: Int) {
+        spectrum = Array(repeating: 0, count: bandCount)
+    }
+
+    func update(peak newPeak: Float, spectrum newSpectrum: [Float]) {
+        if peak != newPeak { peak = newPeak }
+        if isClipping != (newPeak >= 1) { isClipping = newPeak >= 1 }
+        if spectrum != newSpectrum { spectrum = newSpectrum }
+    }
+
+    func clearSpectrum() {
+        if spectrum.contains(where: { $0 != 0 }) { spectrum = Array(repeating: 0, count: spectrum.count) }
+    }
+
+    func clear() {
+        if peak != 0 { peak = 0 }
+        if isClipping { isClipping = false }
+        clearSpectrum()
+    }
+}
+
+/// Latest reading from the master output tap.
+@MainActor
+@Observable
+public final class MasterMeter {
+    public nonisolated static let waveformFloor: Float = 0.05
+    /// Steps per unit for `artworkEnergy`. At the largest artwork (100 pt at 2x) rounding
+    /// moves a dot edge by at most 0.0023 px, which moves no pixel by more than one 8-bit level.
+    nonisolated static let artworkEnergySteps: Float = 20
+
+    /// Smoothed 32-band levels (0-1), low to high.
+    public internal(set) var spectrum: [Float] = Array(repeating: 0, count: 32)
+    /// RMS of 30 consecutive blocks of the latest buffer, floored at `waveformFloor`.
+    public internal(set) var waveform: [Float] = Array(repeating: MasterMeter.waveformFloor, count: 30)
+    /// Mean waveform level for the album-art pulse, rounded to 1/20 so changes that move the
+    /// dots by a small fraction of a pixel do not redraw all 2,500 of them.
+    public internal(set) var artworkEnergy: Float = MasterMeter.waveformFloor
+
+    func update(spectrum newSpectrum: [Float], waveform newWaveform: [Float]) {
+        if spectrum != newSpectrum { spectrum = newSpectrum }
+        if waveform != newWaveform { waveform = newWaveform }
+        let energy = Self.artworkEnergy(for: newWaveform)
+        if artworkEnergy != energy { artworkEnergy = energy }
+    }
+
+    func clear() {
+        update(spectrum: Array(repeating: 0, count: spectrum.count),
+               waveform: Array(repeating: Self.waveformFloor, count: waveform.count))
+    }
+
+    nonisolated static func artworkEnergy(for waveform: [Float]) -> Float {
+        let mean = waveform.reduce(0, +) / Float(max(1, waveform.count))
+        return (mean * artworkEnergySteps).rounded() / artworkEnergySteps
+    }
+}
+
 public struct EQPreset: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
@@ -433,15 +505,10 @@ public final class AudioEngineManager {
     }
     
     // MARK: - Live Visualizers (Waveform & Per-Stem EQ)
-    public var masterWaveformAmplitudes: [Float] = Array(repeating: 0.05, count: 30)
+    /// One meter per stem in model order: vocals, drums, bass, other.
+    public let stemMeters: [StemMeter] = (0..<4).map { _ in StemMeter(bandCount: 7) }
+    public let masterMeter = MasterMeter()
     public var originalWaveformAmplitudes: [Float] = Array(repeating: 0.05, count: 30)
-    
-    public var masterEQMagnitudes: [Float] = Array(repeating: 0, count: 32)
-    public var stemPeaks: [Float] = Array(repeating: 0, count: 4)
-    public var vocalEQMagnitudes: [Float] = Array(repeating: 0, count: 7)
-    public var drumEQMagnitudes: [Float] = Array(repeating: 0, count: 7)
-    public var bassEQMagnitudes: [Float] = Array(repeating: 0, count: 7)
-    public var otherEQMagnitudes: [Float] = Array(repeating: 0, count: 7)
 
     // MARK: - Splitting & Progress State
     public var isSplitting = false
@@ -568,21 +635,21 @@ public final class AudioEngineManager {
         node.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
             guard let reading = processor.process(buffer) else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.isPlaying else { return }
-                // Compare Original silences the stem sum after these taps.
-                if stem != nil && self.isBypassed && self.canBypass { return }
-                if let stem { self.stemPeaks[stem] = reading.peak }
-                switch stem {
-                case 0: self.vocalEQMagnitudes = reading.spectrum
-                case 1: self.drumEQMagnitudes = reading.spectrum
-                case 2: self.bassEQMagnitudes = reading.spectrum
-                case 3: self.otherEQMagnitudes = reading.spectrum
-                default:
-                    self.masterEQMagnitudes = reading.spectrum
-                    self.masterWaveformAmplitudes = reading.waveform
-                }
+                self?.deliverMeterReading(reading, stem: stem)
             }
         }
+    }
+
+    /// Publishes one tap reading to its meter; `stem` is nil for the master tap.
+    func deliverMeterReading(_ reading: AudioMeterProcessor.Reading, stem: Int?) {
+        guard isPlaying else { return }
+        guard let stem else {
+            masterMeter.update(spectrum: reading.spectrum, waveform: reading.waveform)
+            return
+        }
+        // Compare Original silences the stem sum after these taps.
+        guard !(isBypassed && canBypass), stemMeters.indices.contains(stem) else { return }
+        stemMeters[stem].update(peak: reading.peak, spectrum: reading.spectrum)
     }
 
     deinit {
@@ -634,11 +701,7 @@ public final class AudioEngineManager {
         if isBypassed && canBypass {
             stemsSumMixer.outputVolume = 0.0
             originalPlayer.volume = 1.0
-            stemPeaks = Array(repeating: 0, count: 4)
-            vocalEQMagnitudes = Array(repeating: 0, count: 7)
-            drumEQMagnitudes = Array(repeating: 0, count: 7)
-            bassEQMagnitudes = Array(repeating: 0, count: 7)
-            otherEQMagnitudes = Array(repeating: 0, count: 7)
+            for meter in stemMeters { meter.clear() }
             return
         }
         
@@ -660,10 +723,10 @@ public final class AudioEngineManager {
         applyChannel(bassVolume, bassMuted, bassSolo, bassMixer)
         applyChannel(otherVolume, otherMuted, otherSolo, otherMixer)
         
-        if vocalVolume <= 0.001 || vocalMuted || (anySolo && !vocalSolo) { vocalEQMagnitudes = Array(repeating: 0, count: 7) }
-        if drumVolume <= 0.001 || drumMuted || (anySolo && !drumSolo) { drumEQMagnitudes = Array(repeating: 0, count: 7) }
-        if bassVolume <= 0.001 || bassMuted || (anySolo && !bassSolo) { bassEQMagnitudes = Array(repeating: 0, count: 7) }
-        if otherVolume <= 0.001 || otherMuted || (anySolo && !otherSolo) { otherEQMagnitudes = Array(repeating: 0, count: 7) }
+        if vocalVolume <= 0.001 || vocalMuted || (anySolo && !vocalSolo) { stemMeters[0].clearSpectrum() }
+        if drumVolume <= 0.001 || drumMuted || (anySolo && !drumSolo) { stemMeters[1].clearSpectrum() }
+        if bassVolume <= 0.001 || bassMuted || (anySolo && !bassSolo) { stemMeters[2].clearSpectrum() }
+        if otherVolume <= 0.001 || otherMuted || (anySolo && !otherSolo) { stemMeters[3].clearSpectrum() }
     }
     
     // MARK: - Exclusive Radio-Style Stem Soloing & Muting
@@ -839,14 +902,13 @@ public final class AudioEngineManager {
     }
     
     private func clearVisualizers() {
-        stemPeaks = Array(repeating: 0, count: 4)
-        masterWaveformAmplitudes = Array(repeating: 0.05, count: 30)
         originalWaveformAmplitudes = Array(repeating: 0.05, count: 30)
-        masterEQMagnitudes = Array(repeating: 0, count: 32)
-        vocalEQMagnitudes = Array(repeating: 0, count: 7)
-        drumEQMagnitudes = Array(repeating: 0, count: 7)
-        bassEQMagnitudes = Array(repeating: 0, count: 7)
-        otherEQMagnitudes = Array(repeating: 0, count: 7)
+        clearMeters()
+    }
+
+    private func clearMeters() {
+        masterMeter.clear()
+        for meter in stemMeters { meter.clear() }
     }
 
     // MARK: - Loading & Splitting Audio
