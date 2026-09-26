@@ -253,6 +253,29 @@ final class EngineFixTests: XCTestCase {
         engine.unloadTrack()
     }
 
+    func testExportNamesKeepTitleCasingAndDescribeWhatIsRendered() async throws {
+        let engine = AudioEngineManager()
+        await engine.loadTrack(try cancellingTrack(seconds: 0.5, title: "iPhone Demo (Acoustic)"))
+        XCTAssertEqual(engine.currentTrackName, "IPHONE DEMO (ACOUSTIC)")
+        XCTAssertEqual(engine.exportTitle, "iPhone Demo (Acoustic)")
+        XCTAssertEqual(engine.mixExportPanelText.name, "iPhone Demo (Acoustic)_Mix.wav")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(engine.exportTitle, "iPhone Demo (Acoustic)", "Metadata must not replace the library title")
+
+        XCTAssertTrue(engine.stemExportMessage(format: "WAV").contains("without EQ"))
+        engine.setStemEQ(1, low: 3, mid: 0, high: 0)
+        XCTAssertTrue(engine.stemExportMessage(format: "WAV").contains("with channel EQ applied"))
+        engine.toggleGlobalEQBypass()
+        XCTAssertTrue(engine.stemExportMessage(format: "WAV").contains("without EQ"))
+
+        engine.isBypassed = true
+        XCTAssertEqual(engine.mixExportPanelText.name, "iPhone Demo (Acoustic)_Original.wav")
+        XCTAssertTrue(engine.mixExportPanelText.message.contains("original track"))
+        engine.updateTrackTitle(id: try XCTUnwrap(engine.currentTrackID), newTitle: "Straße Mix")
+        XCTAssertEqual(engine.exportTitle, "Straße Mix")
+        engine.unloadTrack()
+    }
+
     func testFallbackTitlesUseFinderDisplayNames() throws {
         let slash = directory.appending(path: "AC:DC - Back In Black.wav")
         let dotted = directory.appending(path: "Song v1.2.wav")

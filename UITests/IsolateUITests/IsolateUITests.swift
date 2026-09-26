@@ -182,7 +182,7 @@ final class IsolateUITests: XCTestCase {
         app.typeText(directory.path)
         app.typeKey(.return, modifierFlags: [])
         saveButton.click()
-        let exported = directory.appending(path: "RENAMED UI TRACK_Mix.wav")
+        let exported = directory.appending(path: "Renamed UI Track_Mix.wav")
         let written = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             FileManager.default.fileExists(atPath: exported.path)
         }, object: nil)

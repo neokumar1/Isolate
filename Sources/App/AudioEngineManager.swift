@@ -247,6 +247,8 @@ public final class AudioEngineManager {
     public var errorMessage: String? = nil
     
     private var playbackSessionID = UUID()
+    /// Changes whenever the loaded track is replaced or unloaded.
+    @ObservationIgnored private var loadGeneration = 0
     
     // MARK: - Stem Volumes, Mute, Solo (Default 1.0 = Unity Gain / 0 dB)
     public var vocalVolume: Double = 1.0 { didSet { applyVolumes() } }
@@ -914,6 +916,7 @@ public final class AudioEngineManager {
     @MainActor
     public func unloadTrack() {
         playbackSessionID = UUID()
+        loadGeneration += 1
         metadataTask?.cancel()
         metadataRequestID = UUID()
         // 1. Hard stop all audio players & invalidate playback timers
@@ -1238,16 +1241,57 @@ public final class AudioEngineManager {
         }
     }
 
+    /// Export names keep the library title's casing; the player shows it uppercased.
+    var exportTitle: String {
+        let title = titleOverride ?? trackTitle
+        return title.isEmpty ? currentTrackName : title
+    }
+
+    /// Whether any stem file will have its channel EQ rendered in.
+    var stemExportIncludesEQ: Bool {
+        guard shouldBakeEQOnExport, !isGlobalEQBypassed else { return false }
+        return (0..<4).contains { index in
+            let eq = getStemEQ(index)
+            return !eq.isBypassed && (abs(eq.low) >= 0.01 || abs(eq.mid) >= 0.01 || abs(eq.high) >= 0.01)
+        }
+    }
+
+    func stemExportMessage(format: String) -> String {
+        let eq = stemExportIncludesEQ ? "with channel EQ applied" : "without EQ"
+        return "Four individual stems in \(format) \(eq). Levels, pan, speed and pitch are excluded."
+    }
+
+    /// Compare Original exports the source instead of the stem mix, so name and describe it that way.
+    var mixExportPanelText: (name: String, message: String) {
+        let base = AudioExporter.safeFilename(exportTitle)
+        guard isBypassed, audioFile != nil else {
+            return ("\(base)_Mix.wav", "Export the full track with current levels, pan, EQ, speed and pitch as 24-bit WAV.")
+        }
+        return ("\(base)_Original.wav",
+                "Compare Original is on: exports the original track with master EQ, speed and pitch as 24-bit WAV.")
+    }
+
+    /// Remote media commands can load another track while a modal save panel is open.
+    private func exportSnapshotIsCurrent(_ generation: Int) -> Bool {
+        guard generation == loadGeneration, hasLoadedTrack, !isExporting, !isSplitting else {
+            showError("The track changed while the save panel was open. Nothing was exported.")
+            return false
+        }
+        return true
+    }
+
     public func exportStems() {
         guard hasLoadedTrack, !isExporting, !isSplitting else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(AudioExporter.safeFilename(currentTrackName))_Stems.zip"
-        panel.allowedContentTypes = [.zip]
-        panel.message = "Four individual stems in \(AppSettings.shared.defaultExportFormat). Channel levels, pan, speed and pitch are excluded."
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let generation = loadGeneration
         let sources = exportSources(includeMix: false)
-        let title = currentTrackName
+        let title = exportTitle
         let format = AudioExporter.Format(rawValue: AppSettings.shared.defaultExportFormat) ?? .wav
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(AudioExporter.safeFilename(title))_Stems.zip"
+        panel.allowedContentTypes = [.zip]
+        panel.message = stemExportMessage(format: AppSettings.shared.defaultExportFormat)
+        guard panel.runModal() == .OK, let destination = panel.url,
+              exportSnapshotIsCurrent(generation) else { return }
         beginExport { [self] in
             try AudioExporter.archive(sources: sources, title: title, format: format, to: destination) { progress in
                 Task { @MainActor [self] in
@@ -1262,16 +1306,19 @@ public final class AudioEngineManager {
 
     public func exportMix() {
         guard hasLoadedTrack, !isExporting, !isSplitting else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(AudioExporter.safeFilename(currentTrackName))_Mix.wav"
-        panel.allowedContentTypes = [.wav]
-        panel.message = "Export the full track with current levels, pan, EQ, speed and pitch as 24-bit WAV."
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let generation = loadGeneration
+        let text = mixExportPanelText
         let sources = isBypassed && audioFile != nil ? [AudioExporter.Source(url: audioFile!.url)] : exportSources(includeMix: true)
         let gains = getStemEQ(4)
         let masterEQ = isGlobalEQBypassed || gains.isBypassed ? AudioExporter.EQ() : .init(low: gains.low, mid: gains.mid, high: gains.high)
         let rate = Float(playbackRate)
         let pitch = Float(pitchShiftSemitones)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = text.name
+        panel.allowedContentTypes = [.wav]
+        panel.message = text.message
+        guard panel.runModal() == .OK, let destination = panel.url,
+              exportSnapshotIsCurrent(generation) else { return }
         beginExport {
             let temporary = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).wav")
             defer { try? FileManager.default.removeItem(at: temporary) }
