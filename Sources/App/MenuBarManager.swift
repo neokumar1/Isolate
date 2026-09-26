@@ -127,6 +127,11 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         return img
     }
     
+    /// A single track needs no count; the subtitle already names it.
+    static func batchCompletionTitle(count: Int) -> String {
+        count == 1 ? "Stems Ready" : "Stems Ready (\(count) Tracks)"
+    }
+
     public func sendBatchCompletionNotification(count: Int, lastTitle: String) {
         Task {
             let center = UNUserNotificationCenter.current()
@@ -134,7 +139,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 let granted = try await center.requestAuthorization(options: [.alert, .sound])
                 guard granted else { return }
                 let content = UNMutableNotificationContent()
-                content.title = "Stems Ready (\(count) Tracks)"
+                content.title = Self.batchCompletionTitle(count: count)
                 content.subtitle = lastTitle
                 content.body = "Four-stem separation complete. Ready to play and mix."
                 content.sound = .default

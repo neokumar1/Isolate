@@ -125,17 +125,34 @@ final class IsolateAppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Quit")
         }
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
-        guard work == .separation else { return .terminateNow }
-        // Quit once the cancelled separation has removed its temporary files.
-        engine.cancelSplitAudio()
-        Task { @MainActor in
-            let deadline = ContinuousClock.now + .seconds(15)
-            while engine.isSplitting && ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-            NSApp.reply(toApplicationShouldTerminate: true)
+        // Quit once the cancelled work has removed its temporary files.
+        switch work {
+        case .separation:
+            engine.cancelSplitAudio()
+            Self.replyToTermination(within: .seconds(15), when: { !engine.isSplitting })
+        case .export:
+            engine.cancelExport()
+            Self.replyToTermination(within: .seconds(5), when: { !engine.isExporting })
         }
         return .terminateLater
+    }
+
+    /// Answers `.terminateLater` once `isDone` holds or `timeout` passes. Polls
+    /// with a run-loop timer, not a Task: when terminate is called from inside
+    /// a main-queue job, AppKit's wait for the reply cannot drain the main
+    /// queue, so a Task would never run and the app would never quit.
+    static func replyToTermination(within timeout: Duration, when isDone: @escaping @MainActor () -> Bool,
+                                   reply: @escaping @MainActor () -> Void = { NSApp.reply(toApplicationShouldTerminate: true) }) {
+        let deadline = ContinuousClock.now + timeout
+        let timer = Timer(timeInterval: 0.05, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                guard isDone() || ContinuousClock.now >= deadline else { return }
+                timer.invalidate()
+                reply()
+            }
+        }
+        // Common modes include the modal-panel mode AppKit waits in.
+        RunLoop.main.add(timer, forMode: .common)
     }
 }
 
@@ -785,6 +802,8 @@ struct MoveToApplicationsModalCard: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.escape, modifiers: [])
+                // The card stays up while installing so a failure is seen.
+                .disabled(appMoveHelper.isMoving)
                 .onHover { hovering in
                     if hovering && !isSkipHovered { Haptics.playClick() }
                     isSkipHovered = hovering

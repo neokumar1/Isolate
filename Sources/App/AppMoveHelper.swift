@@ -10,6 +10,10 @@ public final class AppMoveHelper: ObservableObject {
     @Published public var moveErrorMessage: String? = nil
     /// Set when Applications already holds Isolate; replacing it needs a second click.
     @Published public var replacementPrompt: String? = nil
+    /// When the prompt appeared: the second click of a double-click on MOVE
+    /// must not confirm the replacement the first click just asked about.
+    private var promptShownAt: TimeInterval = 0
+    private var didCheckLocation = false
 
     static let installURL = URL(filePath: "/Applications/Isolate.app")
 
@@ -50,6 +54,10 @@ public final class AppMoveHelper: ObservableObject {
     }
     
     public func checkLocationOnStartup() {
+        // The window's onAppear repeats each time it is reopened; NOT NOW must
+        // still last for the whole launch.
+        guard !didCheckLocation else { return }
+        didCheckLocation = true
         #if !DEBUG
         // Earlier builds stored a permanent decline; "not now" is per launch.
         if AppPreferences.defaults.bool(forKey: "hasDeclinedMoveToApplications") {
@@ -66,6 +74,8 @@ public final class AppMoveHelper: ObservableObject {
     }
     
     public func dismissMoveModal() {
+        // An install in progress keeps the card up so its failure is seen.
+        guard !isMoving else { return }
         shouldShowMoveModal = false
         replacementPrompt = nil
         moveErrorMessage = nil
@@ -77,8 +87,18 @@ public final class AppMoveHelper: ObservableObject {
         return (plist["CFBundleIdentifier"] as? String, plist["CFBundleShortVersionString"] as? String)
     }
 
+    /// Says when the installed copy is newer, so replacing it reads as the downgrade it is.
+    nonisolated static func replacementPrompt(installed: String?, running: String?) -> String {
+        if let installed, let running, installed.compare(running, options: .numeric) == .orderedDescending {
+            return "A newer Isolate (\(installed)) is already in Applications; this copy is \(running). Replace it with this older version? The installed copy will be moved to the Trash."
+        }
+        let version = installed.map { " \($0)" } ?? ""
+        return "Isolate\(version) is already in Applications. Replace it? The installed copy will be moved to the Trash."
+    }
+
     public func moveToApplications(replacingExisting: Bool = false) {
         guard !isMoving else { return }
+        if replacingExisting, ProcessInfo.processInfo.systemUptime - promptShownAt < NSEvent.doubleClickInterval { return }
         moveErrorMessage = nil
         let source = Bundle.main.bundleURL
         let destination = Self.installURL
@@ -88,8 +108,9 @@ public final class AppMoveHelper: ObservableObject {
                 moveErrorMessage = "A different app named Isolate is already in Applications. Drag Isolate into Applications in Finder to choose which to keep."
                 return
             }
-            let version = installed?.version.map { " \($0)" } ?? ""
-            replacementPrompt = "Isolate\(version) is already in Applications. Replace it? The installed copy will be moved to the Trash."
+            let running = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            replacementPrompt = Self.replacementPrompt(installed: installed?.version, running: running)
+            promptShownAt = ProcessInfo.processInfo.systemUptime
             return
         }
         isMoving = true
@@ -102,11 +123,26 @@ public final class AppMoveHelper: ObservableObject {
                 configuration.createsNewApplicationInstance = true
                 _ = try await NSWorkspace.shared.openApplication(at: destination, configuration: configuration)
                 // Keep this instance alive if macOS cannot launch the installed copy.
-                NSApp.terminate(nil)
+                quitAfterInstall()
             } catch {
                 isMoving = false
                 replacementPrompt = nil
                 moveErrorMessage = "Could not install or open Isolate. \(error.localizedDescription) You can also drag Isolate into Applications in Finder."
+            }
+        }
+    }
+
+    /// Quits from a run-loop callout rather than from the install Task: inside
+    /// a main-queue job, AppKit's wait for a quit confirmation cannot drain the
+    /// main queue, and the app would hang.
+    private func quitAfterInstall() {
+        RunLoop.main.perform(inModes: [.default]) {
+            MainActor.assumeIsolated {
+                NSApp.terminate(nil)
+                // Returns only when the user kept a separation or export running;
+                // the installed copy is already open.
+                self.isMoving = false
+                self.dismissMoveModal()
             }
         }
     }
