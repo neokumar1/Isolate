@@ -76,15 +76,23 @@ enum Hardening {
         let description: String
     }
 
-    /// Separates with the installed model. Only a missing model skips, and not when
-    /// ISOLATE_REQUIRE_MODEL=1. A model that is installed but cannot be loaded throws
-    /// DemucsError.modelLoadFailed, which fails the test.
+    /// Compatibility CI may verify safe refusal on older macOS. Release validation
+    /// must require successful inference, not silently pass with skipped tests.
+    nonisolated static func requireCompatibleModel(_ detail: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+        if environment["ISOLATE_ALLOW_INCOMPATIBLE_MODEL"] != "1" {
+            throw DemucsError.modelIncompatibleWithSystem(detail)
+        }
+    }
+
+    /// Missing models skip unless ISOLATE_REQUIRE_MODEL=1. Installed models that
+    /// cannot run fail unless compatibility CI explicitly allows safe refusal.
     static func splitRequiringModel(_ url: URL,
                                     progress: @escaping @Sendable (SplitProgressInfo) -> Void = { _ in }) async throws -> [URL] {
         do {
             return try await DemucsEngine.shared.splitAudio(url: url, progressCallback: progress)
         } catch DemucsError.modelIncompatibleWithSystem(let detail) {
-            // Isolate correctly refuses to separate here; see DemucsEngine.verifiedModel.
+            try requireCompatibleModel(detail)
             throw XCTSkip("Core ML on this macOS cannot run the model correctly: \(detail)")
         } catch DemucsError.modelNotFound(let message) {
             if ProcessInfo.processInfo.environment["ISOLATE_REQUIRE_MODEL"] == "1" {

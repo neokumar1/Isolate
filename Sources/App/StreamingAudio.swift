@@ -99,12 +99,15 @@ enum StreamingAudio {
         return Statistics(frames: count, mean: Float(mean), standardDeviation: max(1e-4, Float(sqrt(normalizationVariance))))
     }
 
-    /// Declared length at 44.1 kHz, or nil when the file does not state one.
-    static func declaredFrames(of source: URL) -> Int? {
+    /// Validate the source before loading Core ML. An unknown declared length is
+    /// allowed, but an unreadable file must not be mistaken for an unknown length.
+    static func declaredFrames(of source: URL) throws -> Int? {
         var reference: ExtAudioFileRef?
-        guard ExtAudioFileOpenURL(source as CFURL, &reference) == noErr, let reference else { return nil }
+        try check(ExtAudioFileOpenURL(source as CFURL, &reference))
+        guard let reference else { throw DemucsError.invalidAudioFormat }
         defer { ExtAudioFileDispose(reference) }
-        guard let frames = try? sourceInfo(reference).frames, frames > 0 else { return nil }
+        let frames = try sourceInfo(reference).frames
+        guard frames > 0 else { return nil }
         return frames
     }
 

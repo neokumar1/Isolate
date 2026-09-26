@@ -164,6 +164,40 @@ final class IsolateUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Play"].isEnabled)
     }
 
+    func testDamagedAudioShowsAnErrorAndLeavesImportUsable() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "Isolate-UI-Invalid-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appending(path: "Damaged audio.wav")
+        let originalBytes = Data("This is not a WAV file.".utf8)
+        try originalBytes.write(to: source)
+
+        let app = launch()
+        app.typeKey("o", modifierFlags: .command)
+        let openButton = app.windows["open-panel"].buttons["Open"]
+        XCTAssertTrue(openButton.waitForExistence(timeout: 5))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(source.path)
+        app.typeKey(.return, modifierFlags: [])
+        openButton.click()
+
+        let dismissError = app.buttons["Dismiss error"]
+        XCTAssertTrue(dismissError.waitForExistence(timeout: 15), "Damaged audio needs a visible, dismissible error")
+        XCTAssertFalse(app.buttons["Play"].isEnabled)
+        XCTAssertFalse(app.buttons["Export stems"].isEnabled)
+        XCTAssertFalse(app.buttons["Actions for Damaged audio"].exists)
+        XCTAssertEqual(try Data(contentsOf: source), originalBytes)
+        capture(app, name: "Damaged import — actionable error")
+        dismissError.click()
+        expectGone(dismissError, "The error must dismiss")
+
+        app.typeKey("o", modifierFlags: .command)
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "A failed import must not lock future imports")
+        app.typeKey(.escape, modifierFlags: [])
+        expectGone(cancel, "The next file picker must remain usable")
+    }
+
     func testCommandsReopenClosedMainWindow() {
         let app = launch()
         let play = app.buttons["Play"]

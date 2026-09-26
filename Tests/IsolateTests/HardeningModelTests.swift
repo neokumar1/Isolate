@@ -84,4 +84,25 @@ final class HardeningModelTests: XCTestCase {
                                  "bass.wav must hold the bass line, not \(DemucsEngine.stemNames[index]).wav")
         }
     }
+
+    func testSeparationPreservesAMixWithDCOffset() async throws {
+        let source = directory.appending(path: "offset.wav")
+        try Hardening.write(source, frames: 44_100 * 6) { frame in
+            0.12 + 0.2 * sin(Float(frame) * 2 * .pi * 220 / 44_100)
+        }
+        let stems = try await Hardening.splitRequiringModel(source)
+        defer { Hardening.removeCache(stems) }
+        let original = try Hardening.samples(source)
+        let separated = try stems.map { try Hardening.samples($0) }
+        XCTAssertTrue(separated.allSatisfy { $0.count == original.count })
+        guard separated.allSatisfy({ $0.count == original.count }) else { return }
+        var signal = 0.0, error = 0.0
+        for frame in original.indices {
+            let mix = separated.reduce(Float(0)) { $0 + $1[frame] }
+            signal += Double(original[frame]) * Double(original[frame])
+            error += Double(mix - original[frame]) * Double(mix - original[frame])
+        }
+        XCTAssertGreaterThan(10 * log10(signal / max(error, 1e-12)), 20,
+                             "Restoring the source mean to every stem multiplies its DC offset by four")
+    }
 }

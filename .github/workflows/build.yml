@@ -28,6 +28,9 @@ jobs:
       # test without the model, and the inference tests skip.
       ISOLATE_MODEL_ARCHIVE_URL: ${{ vars.ISOLATE_MODEL_ARCHIVE_URL }}
       ISOLATE_MODEL_ARCHIVE_SHA256: ${{ vars.ISOLATE_MODEL_ARCHIVE_SHA256 }}
+      # macOS 15 checks safe refusal of its known-bad Core ML runtime. macOS 26
+      # must actually separate; an incompatible model there fails the build.
+      TEST_RUNNER_ISOLATE_ALLOW_INCOMPATIBLE_MODEL: ${{ matrix.runner == 'macos-15' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v5
       - uses: maxim-lobanov/setup-xcode@v1

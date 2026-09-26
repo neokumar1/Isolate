@@ -22,6 +22,7 @@ jobs:
       ISOLATE_MODEL_ARCHIVE_URL: ${{ vars.ISOLATE_MODEL_ARCHIVE_URL }}
       ISOLATE_MODEL_ARCHIVE_SHA256: ${{ vars.ISOLATE_MODEL_ARCHIVE_SHA256 }}
       TEST_RUNNER_ISOLATE_REQUIRE_MODEL: '1'
+      TEST_RUNNER_ISOLATE_ALLOW_INCOMPATIBLE_MODEL: '0'
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v5

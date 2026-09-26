@@ -24,6 +24,9 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 ### Separation & import
 
 - Isolate now checks the separation model on a built-in test signal before using it. Core ML in macOS 14 and 15 computes the model incorrectly on some compute paths; Isolate picks one that passes, or asks you to update to macOS 26 instead of producing broken stems.
+- Invalid model output is refused without crashing. If one compute path fails to load or predict, Isolate tries the remaining paths before reporting an error.
+- Files with unreadable audio headers report an error before loading the separation model.
+- Recordings with a DC offset now keep the original mix's offset when the four stems are summed. Previously normalization restored that offset four times. Reimport a track separated by an older build to regenerate its stems with this fix.
 
 - Import whole folders by dragging them onto the window or choosing them with ⌘O. Files are added in Finder order, a file is never imported twice in one batch, and AIFC files are accepted.
 - Batch imports show "N OF M" with the file name, can be cancelled as a whole, and end with one summary of the files that failed and why (the first three are named, the rest are counted).
@@ -59,6 +62,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 
 ### Interface & accessibility
 
+- A layered Nothing-inspired app icon uses macOS 27's system lighting and appearance treatments, with an automatically generated icon for older macOS versions.
 - Red is reserved for active and interrupting states such as solo, mute, loop, play, clipping, export progress and errors. Resting controls are neutral, and Compare Original is amber.
 - Text colors meet at least 4.5:1 contrast in both themes, and Increase Contrast is supported.
 - The header, studio display and transport no longer truncate in smaller windows, and the seek bar stays usable down to the minimum window size. ⌘1 to ⌘5 hide the library when the display would not fit beside it.
@@ -82,7 +86,7 @@ New since v1.2.7: three-band EQ on every stem and on the master bus, with preset
 
 ### Performance
 
-- Separation reads each chunk of model output in one pass. The stems are bit-for-bit the same.
+- Separation reads each chunk of model output in one pass. This optimization preserves the arithmetic; the DC-offset correction described above changes denormalization separately.
 - Mix exports use the peak limiter's measured delay, so they stay sample-aligned with the source on every macOS version.
 - Isolate releases the separation model after 60 seconds without a separation, and reloads it when needed.
 - The meters and the player do less drawing work for each audio update, and Now Playing is no longer republished every second.

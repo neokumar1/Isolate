@@ -14,8 +14,8 @@ final class IsolateTests: XCTestCase {
     }
 
     func testOverlapAddThroughAccumulateReconstructsTheInput() throws {
-        // An identity "model" returns the normalised input for every source. The engine's
-        // window, denormalisation and weighting must then give the input back.
+        // An equal-split "model" returns a quarter of the normalized mix per stem.
+        // Windowing and denormalization must preserve that allocation across overlaps.
         let chunkSize = DemucsEngine.chunkSize
         let hopSize = DemucsEngine.hopSize
         let mean: Float = 0.05
@@ -45,7 +45,7 @@ final class IsolateTests: XCTestCase {
                         // A per-target offset shows whether each result lands in its own stem and channel.
                         let offset = Float(stem * 2 + channel) * 0.01
                         for i in 0..<chunkSize {
-                            let value = (signal[start + i] - mean) / deviation + offset
+                            let value = (signal[start + i] - mean) / (4 * deviation) + offset
                             let index = stem * strides[1] + channel * strides[2] + i * strides[3]
                             if dataType == .float32 { storage.storeBytes(of: value, toByteOffset: index * 4, as: Float.self) }
                             else { storage.storeBytes(of: Float16(value), toByteOffset: index * 2, as: Float16.self) }
@@ -68,7 +68,7 @@ final class IsolateTests: XCTestCase {
                 for i in stride(from: 0, to: hopSize, by: 7) {
                     let weight = weights[0][hopSize + i] + weights[1][i]
                     let rebuilt = (accumulated[0][target][hopSize + i] + accumulated[1][target][i]) / max(1e-5, weight)
-                    worst = max(worst, abs(rebuilt - (signal[hopSize + i] + offset)))
+                    worst = max(worst, abs(rebuilt - (signal[hopSize + i] / 4 + offset)))
                 }
                 XCTAssertLessThan(worst, tolerance, "\(dataType == .float32 ? "Float32" : "Float16") target \(target)")
             }

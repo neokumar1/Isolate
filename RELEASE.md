@@ -14,7 +14,7 @@ xcodebuild test -project Isolate.xcodeproj -scheme Isolate \
   -only-testing:IsolateUITests
 ```
 
-Unit tests create synthetic audio rather than relying on personal music files. With the model installed (see [MODEL.md](MODEL.md)), `TEST_RUNNER_ISOLATE_REQUIRE_MODEL=1` makes the inference tests fail instead of skipping when the model cannot run; Xcode strips `TEST_RUNNER_` when forwarding the variable, and setting only `ISOLATE_REQUIRE_MODEL` in the invoking shell does not enforce the gate. A few real-time engine tests skip when no audio output device can start, as on hosted runners.
+Unit tests create synthetic audio rather than relying on personal music files. With the model installed (see [MODEL.md](MODEL.md)), `TEST_RUNNER_ISOLATE_REQUIRE_MODEL=1` makes a missing model fail instead of skipping. An installed model that cannot run always fails unless `TEST_RUNNER_ISOLATE_ALLOW_INCOMPATIBLE_MODEL=1` explicitly enables the older-OS compatibility check. Keep that override off for release validation: safe refusal is not successful inference. Xcode strips `TEST_RUNNER_` when forwarding these variables; unprefixed variables in the invoking shell do not enforce the gate. A few real-time engine tests skip when no audio output device can start, as on hosted runners. The stem alignment test also skips if the output provides no render timeline and player start calls take over 0.5 seconds; that host cannot establish real-time alignment.
 
 Before a release, also separate real music. Point `TEST_RUNNER_ISOLATE_REAL_AUDIO_DIR` at a folder of a few songs in different formats (for example an ALAC `.m4a`, a long MP3 and a file with punctuation in its name); the files are only read:
 
@@ -24,7 +24,7 @@ TEST_RUNNER_ISOLATE_REAL_AUDIO_DIR="$HOME/Music/Isolate check" TEST_RUNNER_ISOLA
   -derivedDataPath build/DerivedData -only-testing:IsolateTests/RealMusicSmokeTests CODE_SIGNING_ALLOWED=NO
 ```
 
-It checks that every song separates into four finite stereo stems with the original's length, that each stem carries audio, and that the stems add back up to the decoded original within 10 dB, and it prints the speed and reconstruction per song. Correct separations of full mixes measure about 28–33 dB. Ordinary runs skip it.
+It checks that every song separates into four finite stereo stems with the original's length, that each stem carries audio, and that the stems add back up to the decoded original above a 10 dB reconstruction ratio. It prints speed and reconstruction per song; the latest three-source check measured about 23–30 dB. Ordinary runs skip it.
 
 UI tests take over the mouse and keyboard, so run them on a logged-in desktop you are not using, with Xcode UI automation permission. They launch an isolated empty library and keep screenshots in the `.xcresult` bundle. The complete import, playback, export and delete workflow needs the local model.
 
@@ -51,11 +51,13 @@ The script stops before building if the tag, `project.yml` and `Info.plist` disa
 
 Default signing is ad hoc, now with the hardened runtime. For Developer ID distribution, supply `ISOLATE_SIGNING_IDENTITY` and an `ISOLATE_NOTARY_PROFILE` already stored in your keychain. The script submits the app to Apple's notary service and staples it before packaging. Verify Gatekeeper on a freshly downloaded artifact before public release. Never place signing credentials in Git.
 
-`scripts/generate_assets.swift` regenerates the app icon and DMG background at exact pixel sizes; run it from the repository root and commit `Assets/AppIcon.icns` and `Sources/Resources/AppIcon.icns` together.
+The app icon's source is `Sources/Resources/AppIcon.icon`, with four SVG layers and system-rendered materials. Xcode compiles its layered representations and generates the compatibility ICNS for older macOS versions. `CFBundleIconName` and the app-icon build setting both name `AppIcon`; the separately tracked legacy ICNS is excluded from the app resource phase to avoid duplicate outputs.
+
+With **Xcode 27 selected**, run `swift scripts/generate_assets.swift` from the repository root to regenerate the macOS 27 preview, the DMG/legacy ICNS files at 16–1024 px, and the 144-dpi DMG background. Commit `Assets/AppIcon-macOS27.png`, `Assets/AppIcon.icns`, `Sources/Resources/AppIcon.icns`, and `Assets/dmg_background.png` together with icon source changes. Ordinary builds use the committed sources and do not run this generator. See [Apple's Icon Composer guidance](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
 
 ## GitHub Actions
 
-- **Build & Test** runs on pushes and pull requests to `main`, on both `macos-15` and `macos-26`. It checks every shell script's syntax, the cask's Ruby syntax, that `Info.plist` matches `project.yml`, and whitespace; builds Release; and runs the unit and audio tests. When the model variables are available it fetches the pinned model and requires real inference; fork pull requests skip inference with a notice. Test results are kept as `.xcresult` artifacts.
+- **Build & Test** runs on pushes and pull requests to `main`, on both `macos-15` and `macos-26`. It checks every shell script's syntax, the cask's Ruby syntax, that `Info.plist` matches `project.yml`, and whitespace; builds Release; and runs the unit and audio tests. When the model variables are available it fetches the pinned model and requires real inference on macOS 26. macOS 15 explicitly allows the verified refusal of its incompatible Core ML runtime, with inference tests reported as skipped; a missing model still fails. Fork pull requests skip missing-model inference with a notice. Test results are kept as `.xcresult` artifacts.
 - **Prepare Release Draft** runs on a `v*` tag. Its first step compares the tag with `project.yml`, `Info.plist` and `CHANGELOG.md`, so a mismatch fails in seconds. It then fetches the pinned model, runs the model-backed unit tests, packages, and creates a **draft** release named `Isolate <tag>` with the DMG, the ZIP and the checksums. The draft's notes come from `scripts/release_notes.sh`: what to download, first-launch steps for macOS 15+ and 14, and the CHANGELOG section. Reminders for the maintainer go to the job summary, not the notes.
 - `workflow_dispatch` must be run against a version tag, not a branch.
 - Interactive UI tests are a local release gate because hosted runners do not provide a dependable logged-in desktop.

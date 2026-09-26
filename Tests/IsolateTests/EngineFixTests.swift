@@ -71,6 +71,12 @@ final class EngineFixTests: XCTestCase {
         let report = engine.lastStartReport.map {
             "attempts \($0.attempts), lead \(String(format: "%.3f", $0.lead)) s, calls \(String(format: "%.3f", $0.callDuration)) s, together \($0.startedTogether), timeline \($0.usedRenderTimeline), watchdog restarts \($0.watchdogRestarts)"
         } ?? "no start report"
+        // A host whose output never produces a render timestamp and takes seconds per
+        // play(at:) call (seen on a loaded hosted macOS 15 runner) is not rendering in real
+        // time, so stem timing cannot be judged there. Real Macs return in well under 1 ms.
+        if let start = engine.lastStartReport, !start.usedRenderTimeline, start.callDuration > 0.5 {
+            throw XCTSkip("\(label): this host's audio output is not rendering in real time (\(report))")
+        }
         // Every stem must be audible on its own, or silence would prove nothing.
         for (index, peak) in reading.stems.enumerated() {
             XCTAssertGreaterThan(peak, 0.05, "\(label): stem \(index) did not play (\(report))", file: file, line: line)

@@ -263,18 +263,43 @@ public actor DemucsEngine {
     static let selfTestFloorDB = 20.0
 
     static func verifiedModel(at url: URL) throws -> (model: MLModel, computeUnits: MLComputeUnits) {
-        var measured: [String] = []
-        let paths: [(MLComputeUnits, String)] = [(.all, "all"), (.cpuAndGPU, "CPU and GPU"),
-                                                 (.cpuAndNeuralEngine, "CPU and Neural Engine"), (.cpuOnly, "CPU")]
-        for (units, name) in paths {
+        try verifiedComputePath(load: { units in
             let config = MLModelConfiguration()
             config.computeUnits = units
             let model = try MLModel(contentsOf: url, configuration: config)
             try validateModel(model)
-            let quality = try selfTestReconstructionDB(model)
-            if quality >= selfTestFloorDB { return (model, units) }
-            print("Model self-test on \(name): \(String(format: "%.1f", quality)) dB")
-            measured.append("\(name) \(Int(quality.rounded())) dB")
+            return model
+        }, reconstructionDB: selfTestReconstructionDB)
+    }
+
+    /// Keep compute-path selection independent of Core ML so failures on one device
+    /// can be exercised deterministically without requiring that hardware.
+    static func verifiedComputePath<Model>(load: (MLComputeUnits) throws -> Model,
+                                          reconstructionDB: (Model) throws -> Double) throws
+        -> (model: Model, computeUnits: MLComputeUnits) {
+        var measured: [String] = []
+        var evaluatedOutput = false
+        let paths: [(MLComputeUnits, String)] = [(.all, "all"), (.cpuAndGPU, "CPU and GPU"),
+                                                 (.cpuAndNeuralEngine, "CPU and Neural Engine"), (.cpuOnly, "CPU")]
+        for (units, name) in paths {
+            do {
+                let model = try load(units)
+                let quality = try reconstructionDB(model)
+                evaluatedOutput = true
+                if quality.isFinite, quality >= selfTestFloorDB { return (model, units) }
+                // Invalid tensor output returns -infinity. Converting that (or NaN)
+                // to Int traps, so diagnostics must also handle nonfinite results.
+                let result = quality.isFinite ? String(format: "%.0f dB", quality) : "invalid output"
+                print("Model self-test on \(name): \(result)")
+                measured.append("\(name) \(result)")
+            } catch {
+                // A GPU/ANE loading or prediction failure must not prevent a
+                // working CPU path from being tried on the same Mac.
+                measured.append("\(name): \(error.localizedDescription)")
+            }
+        }
+        guard evaluatedOutput else {
+            throw DemucsError.modelLoadFailed(measured.joined(separator: "; "))
         }
         throw DemucsError.modelIncompatibleWithSystem("self-test: " + measured.joined(separator: ", "))
     }
@@ -500,6 +525,9 @@ public actor DemucsEngine {
         let strides = output.strides.map(\.intValue)
         let step = strides[3]
         let isFloat32 = output.dataType == .float32
+        // Normalization subtracts the mix's mean once. Restore it once across
+        // the four stems, not once per stem (which adds three extra DC offsets).
+        let stemMean = mean / Float(stemNames.count)
         // Resolve the tensor type and storage once; per-sample Objective-C
         // property reads dominated this loop. Arithmetic order is unchanged.
         output.withUnsafeBytes { raw in
@@ -511,12 +539,12 @@ public actor DemucsEngine {
                             if isFloat32 {
                                 let samples = raw.baseAddress!.assumingMemoryBound(to: Float.self)
                                 for i in 0..<chunkSize {
-                                    target[i] += (samples[offset + i * step] * standardDeviation + mean) * window[i]
+                                    target[i] += (samples[offset + i * step] * standardDeviation + stemMean) * window[i]
                                 }
                             } else {
                                 let samples = raw.baseAddress!.assumingMemoryBound(to: Float16.self)
                                 for i in 0..<chunkSize {
-                                    target[i] += (Float(samples[offset + i * step]) * standardDeviation + mean) * window[i]
+                                    target[i] += (Float(samples[offset + i * step]) * standardDeviation + stemMean) * window[i]
                                 }
                             }
                         }

@@ -133,15 +133,7 @@ final class SeparationFixTests: XCTestCase {
     }
 
     private func split(_ url: URL, progress: @escaping @Sendable (SplitProgressInfo) -> Void = { _ in }) async throws -> [URL]? {
-        do {
-            return try await DemucsEngine.shared.splitAudio(url: url, progressCallback: progress)
-        } catch DemucsError.modelIncompatibleWithSystem(let detail) {
-            // Isolate correctly refuses to separate here; see DemucsEngine.verifiedModel.
-            throw XCTSkip("Core ML on this macOS cannot run the model correctly: \(detail)")
-        } catch DemucsError.modelNotFound(let message) {
-            if ProcessInfo.processInfo.environment["ISOLATE_REQUIRE_MODEL"] == "1" { XCTFail(message); return nil }
-            throw XCTSkip("Install the model to run inference: \(message)")
-        }
+        try await Hardening.splitRequiringModel(url, progress: progress)
     }
 
     private func removeCache(_ stems: [URL]?) {
@@ -152,7 +144,8 @@ final class SeparationFixTests: XCTestCase {
 
     // MARK: - Accumulation (performance-2)
 
-    /// The accumulation loop before hoisting, kept verbatim as the reference.
+    /// The simple accumulation loop, including restoration of the mix mean once
+    /// across all stems, used to verify the optimized storage/stride handling.
     private static func referenceAccumulate(_ output: MLMultiArray, into accumulators: inout [[Float]],
                                             weights: inout [Float], window: [Float], mean: Float,
                                             standardDeviation: Float) {
@@ -170,7 +163,7 @@ final class SeparationFixTests: XCTestCase {
                     } else {
                         sample = Float(output.dataPointer.assumingMemoryBound(to: Float16.self)[index])
                     }
-                    accumulators[target][i] += (sample * standardDeviation + mean) * window[i]
+                    accumulators[target][i] += (sample * standardDeviation + mean / 4) * window[i]
                 }
             }
         }
@@ -206,6 +199,31 @@ final class SeparationFixTests: XCTestCase {
                               "\(dataType == .float32 ? "Float32" : "Float16") channel \(channel) differs")
             }
             XCTAssertTrue(expectedWeights.map(\.bitPattern) == actualWeights.map(\.bitPattern))
+        }
+    }
+
+    func testDenormalizationRestoresDCOffsetOnceAcrossAllStems() throws {
+        let count = DemucsEngine.chunkSize
+        for type in [MLMultiArrayDataType.float16, .float32] {
+            let output = try MLMultiArray(shape: [1, 4, 2, NSNumber(value: count)], dataType: type)
+            output.dataPointer.initializeMemory(as: UInt8.self, repeating: 0,
+                                                count: output.count * (type == .float32 ? 4 : 2))
+            for mean: Float in [-0.12, 0, 0.12] {
+                var values = [[Float]](repeating: [Float](repeating: 0, count: count), count: 8)
+                var weights = [Float](repeating: 0, count: count)
+                let window = [Float](repeating: 0.5, count: count)
+                // Two overlapping predictions must still restore one source offset.
+                for _ in 0..<2 {
+                    try DemucsEngine.accumulate(output, into: &values, weights: &weights,
+                                                window: window, mean: mean, standardDeviation: 0.25)
+                }
+                for channel in 0..<2 {
+                    for frame in [0, count / 2, count - 1] {
+                        let mix = (0..<4).reduce(Float(0)) { $0 + values[$1 * 2 + channel][frame] / weights[frame] }
+                        XCTAssertEqual(mix, mean, accuracy: 1e-6, "DC belongs to the mix once, not four times")
+                    }
+                }
+            }
         }
     }
 
@@ -261,7 +279,7 @@ final class SeparationFixTests: XCTestCase {
             ], commonFormat: .pcmFormatFloat32, interleaved: false)
             try file.write(from: buffer)
         }
-        XCTAssertEqual(StreamingAudio.declaredFrames(of: flac), frames)
+        XCTAssertEqual(try StreamingAudio.declaredFrames(of: flac), frames)
         XCTAssertEqual(try StreamingAudio.decode(flac, to: directory.appending(path: "whole.wav")).frames, frames)
 
         let bytes = try Data(contentsOf: flac)
@@ -287,7 +305,7 @@ final class SeparationFixTests: XCTestCase {
             ], commonFormat: .pcmFormatFloat32, interleaved: false)
             try file.write(from: buffer)
         }
-        XCTAssertEqual(StreamingAudio.declaredFrames(of: url), 44_100 * 3)
+        XCTAssertEqual(try StreamingAudio.declaredFrames(of: url), 44_100 * 3)
         XCTAssertEqual(try StreamingAudio.decode(url, to: directory.appending(path: "out.wav")).frames, 44_100 * 3, accuracy: 2)
     }
 
@@ -304,6 +322,23 @@ final class SeparationFixTests: XCTestCase {
         XCTAssertTrue(StreamingAudio.describe(kAudioFileInvalidFileError).contains("'dta?'"))
         XCTAssertTrue(StreamingAudio.describe(kAudioCodecBadDataError).hasPrefix("The file appears to be damaged"))
         XCTAssertEqual(StreamingAudio.describe(-50), "The file could not be decoded. It may be damaged or unsupported (Core Audio -50).")
+    }
+
+    func testDamagedAudioIsRejectedBeforeLoadingTheModel() async throws {
+        let source = directory.appending(path: "damaged-\(UUID().uuidString).wav")
+        let bytes = Data("This is not a WAV file.".utf8)
+        try bytes.write(to: source)
+        let phases = OSAllocatedUnfairLock(initialState: [String]())
+        do {
+            _ = try await DemucsEngine.shared.splitAudio(url: source) { info in
+                phases.withLock { $0.append(info.statusMessage) }
+            }
+            XCTFail("Damaged audio must not separate")
+        } catch DemucsError.unreadableSource {
+            // A decoding error should win even on a Mac without the model installed.
+        }
+        XCTAssertFalse(phases.withLock { $0.contains("LOADING SEPARATION MODEL...") })
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
     }
 
     // MARK: - Model errors (separation-8)

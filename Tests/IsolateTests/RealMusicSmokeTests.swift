@@ -18,12 +18,8 @@ final class RealMusicSmokeTests: XCTestCase {
 
         for source in sources {
             let start = CFAbsoluteTimeGetCurrent()
-            let stems: [URL]
-            do {
-                stems = try await DemucsEngine.shared.splitAudio(url: source) { _ in }
-            } catch DemucsError.modelIncompatibleWithSystem(let detail) {
-                throw XCTSkip("Core ML on this macOS cannot run the model correctly: \(detail)")
-            }
+            // An explicitly requested real-music check must fail if separation fails.
+            let stems = try await DemucsEngine.shared.splitAudio(url: source) { _ in }
             let seconds = CFAbsoluteTimeGetCurrent() - start
             let directory = try XCTUnwrap(stems.first?.deletingLastPathComponent())
             defer { if StemCache.owns(directory) { try? FileManager.default.removeItem(at: directory) } }
@@ -53,12 +49,17 @@ final class RealMusicSmokeTests: XCTestCase {
                 for (index, file) in files.enumerated() { try file.read(into: buffers[index], frameCount: count) }
                 for channel in 0..<2 {
                     let mix = buffers[4].floatChannelData![channel]
+                    let channels = buffers.prefix(4).map { $0.floatChannelData![channel] }
                     for frame in 0..<Int(count) {
                         var sum: Float = 0
                         for stem in 0..<4 {
-                            let sample = buffers[stem].floatChannelData![channel][frame]
-                            XCTAssertTrue(sample.isFinite)
-                            if !sample.isFinite { return }
+                            let sample = channels[stem][frame]
+                            // Check every sample without invoking XCTest hundreds of
+                            // millions of times for a long song's valid samples.
+                            guard sample.isFinite else {
+                                XCTFail("\(source.lastPathComponent): nonfinite sample in stem \(stem), channel \(channel)")
+                                return
+                            }
                             stemEnergy[stem] += Double(sample * sample)
                             peak = max(peak, abs(sample))
                             sum += sample
@@ -70,6 +71,7 @@ final class RealMusicSmokeTests: XCTestCase {
                 remaining -= Int(count)
             }
             let reconstructionDB = 10 * log10(signal / max(error, 1e-12))
+            XCTAssertTrue(reconstructionDB.isFinite)
             let rms = stemEnergy.map { sqrt($0 / Double(frames * 2)) }
             let duration = Double(frames) / 44_100
             print(String(format: "REAL-MUSIC %@: %.1fs audio in %.1fs (%.1fx realtime), reconstruction %.1f dB, peak %.3f, RMS v/d/b/o %.4f %.4f %.4f %.4f",

@@ -41,7 +41,7 @@ Isolate's releases are built by GitHub Actions from this repository and are ad-h
 4. Enter your login password or use Touch ID.
 5. When macOS asks one last time, click **Open**.
 
-From then on, Isolate opens like any other app.
+From then on, Isolate opens like any other app. See [Apple's first-launch instructions](https://support.apple.com/en-us/102445) for the system approval flow.
 
 ### macOS 14 Sonoma
 
@@ -49,7 +49,7 @@ In Applications, Control-click (or right-click) **Isolate**, choose **Open**, th
 
 ### Please don't turn off Gatekeeper
 
-Don't disable Gatekeeper (for example with `spctl --master-disable`) or strip quarantine attributes with `xattr` to skip these steps. Those commands change security checks for every app on your Mac, while the steps above approve only Isolate. If you'd rather not run a prebuilt app, check the download against `SHA256SUMS.txt` or [build Isolate from source](INSTALL.md#build-from-source).
+Don't disable Gatekeeper (for example with `spctl --master-disable`) or strip quarantine attributes with `xattr` to skip these steps. Disabling Gatekeeper changes checks for all apps; stripping an app's quarantine skips its normal first-launch checks. The steps above approve only Isolate. You can check the download against `SHA256SUMS.txt` or [build Isolate from source](INSTALL.md#build-from-source).
 
 If you open Isolate straight from the disk image, it offers to move itself into Applications.
 
@@ -124,7 +124,7 @@ The full list is also in **Settings › Shortcuts**.
 
 ## Speed, quality and limits
 
-- **Speed depends on your Mac.** On an M-series MacBook Pro running macOS 27, real songs separated at about 2.5× realtime during v1.3.0 testing: a 4:37 ALAC track in 1:49 and an 8:24 MP3 in 3:17. Those runs were measured before a later optimization and haven't been re-timed. Your speed will vary with the Mac, the macOS version and what else is running; the progress screen shows the measured speed for each song.
+- **Speed depends on your Mac.** The September 25–26 v1.3.0 checks on an M-series MacBook Pro running macOS 27 measured 3.0–3.3× realtime: a 4:37 ALAC track in 1:33 and an 8:24 MP3 in 2:34. See [the measured results](QUALITY_REPORT.md#real-music-separation). Your speed will vary with the Mac, the macOS version and what else is running; the progress screen shows the measured speed for each song.
 - **The first separation after installing or updating is slower** while macOS prepares the model for your Mac. On the test Mac that took about 17 seconds once; later model loads took 3 to 4 seconds.
 - **Memory:** on the test Mac, Isolate's memory footprint was about 1.6 to 2.7 GB after a separation, while the model was loaded. Isolate releases the model after 60 seconds without a separation.
 - **Disk:** separated songs use about 106 MB per minute of audio. Isolate checks for enough free space before it starts.
