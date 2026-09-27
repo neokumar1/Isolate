@@ -10,6 +10,20 @@ public final class NowPlayingManager: NSObject {
     private weak var engineManager: AudioEngineManager?
     private var playlistProvider: (() -> [TrackModel])?
     private var trackSelectHandler: ((TrackModel) -> Void)?
+
+    /// The artwork last handed to MediaPlayer, reused while the image is unchanged.
+    private var artworkImage: NSImage?
+    private var artwork: MPMediaItemArtwork?
+
+    /// What the system was last told. It extrapolates elapsed time from this,
+    /// so progress only needs republishing when playback departs from it.
+    struct PublishedProgress: Equatable {
+        var elapsed: Double
+        var duration: Double
+        var rate: Double
+        var uptime: TimeInterval
+    }
+    private var publishedProgress: PublishedProgress?
     
     public override init() {
         super.init()
@@ -119,16 +133,39 @@ public final class NowPlayingManager: NSObject {
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
         
         // High-Res Artwork with Nothing OS Application Icon Fallback
-        if let art = artwork {
-            let mpArtwork = MPMediaItemArtwork(boundsSize: art.size) { _ in art }
-            info[MPMediaItemPropertyArtwork] = mpArtwork
-        } else if let appIcon = NSApp.applicationIconImage {
-            let mpArtwork = MPMediaItemArtwork(boundsSize: appIcon.size) { _ in appIcon }
-            info[MPMediaItemPropertyArtwork] = mpArtwork
+        if let image = artwork ?? NSApp?.applicationIconImage {
+            info[MPMediaItemPropertyArtwork] = mediaArtwork(for: image)
         }
         
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
+        recordProgress(info)
+    }
+
+    private func mediaArtwork(for image: NSImage) -> MPMediaItemArtwork {
+        if let artwork, artworkImage === image { return artwork }
+        let made = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        artworkImage = image
+        artwork = made
+        return made
+    }
+
+    private func recordProgress(_ info: [String: Any]) {
+        publishedProgress = PublishedProgress(
+            elapsed: info[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double ?? 0,
+            duration: info[MPMediaItemPropertyPlaybackDuration] as? Double ?? 0,
+            rate: info[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? 0,
+            uptime: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// True when the system's extrapolated position, duration or rate no longer
+    /// matches playback, e.g. after a seek, loop wrap or rate change.
+    static func progressNeedsPublish(_ last: PublishedProgress?, elapsed: Double, duration: Double,
+                                     rate: Double, uptime: TimeInterval) -> Bool {
+        guard let last else { return true }
+        guard last.rate == rate, abs(last.duration - duration) < 0.001 else { return true }
+        let expected = last.elapsed + (uptime - last.uptime) * last.rate
+        return abs(expected - elapsed) > 0.25
     }
     
     public func updateNowPlayingPlaybackState() {
@@ -140,19 +177,28 @@ public final class NowPlayingManager: NSObject {
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPNowPlayingInfoCenter.default().playbackState = engine.isPlaying ? .playing : .paused
+        recordProgress(info)
     }
     
     public func updateNowPlayingProgress(elapsed: Double, duration: Double) {
-        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        let rate = (engineManager?.isPlaying == true) ? (engineManager?.playbackRate ?? 1) : 0.0
+        let uptime = ProcessInfo.processInfo.systemUptime
+        guard Self.progressNeedsPublish(publishedProgress, elapsed: elapsed, duration: duration,
+                                        rate: rate, uptime: uptime),
+              var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         info[MPMediaItemPropertyPlaybackDuration] = duration
-        info[MPNowPlayingInfoPropertyPlaybackRate] = (engineManager?.isPlaying == true) ? (engineManager?.playbackRate ?? 1) : 0.0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = rate
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        publishedProgress = PublishedProgress(elapsed: elapsed, duration: duration, rate: rate, uptime: uptime)
     }
     
     public func clear() {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         MPNowPlayingInfoCenter.default().playbackState = .stopped
+        publishedProgress = nil
+        artworkImage = nil
+        artwork = nil
     }
     
     public func cleanTrackTitle(_ raw: String) -> String {
@@ -163,8 +209,10 @@ public final class NowPlayingManager: NSObject {
                 clean = String(clean.dropLast(ext.count))
             }
         }
-        // Strip leading track numbering e.g. "01 - ", "01. ", "01 "
-        let pattern = #"^\d{1,3}\s*[-._]\s*"#
+        // Strip only an unmistakable track-number prefix ("01 - ", "01. ",
+        // "01_") before a letter, so titles such as "7-Eleven", "22",
+        // "1-800-273-8255" or "99 Problems" are published unchanged.
+        let pattern = #"^\d{1,3}(?:\s*[-.]\s+|_\s*)(?=\p{L})"#
         if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
             let range = NSRange(clean.startIndex..<clean.endIndex, in: clean)
             clean = regex.stringByReplacingMatches(in: clean, options: [], range: range, withTemplate: "")

@@ -26,11 +26,19 @@ final class AudioMeterProcessor: @unchecked Sendable {
         guard now - lastUpdate >= 1.0 / 30.0,
               buffer.frameLength > 0, let channels = buffer.floatChannelData else { return nil }
         lastUpdate = now
-        fft.computeFFT(buffer: channels[0], frameCount: Int(buffer.frameLength), outMagnitudes: &magnitudes)
+        let frameCount = Int(buffer.frameLength)
+        for bin in magnitudes.indices { magnitudes[bin] = 0 }
+        // Taps deliver about 100 ms per buffer whatever size is requested. Analyse every
+        // FFT-sized hop, newest first, so recent audio and short transients register.
         // Preserve right-only and opposite-phase stereo content in the display.
-        for channel in 1..<Int(buffer.format.channelCount) {
-            fft.computeFFT(buffer: channels[channel], frameCount: Int(buffer.frameLength), outMagnitudes: &channelMagnitudes)
-            for bin in magnitudes.indices { magnitudes[bin] = max(magnitudes[bin], channelMagnitudes[bin]) }
+        for channel in 0..<Int(buffer.format.channelCount) {
+            var start = max(0, frameCount - fft.fftSize)
+            while true {
+                fft.computeFFT(buffer: channels[channel] + start, frameCount: frameCount - start, outMagnitudes: &channelMagnitudes)
+                for bin in magnitudes.indices { magnitudes[bin] = max(magnitudes[bin], channelMagnitudes[bin]) }
+                if start == 0 { break }
+                start = max(0, start - fft.fftSize)
+            }
         }
         let nyquist = Float(buffer.format.sampleRate / 2)
         let maxFrequency = min(nyquist, 19_000)

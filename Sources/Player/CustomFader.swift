@@ -5,7 +5,8 @@ struct CustomFader: View {
     @Environment(\.isEnabled) private var isEnabled
     @Binding var value: Double
     let label: String
-    var peak: Float = 0
+    /// True while the channel's latest peak is at or above full scale.
+    var isClipping = false
     
     @Bindable private var theme = ThemeManager.shared
     @State private var startValue: Double? = nil
@@ -43,6 +44,17 @@ struct CustomFader: View {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
+                    // The cap ignores hit testing so drags reach this area; track
+                    // hover here instead, within the same band that grabs the cap.
+                    .onContinuousHover { phase in
+                        let isOverThumb: Bool
+                        if case .active(let location) = phase {
+                            isOverThumb = abs(location.y - thumbCenterY) <= 16
+                        } else {
+                            isOverThumb = false
+                        }
+                        if isOverThumb != isHovered { isHovered = isOverThumb }
+                    }
                     .gesture(
                         DragGesture(minimumDistance: 0, coordinateSpace: .local)
                             .onChanged { drag in
@@ -107,7 +119,7 @@ struct CustomFader: View {
                             if let lbl = tick.label {
                                 Text(lbl)
                                     .font(.custom("DotGothic16-Regular", size: 7.5))
-                                    .foregroundColor(tick.normVal == 1.0 ? Color.red.opacity(0.85) : theme.textMuted)
+                                    .foregroundColor(theme.textMuted)
                                     .frame(width: 18, alignment: .trailing)
                             } else {
                                 Spacer()
@@ -115,7 +127,7 @@ struct CustomFader: View {
                             }
                             
                             Rectangle()
-                                .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : (theme.isDark ? Color.white.opacity(tick.isMajor ? 0.25 : 0.12) : Color.black.opacity(tick.isMajor ? 0.35 : 0.16)))
+                                .fill(tickColor(tick))
                                 .frame(width: tick.isMajor ? 6 : 3, height: 1)
                         }
                         .position(x: centerX - 18, y: yPos)
@@ -123,7 +135,7 @@ struct CustomFader: View {
                         
                         // Right Symmetrical Ticks
                         Rectangle()
-                            .fill(tick.normVal == 1.0 ? Color.red.opacity(0.8) : (theme.isDark ? Color.white.opacity(tick.isMajor ? 0.25 : 0.12) : Color.black.opacity(tick.isMajor ? 0.35 : 0.16)))
+                            .fill(tickColor(tick))
                             .frame(width: tick.isMajor ? 6 : 3, height: 1)
                             .position(x: centerX + (tick.isMajor ? 11 : 9.5), y: yPos)
                             .allowsHitTesting(false)
@@ -132,11 +144,11 @@ struct CustomFader: View {
                 
                 // 3. Vertical Track Slot & Active Level Meter with Peak-Hold Clip LED
                 ZStack(alignment: .top) {
-                    let isLit = isClippingHeld
+                    let isLit = isClipping || isClippingHeld
                     Circle()
-                        .fill(isLit ? Color.red : Color.red.opacity(0.18))
+                        .fill(isLit ? theme.accentRed : theme.knobArcTrack)
                         .frame(width: 4.5, height: 4.5)
-                        .shadow(color: isLit ? Color.red : Color.clear, radius: 3)
+                        .shadow(color: isLit ? theme.accentRed : Color.clear, radius: 3)
                         .padding(.bottom, 4)
                         .animation(.easeOut(duration: 0.25), value: isLit)
                     
@@ -150,9 +162,9 @@ struct CustomFader: View {
                                     .stroke(theme.hairline, lineWidth: 0.5)
                             )
                         
-                        // Track fill (active level)
+                        // Track fill (active level); red is reserved for the clip LED.
                         Rectangle()
-                            .fill(Color.red)
+                            .fill(theme.spectrumBarDefault)
                             .frame(width: 3.5, height: max(0, (max(0, trackHeight - 12)) * CGFloat(FaderScale.position(for: value))))
                     }
                     .padding(.top, 10)
@@ -163,7 +175,7 @@ struct CustomFader: View {
                 
                 // 4. Machined Hardware Fader Thumb (Nothing OS Style)
                 ZStack {
-                    // Expanded touch target (48x28pt)
+                    // Cap layout box; clicks fall through to the track hit area
                     Color.clear
                         .frame(width: 48, height: 28)
                         .contentShape(Rectangle())
@@ -178,13 +190,13 @@ struct CustomFader: View {
                                 RoundedRectangle(cornerRadius: 1.5)
                                     .stroke(
                                         (isHovered || isDragging)
-                                            ? Color.red.opacity(0.90)
+                                            ? theme.accentRed.opacity(0.90)
                                             : theme.faderThumbStroke,
                                         lineWidth: (isHovered || isDragging) ? 1.5 : 1
                                     )
                             )
                             .shadow(
-                                color: Color.red.opacity((isHovered || isDragging) ? 0.6 : 0.0),
+                                color: theme.accentRed.opacity((isHovered || isDragging) ? 0.6 : 0.0),
                                 radius: 5,
                                 x: 0,
                                 y: 0
@@ -202,21 +214,13 @@ struct CustomFader: View {
                         }
                         .frame(width: 32)
                         
-                        // Center Nothing Red Alignment Index Stripe
+                        // Center Alignment Index Stripe, red only while the cap is in hand
                         Rectangle()
-                            .fill(Color.red)
+                            .fill(isDragging ? theme.accentRed : theme.background)
                             .frame(width: 22, height: 2)
                     }
                 }
                 .position(x: centerX, y: thumbCenterY)
-                .onHover { hovering in
-                    isHovered = hovering
-                    if hovering {
-                        NSCursor.pointingHand.push()
-                    } else {
-                        NSCursor.pop()
-                    }
-                }
                 .allowsHitTesting(false)
             }
         }
@@ -232,9 +236,26 @@ struct CustomFader: View {
         .onKeyPress(.downArrow) { adjust(-0.02); return .handled }
         .contextMenu { Button("Reset to 0 dB") { value = 1 } }
         .simultaneousGesture(TapGesture(count: 2).onEnded { value = 1; Haptics.playAlignment() })
-        .onChange(of: peak) { _, peak in if peak >= 1 { triggerClipHold() } }
-        .onDisappear { clipHoldTask?.cancel() }
+        .onChange(of: isClipping) { _, clipping in
+            if clipping {
+                clipHoldTask?.cancel()
+                isClippingHeld = true
+            } else {
+                // The peak just fell below full scale: hold the LED for 1.2 s.
+                triggerClipHold()
+            }
+        }
+        .onDisappear {
+            clipHoldTask?.cancel()
+            isClippingHeld = false
+            isHovered = false
+        }
 
+    }
+    
+    private func tickColor(_ tick: FaderTick) -> Color {
+        guard tick.isMajor else { return theme.hairline }
+        return theme.increaseContrast ? theme.border : theme.textDisabled
     }
     
     private func adjust(_ delta: Double) {
@@ -247,10 +268,10 @@ struct CustomFader: View {
         clipHoldTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
-            if peak < 1 {
-                withAnimation(.easeOut(duration: 0.35)) {
-                    isClippingHeld = false
-                }
+            // This task starts when the peak falls below clipping. A new clip
+            // cancels it; avoid reading the stale clip state captured with this view.
+            withAnimation(.easeOut(duration: 0.35)) {
+                isClippingHeld = false
             }
         }
     }

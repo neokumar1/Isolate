@@ -4,11 +4,19 @@ import UniformTypeIdentifiers
 
 @main
 struct IsolateApp: App {
+    @NSApplicationDelegateAdaptor(IsolateAppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
     @State private var engineManager = AudioEngineManager()
     @State private var theme = ThemeManager.shared
     @State private var isShowingAboutModal = false
     @State private var isShowingSettingsModal = false
+    private let libraryContainer: ModelContainer
+
+    init() {
+        // One logical main window: without this, the tab bar's "+" opens more.
+        NSWindow.allowsAutomaticWindowTabbing = false
+        libraryContainer = LibraryStore.makeContainer()
+    }
 
     var body: some Scene {
         WindowGroup("Isolate", id: "main", for: String.self) { _ in
@@ -19,19 +27,38 @@ struct IsolateApp: App {
                 .frame(minWidth: 960, minHeight: 580)
                 .background(WindowAccessor())
                 .environment(engineManager)
+                .onAppear {
+                    appDelegate.engineManager = engineManager
+                    // The status menu has no SwiftUI environment; hand it the
+                    // scene's action so it can reopen a closed window.
+                    MenuBarManager.shared.openMainWindow = { openWindow(id: "main", value: "main") }
+                }
         } defaultValue: {
             "main"
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Isolate") { isShowingAboutModal = true }
+                Button("About Isolate") {
+                    isShowingSettingsModal = false
+                    isShowingAboutModal = true
+                    openWindow(id: "main", value: "main")
+                }
             }
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { isShowingSettingsModal = true }
+                Button("Settings…") {
+                    isShowingAboutModal = false
+                    isShowingSettingsModal = true
+                    openWindow(id: "main", value: "main")
+                }
                     .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
-                Button("Import Audio…") { engineManager.importRequested = true }
+                Button("Import Audio…") {
+                    isShowingAboutModal = false
+                    isShowingSettingsModal = false
+                    engineManager.importRequested = true
+                    openWindow(id: "main", value: "main")
+                }
                     .keyboardShortcut("o", modifiers: .command)
                     .disabled(engineManager.isSplitting)
                 Button("Export Stems…") { engineManager.exportStems() }
@@ -40,6 +67,9 @@ struct IsolateApp: App {
                 Button("Export Mix…") { engineManager.exportMix() }
                     .keyboardShortcut("m", modifiers: [.command, .shift])
                     .disabled(!engineManager.hasLoadedTrack || engineManager.isSplitting || engineManager.isExporting)
+                // Reachable even while an overlay covers the EXPORT control.
+                Button("Cancel Export") { engineManager.cancelExport() }
+                    .disabled({ if case .exporting = engineManager.exportState { return false }; return true }())
             }
             CommandGroup(after: .windowArrangement) {
                 Button("Show Isolate") { openWindow(id: "main", value: "main") }
@@ -53,7 +83,7 @@ struct IsolateApp: App {
                     .disabled(!engineManager.canBypass || engineManager.isSplitting)
             }
         }
-        .modelContainer(for: TrackModel.self, inMemory: AppPreferences.isTesting)
+        .modelContainer(libraryContainer)
         .defaultSize(width: 1280, height: 800)
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
@@ -61,42 +91,142 @@ struct IsolateApp: App {
     }
 }
 
+/// Asks before quitting while work that cannot resume is running.
+@MainActor
+final class IsolateAppDelegate: NSObject, NSApplicationDelegate {
+    weak var engineManager: AudioEngineManager?
+
+    enum PendingWork: Equatable {
+        case separation
+        case export
+    }
+
+    /// A finished export only shows COMPLETED briefly and needs no confirmation.
+    static func pendingWork(isSplitting: Bool, exportState: ExportState) -> PendingWork? {
+        if isSplitting { return .separation }
+        if case .exporting = exportState { return .export }
+        return nil
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let engine = engineManager,
+              let work = Self.pendingWork(isSplitting: engine.isSplitting, exportState: engine.exportState) else {
+            return .terminateNow
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch work {
+        case .separation:
+            alert.messageText = "Quit while a track is being separated?"
+            alert.informativeText = "Quitting cancels the import, and its separation progress is lost."
+            alert.addButton(withTitle: "Keep Separating")
+            alert.addButton(withTitle: "Cancel Import & Quit")
+        case .export:
+            alert.messageText = "Quit while an export is running?"
+            alert.informativeText = "The export stops and its file is not saved."
+            alert.addButton(withTitle: "Keep Exporting")
+            alert.addButton(withTitle: "Quit")
+        }
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        // Quit once the cancelled work has removed its temporary files.
+        switch work {
+        case .separation:
+            engine.cancelSplitAudio()
+            Self.replyToTermination(within: .seconds(15), when: { !engine.isSplitting })
+        case .export:
+            engine.cancelExport()
+            Self.replyToTermination(within: .seconds(5), when: { !engine.isExporting })
+        }
+        return .terminateLater
+    }
+
+    /// Answers `.terminateLater` once `isDone` holds or `timeout` passes. Polls
+    /// with a run-loop timer, not a Task: when terminate is called from inside
+    /// a main-queue job, AppKit's wait for the reply cannot drain the main
+    /// queue, so a Task would never run and the app would never quit.
+    static func replyToTermination(within timeout: Duration, when isDone: @escaping @MainActor () -> Bool,
+                                   reply: @escaping @MainActor () -> Void = { NSApp.reply(toApplicationShouldTerminate: true) }) {
+        let deadline = ContinuousClock.now + timeout
+        let timer = Timer(timeInterval: 0.05, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                guard isDone() || ContinuousClock.now >= deadline else { return }
+                timer.invalidate()
+                reply()
+            }
+        }
+        // Common modes include the modal-panel mode AppKit waits in.
+        RunLoop.main.add(timer, forMode: .common)
+    }
+}
+
 struct SplittingProgressModal: View {
+    /// True while About or Settings is drawn on top. Escape then closes that
+    /// card and must never reach CANCEL IMPORT underneath.
+    var isCovered = false
+    /// The file being separated and its place in a multi-file import.
+    var fileName: String? = nil
+    var batchIndex = 0
+    var batchCount = 0
     @Environment(AudioEngineManager.self) private var engineManager
     @State private var theme = ThemeManager.shared
 
+    static func cancelShortcut(isCovered: Bool) -> KeyboardShortcut? {
+        isCovered ? nil : .cancelAction
+    }
+
     var body: some View {
+        let isCancelling = engineManager.lastImportCancelled
         ZStack {
             theme.modalBackdrop
-            VStack(spacing: 24) {
-                Text(engineManager.splitStatusMessage)
-                    .font(.custom("DotGothic16-Regular", size: 22))
+            VStack(spacing: 20) {
+                Text("\(Int(engineManager.splitProgress * 100))%")
+                    .font(.custom("DotGothic16-Regular", size: 48))
                     .foregroundStyle(theme.textPrimary)
+                if let fileName {
+                    Text(batchCount > 1 ? "\(batchIndex) OF \(batchCount) · \(fileName)" : fileName)
+                        .font(.custom("DotGothic16-Regular", size: 14))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(engineManager.splitStatusMessage)
+                    .font(.custom("DotGothic16-Regular", size: 14))
+                    .foregroundStyle(theme.textSecondary)
                     .multilineTextAlignment(.center)
                 ModalDotMatrixProgressBar(progress: engineManager.splitProgress)
                     .frame(height: 10)
                     .accessibilityLabel("Separation progress")
                     .accessibilityValue("\(Int(engineManager.splitProgress * 100)) percent")
                 HStack {
-                    Text("\(Int(engineManager.splitProgress * 100))%")
-                    Spacer()
                     if engineManager.totalChunkCount > 0 {
                         Text("\(engineManager.currentChunkNumber) / \(engineManager.totalChunkCount) CHUNKS")
                     }
                     Spacer()
                     Text(engineManager.etaRemainingString)
                 }
-                .font(.custom("DotGothic16-Regular", size: 16))
-                .foregroundStyle(theme.textPrimary)
+                .font(.custom("DotGothic16-Regular", size: 11))
+                .foregroundStyle(theme.textMuted)
                 Text(engineManager.liveSpeedSubtitle)
-                    .font(.custom("DotGothic16-Regular", size: 12))
-                    .foregroundStyle(theme.textSecondary)
-                Button(engineManager.lastImportCancelled ? "CANCELLING…" : "CANCEL IMPORT") {
+                    .font(.custom("DotGothic16-Regular", size: 11))
+                    .foregroundStyle(theme.textMuted)
+                Button(action: {
+                    Haptics.playClick()
                     engineManager.cancelSplitAudio()
+                }) {
+                    Text(isCancelling ? "CANCELLING…" : (batchCount > 1 ? "CANCEL ALL (\(batchCount - batchIndex + 1) LEFT)" : "CANCEL IMPORT"))
+                        .font(.custom("DotGothic16-Regular", size: 13))
+                        .fontWeight(.bold)
+                        .foregroundStyle(isCancelling ? theme.textMuted : theme.accentRed)
+                        .frame(width: 180, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(isCancelling ? theme.border : theme.accentRed, lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
-                .keyboardShortcut(.cancelAction)
-                .disabled(engineManager.lastImportCancelled)
-                .tint(.red)
+                .buttonStyle(.plain)
+                .keyboardShortcut(Self.cancelShortcut(isCovered: isCovered))
+                .disabled(isCancelling || isCovered)
             }
             .padding(36)
             .frame(width: 580)
@@ -123,7 +253,7 @@ struct ModalDotMatrixProgressBar: View {
             HStack(spacing: blockSpacing) {
                 ForEach(0..<blockCount, id: \.self) { i in
                     Rectangle()
-                        .fill(i < activeCount ? Color.red : theme.knobArcTrack)
+                        .fill(i < activeCount ? theme.accentRed : theme.knobArcTrack)
                         .frame(width: blockWidth, height: 8)
                 }
             }
@@ -146,6 +276,7 @@ struct ContentView: View {
     @State private var isShowingDeleteModal = false
     @State private var renameText = ""
     @State private var activeMenuTrackID: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @Environment(AudioEngineManager.self) private var engineManager
     @Query(sort: \TrackModel.dateAdded, order: .reverse) private var tracks: [TrackModel]
@@ -185,7 +316,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay {
                     // Tap anywhere in PlayerView to dismiss active 3-dots library menu
-                    if activeMenuTrackID != nil {
+                    if isSidebarVisible && activeMenuTrackID != nil {
                         Color.black.opacity(0.001)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -199,21 +330,58 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
             importer.acceptDrop(providers, context: modelContext, engine: engineManager)
         }
-        .onChange(of: engineManager.importRequested) { _, requested in
+        .onChange(of: engineManager.importRequested, initial: true) { _, requested in
             if requested {
                 engineManager.importRequested = false
-                importer.chooseFiles(context: modelContext, engine: engineManager)
+                activeMenuTrackID = nil
+                isShowingRenameModal = false
+                isShowingDeleteModal = false
+                isShowingSettingsModal = false
+                isShowingAboutModal = false
+                Task { @MainActor in
+                    // Let any existing sheet close before presenting the file picker.
+                    await Task.yield()
+                    importer.chooseFiles(context: modelContext, engine: engineManager)
+                }
             }
         }
+        .onChange(of: engineManager.isSplitting) { _, splitting in
+            // Media keys can start a recovery separation while a delete card is
+            // open; deleting that track mid-separation would orphan its stems.
+            if splitting {
+                isShowingDeleteModal = false
+                trackToDelete = nil
+                activeMenuTrackID = nil
+            }
+        }
+        .onChange(of: isSidebarVisible) { _, visible in
+            if !visible { activeMenuTrackID = nil }
+        }
+        .onChange(of: importer.isImporting) { _, importing in
+            // Each file of a batch clears the startup warning, so repeat it when
+            // the batch ends: the tracks it added are gone after quitting.
+            guard !importing, LibraryStore.isInMemory else { return }
+            let current = engineManager.errorMessage ?? ""
+            guard !current.contains(LibraryStore.inMemoryWarning) else { return }
+            engineManager.showError(current.isEmpty ? LibraryStore.inMemoryWarning : current + " " + LibraryStore.inMemoryWarning)
+        }
+        .onChange(of: engineManager.errorMessage) { _, message in
+            // The toast is visual only; speak errors for VoiceOver users.
+            if let message { AccessibilityNotification.Announcement("Error: \(message)").post() }
+        }
         .overlay {
-            if engineManager.isSplitting {
-                SplittingProgressModal()
+            // Stay up between the files of a batch instead of flashing the player.
+            if engineManager.isSplitting || (importer.batchCount > 1 && importer.batchIndex < importer.batchCount) {
+                SplittingProgressModal(isCovered: isShowingAboutModal || isShowingSettingsModal || isShowingDeleteModal,
+                                       fileName: importer.currentFileName,
+                                       batchIndex: importer.batchIndex,
+                                       batchCount: importer.batchCount)
             } else if isTargeted {
                 Text("DROP AUDIO TO IMPORT")
                     .font(.custom("DotGothic16-Regular", size: 24))
                     .padding(32)
                     .background(theme.modalBackground)
-                    .border(Color.red)
+                    .border(theme.accentRed)
                     .allowsHitTesting(false)
             }
         }
@@ -274,6 +442,10 @@ struct ContentView: View {
                                 engineManager.showError("Wait for the export to finish before deleting this track.")
                                 return
                             }
+                            guard !engineManager.isSplitting else {
+                                engineManager.showError("Wait for separation to finish before deleting this track.")
+                                return
+                            }
                             let wasActive = engineManager.currentTrackID == track.id
                             let stemDir = track.vocalStemURL.deletingLastPathComponent()
                             let sharedCache = tracks.contains { $0.id != track.id && $0.vocalStemURL.deletingLastPathComponent() == stemDir }
@@ -325,19 +497,19 @@ struct ContentView: View {
                 }
             } else if appMoveHelper.shouldShowMoveModal && !engineManager.isSplitting {
                 // MARK: - Window-Centered Move to Applications Prompt
+                // Dismissing only lasts for this launch; the prompt appears only
+                // while running from a disk image, where asking again is correct.
                 ZStack {
                     theme.modalBackdrop
                         .ignoresSafeArea()
                         .onTapGesture {
-                            AppPreferences.defaults.set(true, forKey: "hasDeclinedMoveToApplications")
-                            appMoveHelper.shouldShowMoveModal = false
+                            appMoveHelper.dismissMoveModal()
                         }
                     
                     MoveToApplicationsModalCard(
                         appMoveHelper: appMoveHelper,
                         onDismiss: {
-                            AppPreferences.defaults.set(true, forKey: "hasDeclinedMoveToApplications")
-                            appMoveHelper.shouldShowMoveModal = false
+                            appMoveHelper.dismissMoveModal()
                         }
                     )
                 }
@@ -349,12 +521,14 @@ struct ContentView: View {
                     ErrorToastCard(
                         message: errorMsg,
                         onDismiss: {
+                            // Closing a library recovery notice stops it repeating at launch.
+                            LibraryStore.noticeDismissed(errorMsg)
                             engineManager.dismissError()
                         }
                     )
                     .padding(.top, 16)
                     .allowsHitTesting(true)
-                    .transition(.asymmetric(
+                    .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .move(edge: .top).combined(with: .opacity),
                         removal: .move(edge: .top).combined(with: .opacity)
                     ))
@@ -366,62 +540,39 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            theme.updateWindowAppearance()
             appMoveHelper.checkLocationOnStartup()
-            NowPlayingManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { tracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
-            MenuBarManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { tracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
+            // Reclaim staging folders left by a quit or crash mid-separation.
+            // The engine skips this while a separation is running.
+            Task { await DemucsEngine.shared.removeAbandonedStaging() }
+            configureSystemControls(tracks)
+            if let notice = LibraryStore.takeStartupNotice() {
+                engineManager.showError(notice)
+            }
         }
         .onChange(of: tracks) { _, newTracks in
-            NowPlayingManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { newTracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
-            MenuBarManager.shared.configure(
-                engineManager: engineManager,
-                playlistProvider: { newTracks },
-                trackSelectHandler: { track in
-                    Task {
-                        guard !engineManager.isSplitting else { return }
-                        await engineManager.loadTrack(track)
-                        if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
-                            engineManager.togglePlayback()
-                        }
-                    }
-                }
-            )
+            configureSystemControls(newTracks)
         }
+    }
+
+    /// Media keys, Control Center and the status menu step through the library
+    /// in the sidebar's folder order.
+    private func configureSystemControls(_ library: [TrackModel]) {
+        let selectTrack: (TrackModel) -> Void = { track in
+            Task {
+                guard !engineManager.isSplitting else { return }
+                await engineManager.loadTrack(track)
+                if engineManager.currentTrackID == track.id && !engineManager.isPlaying {
+                    engineManager.togglePlayback()
+                }
+            }
+        }
+        NowPlayingManager.shared.configure(engineManager: engineManager,
+                                           playlistProvider: { library.libraryPlaybackOrder() },
+                                           trackSelectHandler: selectTrack)
+        MenuBarManager.shared.configure(engineManager: engineManager,
+                                        playlistProvider: { library.libraryPlaybackOrder() },
+                                        trackSelectHandler: selectTrack)
     }
 }
 
@@ -453,12 +604,12 @@ struct AboutModalCard: View {
                     }
                     VStack(spacing: 2) {
                         ForEach(0..<8, id: \.self) { _ in
-                            Rectangle().fill(Color.red).frame(width: 6, height: 4)
+                            Rectangle().fill(theme.accentRed).frame(width: 6, height: 4)
                         }
                     }
                     VStack(spacing: 2) {
                         ForEach(0..<10, id: \.self) { _ in
-                            Rectangle().fill(Color.red).frame(width: 6, height: 4)
+                            Rectangle().fill(theme.accentRed).frame(width: 6, height: 4)
                         }
                     }
                     VStack(spacing: 2) {
@@ -470,13 +621,12 @@ struct AboutModalCard: View {
                 .padding(.bottom, 16)
                 .frame(width: 84, height: 84, alignment: .bottom)
                 
-                // Top-right Red Glowing Status Dot
+                // Top-right Red Status Dot
                 Circle()
-                    .fill(Color.red)
+                    .fill(theme.accentRed)
                     .frame(width: 8, height: 8)
                     .padding(8)
             }
-            .shadow(color: Color.red.opacity(0.25), radius: 12)
             
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
@@ -487,14 +637,14 @@ struct AboutModalCard: View {
                     
                     Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"))
                         .font(.custom("DotGothic16-Regular", size: 13))
-                        .foregroundColor(.red)
+                        .foregroundColor(theme.textSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.red.opacity(0.15))
+                        .background(theme.surfaceSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
-                                .stroke(Color.red.opacity(0.4), lineWidth: 1)
+                                .stroke(theme.border, lineWidth: 1)
                         )
                 }
                 
@@ -510,19 +660,19 @@ struct AboutModalCard: View {
             
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 5, height: 5)
+                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
                     Text("CORE ML PROCESSING ON APPLE SILICON")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 5, height: 5)
+                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
                     Text("LIVE SPECTRUM & ACCELERATE AUDIO ANALYSIS")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
                 }
                 HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 5, height: 5)
+                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
                     Text("100% PRIVATE & OFFLINE AUDIO PROCESSING")
                         .font(.custom("DotGothic16-Regular", size: 11))
                         .foregroundColor(theme.textPrimary.opacity(0.85))
@@ -568,13 +718,14 @@ struct AboutModalCard: View {
                     Text("CLOSE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.surface)
                         .frame(width: 120, height: 36)
-                        .background(isCloseHovered ? Color.white : Color.red)
+                        .background(isCloseHovered ? theme.textSecondary : theme.textPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .onHover { hovering in
                     if hovering && !isCloseHovered { Haptics.playClick() }
                     isCloseHovered = hovering
@@ -606,23 +757,31 @@ struct MoveToApplicationsModalCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.app")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.textPrimary)
                 Text("MOVE TO APPLICATIONS?")
                     .font(.custom("DotGothic16-Regular", size: 20))
                     .foregroundColor(theme.textPrimary)
             }
             
-            Text("Isolate works best when installed in your Applications folder.\nWould you like to move it now and eject the installer?")
+            Text("Isolate works best when installed in your Applications folder.\nWould you like to move it there and relaunch?")
                 .font(.custom("DotGothic16-Regular", size: 13))
                 .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
             
+            if let prompt = appMoveHelper.replacementPrompt {
+                Text(prompt)
+                    .font(.custom("DotGothic16-Regular", size: 12))
+                    .foregroundColor(theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let error = appMoveHelper.moveErrorMessage {
                 Text(error)
                     .font(.custom("DotGothic16-Regular", size: 11))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.accentRed)
                     .multilineTextAlignment(.center)
             }
             
@@ -646,6 +805,8 @@ struct MoveToApplicationsModalCard: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.escape, modifiers: [])
+                // The card stays up while installing so a failure is seen.
+                .disabled(appMoveHelper.isMoving)
                 .onHover { hovering in
                     if hovering && !isSkipHovered { Haptics.playClick() }
                     isSkipHovered = hovering
@@ -654,7 +815,8 @@ struct MoveToApplicationsModalCard: View {
                 // Move Button
                 Button(action: {
                     Haptics.playClick()
-                    appMoveHelper.moveToApplications()
+                    // A second click after the prompt confirms replacing the installed copy.
+                    appMoveHelper.moveToApplications(replacingExisting: appMoveHelper.replacementPrompt != nil)
                 }) {
                     HStack(spacing: 6) {
                         if appMoveHelper.isMoving {
@@ -663,17 +825,14 @@ struct MoveToApplicationsModalCard: View {
                         } else {
                             Image(systemName: "arrow.right.circle.fill")
                         }
-                        Text(appMoveHelper.isMoving ? "INSTALLING..." : "MOVE & RELAUNCH")
+                        Text(appMoveHelper.isMoving ? "INSTALLING..." : (appMoveHelper.replacementPrompt == nil ? "MOVE & RELAUNCH" : "REPLACE & RELAUNCH"))
                             .font(.custom("DotGothic16-Regular", size: 13))
                             .fontWeight(.bold)
                     }
-                    .foregroundColor(isInstallHovered ? .black : .white)
-                    .frame(width: 180, height: 36)
-                    .background(isInstallHovered ? Color.white : Color.red)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.red, lineWidth: 1)
-                    )
+                    .foregroundColor(theme.surface)
+                    .frame(width: 200, height: 36)
+                    .background(isInstallHovered ? theme.textSecondary : theme.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -704,6 +863,16 @@ struct RenameModalCard: View {
     @State private var isSaveHovered = false
     @FocusState private var isTitleFocused: Bool
     
+    /// Long enough for any real title; a pasted paragraph would otherwise push
+    /// the delete confirmation's buttons off screen.
+    static let maxTitleLength = 200
+
+    static func sanitizedTitle(_ text: String) -> String? {
+        let title = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxTitleLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : title
+    }
+    
     var body: some View {
         VStack(spacing: 22) {
             Text("RENAME TRACK")
@@ -717,8 +886,11 @@ struct RenameModalCard: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(theme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red, lineWidth: 1).allowsHitTesting(false))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(theme.textPrimary, lineWidth: 1).allowsHitTesting(false))
                 .foregroundColor(theme.textPrimary)
+                .onChange(of: renameText) { _, text in
+                    if text.count > Self.maxTitleLength { renameText = String(text.prefix(Self.maxTitleLength)) }
+                }
             
             HStack(spacing: 16) {
                 // Cancel Button
@@ -745,9 +917,8 @@ struct RenameModalCard: View {
                 // Save Button
                 Button(action: {
                     Haptics.playClick()
-                    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        onSave(trimmed)
+                    if let title = Self.sanitizedTitle(renameText) {
+                        onSave(title)
                     } else {
                         onCancel()
                     }
@@ -755,9 +926,9 @@ struct RenameModalCard: View {
                     Text("SAVE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.surface)
                         .frame(width: 110, height: 34)
-                        .background(isSaveHovered ? Color.red.opacity(0.85) : Color.red)
+                        .background(isSaveHovered ? theme.textSecondary : theme.textPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle()) // Entire 110x34 area clickable!
                 }
@@ -793,15 +964,22 @@ struct DeleteModalCard: View {
         VStack(spacing: 20) {
             Text("DELETE TRACK?")
                 .font(.custom("DotGothic16-Regular", size: 22))
-                .foregroundColor(.red)
+                .foregroundColor(theme.accentRed)
             
-            Text("Are you sure you want to delete '\(trackTitle)' and its isolated stems?")
-                .font(.custom("DotGothic16-Regular", size: 14))
-                .foregroundColor(theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 8)
+            VStack(spacing: 4) {
+                Text("Are you sure you want to delete")
+                Text("'\(trackTitle)'")
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text("and its isolated stems?")
+            }
+            .font(.custom("DotGothic16-Regular", size: 14))
+            .foregroundColor(theme.textSecondary)
+            .multilineTextAlignment(.center)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
+            .accessibilityElement(children: .combine)
             
             HStack(spacing: 16) {
                 // Cancel Button
@@ -833,9 +1011,9 @@ struct DeleteModalCard: View {
                     Text("DELETE")
                         .font(.custom("DotGothic16-Regular", size: 13))
                         .fontWeight(.bold)
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.onAccent)
                         .frame(width: 110, height: 34)
-                        .background(isDeleteHovered ? Color.red.opacity(0.85) : Color.red)
+                        .background(isDeleteHovered ? theme.accentRed.opacity(0.85) : theme.accentRed)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .contentShape(Rectangle()) // Entire 110x34 area clickable!
                 }
@@ -859,10 +1037,14 @@ struct DeleteModalCard: View {
 struct WindowAccessor: NSViewRepresentable {
     final class Coordinator: NSObject {
         weak var window: NSWindow?
-        
+
+        static let frameAutosaveName = "IsolateMainWindow"
+        static let defaultContentSize = NSSize(width: 1280, height: 800)
+
         func attach(to window: NSWindow) {
             guard self.window !== window else { return }
             self.window = window
+            Self.restoreOrApplyDefaultFrame(to: window)
             
             NotificationCenter.default.removeObserver(self)
             NotificationCenter.default.addObserver(
@@ -889,6 +1071,27 @@ struct WindowAccessor: NSViewRepresentable {
         
         @objc private func windowDidExitFullScreen() {
             window?.toolbar?.isVisible = true
+        }
+
+        /// SwiftUI's defaultSize is lost once the window is restyled, so new users
+        /// saw the minimum-size layout. Restore the user's last frame, or open at
+        /// the default size on first launch. UI tests always get the default.
+        static func restoreOrApplyDefaultFrame(to window: NSWindow) {
+            guard !window.styleMask.contains(.fullScreen) else { return }
+            if !AppPreferences.isTesting, window.setFrameUsingName(frameAutosaveName) {
+                window.setFrameAutosaveName(frameAutosaveName)
+                return
+            }
+            let visible = (window.screen ?? NSScreen.main)?.visibleFrame.size ?? defaultContentSize
+            window.setContentSize(fittedContentSize(visible: visible, minimum: window.minSize))
+            window.center()
+            if !AppPreferences.isTesting { window.setFrameAutosaveName(frameAutosaveName) }
+        }
+
+        /// The default size, shrunk to fit small displays but never below the minimum.
+        static func fittedContentSize(visible: NSSize, minimum: NSSize) -> NSSize {
+            NSSize(width: max(minimum.width, min(defaultContentSize.width, visible.width - 40)),
+                   height: max(minimum.height, min(defaultContentSize.height, visible.height - 60)))
         }
     }
     
@@ -924,6 +1127,7 @@ struct WindowAccessor: NSViewRepresentable {
         window.appearance = ThemeManager.shared.currentTheme == .system ? nil : NSAppearance(named: isDark ? .darkAqua : .aqua)
         window.minSize = NSSize(width: 960, height: 580)
         window.isMovableByWindowBackground = false
+        window.tabbingMode = .disallowed
         
         if window.toolbar == nil {
             let toolbar = NSToolbar(identifier: "IsolateMainWindowToolbar")
@@ -953,7 +1157,7 @@ struct ErrorToastCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.red)
+                    .foregroundColor(theme.accentRed)
                 
                 Text(message)
                     .font(.custom("DotGothic16-Regular", size: 12))
@@ -969,9 +1173,11 @@ struct ErrorToastCard: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(isCloseHovered ? theme.textPrimary : theme.textSecondary)
-                    .padding(5)
+                    .frame(width: 22, height: 22)
                     .background(isCloseHovered ? theme.surfaceHover : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
+                    // Clear padding is not hit-testable; keep the whole square clickable.
+                    .contentShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss error")
@@ -984,8 +1190,8 @@ struct ErrorToastCard: View {
         .padding(.vertical, 8)
         .background(theme.modalBackground)
         .compositingGroup()
-        .border(Color.red.opacity(0.8), width: 1)
+        .border(theme.accentRed, width: 1)
         .overlay(CornerBrackets())
-        .shadow(color: Color.red.opacity(0.3), radius: 14, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.6 : 0.15), radius: 12, x: 0, y: 4)
     }
 }

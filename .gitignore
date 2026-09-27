@@ -8,13 +8,14 @@ build/
 !default.mode2v3
 *.perspectivev3
 !default.perspectivev3
-xcuserdata
+xcuserdata/
 *.xccheckout
 *.moved-aside
 DerivedData
 *.hmap
 *.ipa
 *.xcuserstate
+*.xcresult
 
 # SwiftPackageManager
 .build/
@@ -28,14 +29,14 @@ Manifest.lock
 *.swp
 *~.nib
 
-# Other
-xcuserdata/
-
-# CoreML Model Binaries (>100MB)
+# CoreML Model Binaries (>100MB) and archives made from them
 *.mlmodelc
 *.mlpackage
 *.mlmodel
+/HTDemucs*
 
 # Distribution Artifacts
 dist/
+*.dmg
+*.zip
 Assets/AppIcon.iconset/

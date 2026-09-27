@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: macOS won't open Isolate
+    url: https://github.com/neokumar1/Isolate#first-launch
+    about: Releases are ad-hoc signed; approve the first launch in System Settings › Privacy & Security.
+  - name: Troubleshooting guide
+    url: https://github.com/neokumar1/Isolate/blob/main/TROUBLESHOOTING.md
+    about: Model errors, iCloud Drive files, disk space, stuck imports, library backups and exports.

@@ -1,51 +1,112 @@
-# Production readiness verification — v1.2.8
+# Verification report — v1.3.0
 
-Verified September 21, 2026 on Apple Silicon, macOS 27.0 (26A428), Xcode 27.0 (27A266a). This report covers the local working tree based on `4e0a222`, including the hardening work already present when this session resumed. Changes and packages remain local.
+Verified September 25–26, 2026. Local results are from an Apple silicon MacBook Pro running macOS 27.0 with Xcode 27.0. Hosted results are from GitHub Actions `macos-15` (macOS 15.7, Xcode 26.3) and `macos-26` (macOS 26.6, Xcode 26.6) runners, which fetch the pinned model (`model-htdemucs-v1`, SHA-256 `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`). The historical audit notes below are retained from the previous handoff. [Run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518) passed both hosted jobs after the audio fixes; the installer-artwork and instructions were then checked locally.
 
-## Results
+## September 26 continuation
+
+The continuation found and fixed three additional production defects: nonfinite model-quality diagnostics could trap while converting to `Int`; a failed model load or prediction prevented fallback to another compute path; and unreadable audio headers were detected only after a costly model load. The model release gate now fails incompatible inference unless the older-OS compatibility job explicitly permits safe refusal.
+
+Testing three additional real songs found a fourth defect: denormalization added the mix's DC offset to each of the four stems. The sum therefore contained four times the original offset. Restoring one quarter to each stem improved the affected MP3's reconstruction from **5.6 dB to 28.5 dB**. The cache key advances to v5; existing library stems remain playable, and reimporting a track regenerates them with the corrected algorithm. Analytical Float16/Float32 overlap tests and a real-inference DC-offset test cover the change. The old overlap fixture was corrected to model a four-way split instead of expecting a full copy of the source in every stem.
+
+The app now uses a native `AppIcon.icon` package with four SVG stem layers. Xcode 27 compiles light, dark and tintable icon stacks into `Assets.car`, plus the compatibility `AppIcon.icns`. The default, dark and tinted previews were inspected, as were 16 px and 32 px renders. The standalone ICNS contains all ten standard 16–1024 px representations. macOS's system icon service successfully rendered the packaged app's icon, and its compiled compatibility ICNS was extracted and inspected. The DMG background was regenerated at 1320 × 800 px / 144 dpi with a drag arrow and system requirements. A mounted Finder-window inspection caught footer text hidden by Finder's status bar; the final image shows both requirements lines unobstructed. Xcode 26.3's asset agent crashed on the layered icon on the hosted macOS 15 image, so only that CI job builds with the committed compatibility ICNS; macOS 26 and the release package compile the layered icon. Design references: [Apple Icon Composer](https://developer.apple.com/icon-composer/) and [app-icon integration](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
+
+Current release artifacts were built from base commit `13472da629de9edff9f722fe9f3e70496752c9c7` plus the v1.3.0 release-branch changes. They are local candidates, not published releases.
+
+| Current-checkout check | Result |
+| --- | --- |
+| Release build and packaging | Passed; arm64, version 1.3.0, bundled model and licenses |
+| DMG / ZIP contents | Identical app contents; valid `/Applications` symlink, visible install artwork, bundled model; image verified and mounted read-only; both app signatures passed |
+| Signature | `codesign --verify --deep --strict` passed; ad hoc with hardened runtime; **not notarized** |
+| Bundled model | Reference hashes and input/output tensor contract passed |
+| Icon resources | Four vectors; Aqua, Dark Aqua and tintable icon stacks; compatibility ICNS present |
+| Shell, Ruby, YAML, plist, version and whitespace checks | Passed |
+| Final model-required unit/audio suite | **200 tests, 0 failures, 0 skips**, including real-music separation; 476.3 seconds |
+| Final desktop UI suite | **6 tests, 0 failures, 0 skips**; 157.2 seconds |
+| Hosted CI at `de11929` | macOS 15 and 26 Release builds and unit/audio jobs both passed; macOS 26 required real model inference |
+
+Final local installer candidate sizes: app **312,954,459 bytes**, DMG **160,881,848 bytes**, ZIP **148,388,620 bytes**. SHA-256:
+
+```text
+b79fc710bda28c37edd178d3bcfb512ca5dd1d6c1843078f7cafacff1e63cc88  Isolate.dmg
+c8fdcf291b4ee8bbf567f819de728c0b9e5a9594f469e124af14f8a5bf39b638  Isolate-v1.3.0-macOS.zip
+```
+
+The build emits Xcode's unrelated App Intents metadata notice and an outdated iOS simulator-service diagnostic on this Mac; native macOS builds succeed. Negative tests deliberately emit decoder and library-open errors while checking safe recovery. The unit result records 16 internal thread-priority inversion warnings during audio tests, and the UI result records one. These checks establish passing behavior, not a silent console or a proof that every scheduling path is optimal.
+
+An earlier UI attempt closed the Save dialog before its button could be queried; the WAV had actually exported and appeared in Finder. The export workflow then passed in isolation, followed by a clean pass of all six UI tests. The final result bundle is `/private/tmp/IsolateLaunchReview-ui-verified.xcresult`; the unit bundle is `/private/tmp/IsolateLaunchReview-final-verified.xcresult`.
+
+## Current real-music results
+
+Three additional sources were copied from the owner's music library into a temporary test folder; the originals were only read. Every output contained four finite stereo stems at 44.1 kHz, with matching source lengths and nonzero energy in all four stems.
+
+| Source | Length | Separation time | Speed | Stems → mix reconstruction |
+| --- | --- | --- | --- | --- |
+| MP3 with measurable DC offset and punctuation in its filename | 3:37 | 71.1 s | 3.1× realtime | 28.5 dB |
+| M4A | 2:13 | 43.2 s | 3.1× realtime | 22.9 dB |
+| Long MP3 | 9:08 | 170.8 s | 3.2× realtime | 30.3 dB |
+
+These values measure reconstruction and processing time, not perceptual stem isolation. The largest stem peak was 1.389; floating-point caches preserve it, and the separately tested export path prevents 24-bit clipping. The real-music verifier still checks every sample for finiteness, but now calls XCTest only for failures rather than millions of successful per-sample assertions.
+
+## Earlier branch results (before this continuation)
 
 | Check | Result |
 | --- | --- |
-| Unit and audio regression suite, with the model required | **36 passed, 0 failures** |
-| Desktop UI suite | **4 passed, 0 failures** |
-| Actual Core ML separation | Passed; four finite, stereo stems with the original frame count, including overlap boundaries and cache reuse |
-| Release arm64 build | Passed |
-| Reference model hashes and tensor contract | Passed |
-| Final DMG integrity and all package checksums | Passed |
-| Extracted ZIP app signature, version, model hashes and bundled licenses | Passed; ad-hoc signature, version 1.2.8, macOS 14.0 deployment target |
-| Shell syntax, cask Ruby syntax, whitespace checks | Passed |
+| Unit and audio regression suite, model required (local, macOS 27) | **192 tests, 0 failures**; 1 skipped: the opt-in real-music test |
+| Same suite on hosted macOS 26 | **192 tests, 0 failures**; 4 skipped: the real-music test, and 3 double-click tests because this host does not deliver synthetic mouse events |
+| Same suite on hosted macOS 15 | **See CI on the release pull request.** The model self-test refuses the model here (3.3 dB on every compute path), so inference tests skip with that reason |
+| Desktop UI suite (local) | **5 tests, 0 failures** |
+| Real music, three songs (local) | **All separated**; stems reconstruct each mix at 28.6–32.9 dB (table below) |
+| Release build (arm64) | Passed with no warnings in `Sources/` |
+| Local package, `scripts/package_release.sh v1.3.0` | Passed: `Isolate.dmg` 160,101,439 bytes, app 312,945,036 bytes, version 1.3.0, ad-hoc signature with the hardened runtime, `codesign --verify --deep --strict` passes, model and licenses bundled |
+| Reference model hashes and tensor contract | Passed for the installed model and the hosted archive (downloaded and re-checked) |
 
-The UI workflow imports synthetic audio through the system picker, waits for separation, plays/pauses, uses mute/reset shortcuts, renames through the native sheet, closes/reopens the main window, exports a 24-bit WAV mix, and deletes the library entry. It verifies the exported frame count and confirms that the source file's bytes are unchanged after deletion. Other UI tests cover empty-library guards, cancelling the picker, dark/light settings, export-format selection, shortcut help, and Escape dismissal. Captured screenshots were inspected.
+The UI workflow imports synthetic audio through the system file picker and waits for real Core ML separation. It then plays and pauses, solos and mutes every stem, and checks that typing in the library search does not trigger mixer shortcuts. It also checks that Escape over Settings and over About leaves a running separation alone, renames through the native sheet, closes and reopens the main window, exports a 24-bit WAV mix, and deletes the entry while confirming that the source file's bytes are unchanged.
 
-Audio tests also cover streaming decode/resampling, short-file reflection, incomplete caches, cancellation/retry, on-disk library reload after the original is removed, EQ rendering, positive fader gain, mute/pan/speed, WAV/FLAC bit depth, four-file ZIP exports, Unicode filenames, final audio transients with time/pitch processing, failed-export preservation, and playback completion/seeking. Tests use generated audio and isolated libraries/preferences.
+## Earlier real-music separation
 
-## Corrections in this continuation
+The previous handoff recorded these three songs, copied read-only from the owner's library and run through `RealMusicSmokeTests` before this continuation:
 
-- Removed recursive self-assignment from observable pitch/rate setters. The initial playback test crashed with a stack overflow during track loading; repeated resets, playback and invalid-value tests now pass.
-- Replaced the rename overlay with a native sheet. The desktop test reproduced a text field that could not take keyboard focus. Typing, saving, and reopening the renamed track now pass.
-- Made decorative corner overlays noninteractive and removed disabled mixer controls from keyboard focus. The stray focus ring over the settings modal no longer appears in screenshots.
-- Fixed spectrum and waveform meters to include right-channel audio. The new stereo regression failed before the change and passes afterward.
-- Bounded exported title components by UTF-8 size while preserving character boundaries, leaving room for stem suffixes on common 255-byte filesystems.
-- Fixed a duplicate actor annotation that prevented the test target from compiling, observed the installation-prompt state in its parent view, and forwarded the model-required flag through Xcode's `TEST_RUNNER_` mechanism.
-- Updated generated app/version metadata to 1.2.8 and corrected installation guidance against the inspected public artifact.
+| Source | Length | Separation time | Speed | Stems → mix reconstruction |
+| --- | --- | --- | --- | --- |
+| ALAC `.m4a` (24-bit source) | 4:37 | 1:33 | 3.0× realtime | 32.9 dB |
+| MP3 with quotes in its file name | 3:53 | 1:15 | 3.1× realtime | 28.6 dB |
+| MP3 | 8:24 | 2:34 | 3.3× realtime | 29.2 dB |
 
-## Local evidence and artifacts
+The same songs measured 2.5–2.6× realtime before the model-output loop was rewritten, with **identical** reconstruction and per-stem levels, which confirms the rewrite is bit-exact. Cached stems can peak above full scale (1.34–1.52 here); stem exports lower all four stems together when needed so 24-bit files do not clip. Speed depends on the Mac and on Core ML's scheduling; no fixed speed is claimed.
 
-- Unit results: `/private/tmp/IsolateProductionReady/Logs/Test/Test-Isolate-2026.09.21_21-57-39--0500.xcresult`
-- UI results: `/private/tmp/IsolateProductionReady/Logs/Test/Test-Isolate-2026.09.21_21-55-10--0500.xcresult`
-- Screenshots: `/private/tmp/isolate-production-final-screenshots/`
-- Logs: `/private/tmp/isolate-production-tests.log`, `/private/tmp/isolate-production-ui-tests.log`, `/private/tmp/isolate-production-package.log`
-- App packages: `/private/tmp/IsolateRelease-v1.2.8/`
-- Prepared model archive: `/private/tmp/IsolateModelForRelease/HTDemucs-reference.zip`
-- Model ZIP SHA-256: `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`
+## Core ML compatibility
 
-Use [RELEASE.md](RELEASE.md) to reproduce the checks. Xcode logged a mismatched iOS simulator-service version and skipped unused App Intents metadata extraction; these did not prevent macOS compilation or tests. Core ML may log compute-device fallback diagnostics; the actual inference and finite-output assertions passed. These results do not establish exclusive Neural Engine execution.
+A standalone probe separated one built-in ten-second signal with each compute path. Correct output reconstructs the input at about 36–43 dB.
 
-## Public-release gates still open
+| macOS | CPU only | All compute units | Shipped model vs compiled on that Mac |
+| --- | --- | --- | --- |
+| 14.8 (hosted) | 3.3 dB ✗ | 43.3 dB ✓ | identical |
+| 15.7 (hosted) | 3.3 dB ✗ | 3.3 dB ✗ | identical |
+| 26.6 (hosted) | 42.3 dB ✓ | 42.3 dB ✓ | identical |
+| 27.0 (local) | 42.2 dB ✓ | 36.8 dB ✓ | identical |
 
-1. **Model provisioning and provenance.** The public [v1.2.7 DMG](https://github.com/neokumar1/Isolate/releases/tag/v1.2.7) was downloaded and inspected read-only. Its resources contain only the icon and font; it has no model and no `CFBundleShortVersionString` entry. The prepared package includes the reference model. GitHub Actions currently has no repository variables configured: publish a verified immutable model archive and set `ISOLATE_MODEL_ARCHIVE_URL` and `ISOLATE_MODEL_ARCHIVE_SHA256`. Review the remaining provenance limits in [MODEL.md](MODEL.md).
-2. **Distribution signing.** Local packages are ad-hoc signed. Developer ID signing/notarization and a fresh-download Gatekeeper check are still required for a notarized public release.
-3. **Platform and listening checks.** Only this Mac/toolchain was available. Test macOS 14 and a current stable release, physical output-device changes, media keys/menu-bar behavior, and the installation/relaunch path. Listen to representative music to verify source identity and perceptual quality; synthetic audio cannot establish those qualities.
-4. **Publication.** Review and publish the completed release, then update the Homebrew cask's version and checksum together. The cask remains pinned to its previously published artifact.
+Core ML in macOS 14 and 15 computes this network incorrectly on its CPU path, and on the hosted macOS 15 machine on every path it offered. The fault is in the OS runtime, not the model file. Isolate therefore runs this check whenever it loads the model, tries each compute path, and refuses to separate, with a message to update to macOS 26, if none passes. It never writes stems from a model that failed. See [MODEL.md](MODEL.md).
 
-No zero-defect or universal compatibility claim is made. MP3 encoding, automatic BPM/key analysis, seamless sample-accurate loops, and loop-region export remain explicitly outside the current contract in [ROADMAP.md](ROADMAP.md).
+## Stem synchronization
+
+A polarity null test plays four stems that cancel exactly only while every player renders the same source frame.
+
+- The original fixed 30 ms host-time start left stems 9–42 ms apart.
+- A longer host-time lead still misaligned 2 of 9 seeks on this Mac, and most seeks on hosted runners.
+- Starting every player at one sample time in the shared render timeline kept every seek, loop wrap and resume aligned on macOS 15, 26 and 27. It also removed a ~50 ms main-thread stall per start.
+- At 512 frames and 48 kHz, a loop wrap now leaves a 32–43 ms gap, down from about 100 ms. Loops are not gapless; see [ROADMAP.md](ROADMAP.md).
+
+## Audit process recorded by the previous handoff
+
+1. **Audit.** Eleven specialist audits (engine, separation, library, export, UI, concurrency, design and accessibility, release, performance, tests, robustness) produced 145 findings.
+2. **Verification.** After de-duplication, every finding not already corroborated by several auditors was independently verified by adversarial reviewers, two for high-severity claims. 116 held up and 6 were refuted.
+3. **Fixes.** The fixes landed in three parallel waves with disjoint file ownership. Each wave ran the full unit suite with real inference before merging.
+4. **Final review.** A nine-lens review of the whole branch found 40 more confirmed issues, mostly regressions introduced by the fixes, and all were fixed. The one exception is a decision left to the owner: the tracked `CLAUDE.md` contains personal agent instructions.
+
+## Open release gates
+
+1. **Separation on real macOS 14 and 15 Macs is unverified.** Hosted machines show Core ML's CPU path is wrong there. Which path a real Mac uses depends on its hardware, so separation may work or may be refused with a clear message. Isolate refuses paths that fail its model check. Test on a physical macOS 14 or 15 Mac, or raise the minimum to macOS 26.
+2. **Signing.** Builds are ad-hoc signed and not notarized, and the README walks through first-launch approval. Check the downloaded DMG's first launch on macOS 15 or later and on macOS 14.
+3. **Listening.** Reconstruction measures alignment and scale, not how good the stems sound. Listen to representative music before announcing.
+4. **Not automated:** physical output-device switching (Bluetooth, USB), media keys and the menu bar controller, double-click reset on macOS 26 (hosted runners there drop synthetic clicks; verified on 15 and 27), and the in-place upgrade from a real pre-1.3 library.
+5. **Publication.** The hosted macOS 15 and 26 jobs passed on [run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518). The public Latest app is still v1.2.7, without the model, and the cask is v1.2.5. After review, merge to `main`, verify the downloaded package and first launch, publish v1.3.0 as Latest, and set the cask's version and SHA-256 from the published DMG. See [RELEASE.md](RELEASE.md) and [LAUNCH.md](LAUNCH.md).

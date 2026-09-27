@@ -1,32 +1,83 @@
 import Cocoa
+import CoreText
+
+// Run from the repository root with Xcode 27 selected: swift scripts/generate_assets.swift
+
+/// A drawing context backed by exactly `width` x `height` pixels. NSImage.lockFocus
+/// draws at the main screen's backing scale, which doubled every size on Retina
+/// Macs and left the icon without its 16 and 128 px images.
+func makeBitmap(width: Int, height: Int) throws -> (rep: NSBitmapImageRep, context: NSGraphicsContext) {
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+          let context = NSGraphicsContext(bitmapImageRep: rep) else { throw AssetError.renderFailed }
+    return (rep, context)
+}
 
 func createDMGBackground() throws {
     let width: CGFloat = 660
     let height: CGFloat = 400
     let scale: CGFloat = 2.0
-    let size = NSSize(width: width * scale, height: height * scale)
-    
-    let image = NSImage(size: size)
-    image.lockFocus()
-    
-    guard let context = NSGraphicsContext.current?.cgContext else { image.unlockFocus(); throw AssetError.renderFailed }
+
+    let bitmap = try makeBitmap(width: Int(width * scale), height: Int(height * scale))
+    let context = bitmap.context.cgContext
     context.scaleBy(x: scale, y: scale)
-    
-    // Clean Pure White Background matching reference screenshot
-    context.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0))
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = bitmap.context
+    defer { NSGraphicsContext.restoreGraphicsState() }
+
+    let fontURL = URL(fileURLWithPath: "Sources/Resources/DotGothic16-Regular.ttf")
+    CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+    guard let titleFont = NSFont(name: "DotGothic16-Regular", size: 18),
+          let labelFont = NSFont(name: "DotGothic16-Regular", size: 11) else {
+        throw AssetError.renderFailed
+    }
+
+    let background = CGColor(red: 0.985, green: 0.985, blue: 0.98, alpha: 1)
+    let ink = NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+    let secondary = NSColor(calibratedRed: 0.28, green: 0.28, blue: 0.30, alpha: 1)
+    let accent = CGColor(red: 0.78, green: 0.08, blue: 0.11, alpha: 1)
+    context.setFillColor(background)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    
-    image.unlockFocus()
-    
-    if let tiffData = image.tiffRepresentation,
-       let rep = NSBitmapImageRep(data: tiffData),
-       let pngData = rep.representation(using: .png, properties: [:]) {
-        let outDir = URL(fileURLWithPath: "Assets")
-        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let outURL = outDir.appendingPathComponent("dmg_background.png")
-        try pngData.write(to: outURL, options: .atomic)
-        print("Generated DMG background at \(outURL.path)")
-    } else { throw AssetError.renderFailed }
+
+    func label(_ string: String, at point: CGPoint, font: NSFont, color: NSColor, tracking: CGFloat = 0) {
+        NSAttributedString(string: string, attributes: [
+            .font: font, .foregroundColor: color, .kern: tracking
+        ]).draw(at: point)
+    }
+
+    // Finder places the app and Applications icons around x=170 and x=490.
+    // Keep their labels and hit targets unobstructed; the red arrow occupies
+    // only the gap between them.
+    label("DRAG ISOLATE INTO APPLICATIONS", at: CGPoint(x: 35, y: 340),
+          font: titleFont, color: ink, tracking: 0.35)
+    context.setFillColor(CGColor(red: 0.76, green: 0.76, blue: 0.75, alpha: 1))
+    context.fill(CGRect(x: 35, y: 324, width: 590, height: 0.5))
+
+    context.setFillColor(accent)
+    context.fill(CGRect(x: 292, y: 204, width: 72, height: 4))
+    context.move(to: CGPoint(x: 374, y: 206))
+    context.addLine(to: CGPoint(x: 357, y: 218))
+    context.addLine(to: CGPoint(x: 357, y: 194))
+    context.closePath()
+    context.fillPath()
+
+    context.setFillColor(CGColor(red: 0.76, green: 0.76, blue: 0.75, alpha: 1))
+    context.fill(CGRect(x: 35, y: 133, width: 590, height: 0.5))
+    label("APPLE SILICON (M1+)  /  macOS 14 OR LATER", at: CGPoint(x: 35, y: 108),
+          font: labelFont, color: ink, tracking: 0.1)
+    label("macOS 26+ RECOMMENDED FOR SEPARATION  /  MODEL INCLUDED", at: CGPoint(x: 35, y: 87),
+          font: labelFont, color: secondary, tracking: 0.1)
+    bitmap.context.flushGraphics()
+
+    // 144 dpi, so Finder draws these pixels into the 660 x 400 pt window.
+    bitmap.rep.size = NSSize(width: width, height: height)
+    guard let pngData = bitmap.rep.representation(using: .png, properties: [:]) else { throw AssetError.renderFailed }
+    let outDir = URL(fileURLWithPath: "Assets")
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+    let outURL = outDir.appendingPathComponent("dmg_background.png")
+    try pngData.write(to: outURL, options: .atomic)
+    print("Generated DMG background at \(outURL.path)")
 }
 
 func createAppIcon() throws {
@@ -47,106 +98,25 @@ func createAppIcon() throws {
     defer { try? FileManager.default.removeItem(at: iconsetDir) }
     try FileManager.default.createDirectory(at: iconsetDir, withIntermediateDirectories: true)
     
+    // Icon Composer applies the system enclosure, depth and highlights. Keep
+    // vector layers in AppIcon.icon; do not bake a second mask into the artwork.
+    let developer = try run("/usr/bin/xcode-select", ["-p"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let renderer = URL(fileURLWithPath: developer).deletingLastPathComponent()
+        .appendingPathComponent("Applications/Icon Composer.app/Contents/Executables/ictool")
     for spec in iconSpecs {
-        let s = CGFloat(spec.pixelSize)
-        let size = NSSize(width: s, height: s)
-        let img = NSImage(size: size)
-        img.lockFocus()
-        guard let ctx = NSGraphicsContext.current?.cgContext else { img.unlockFocus(); throw AssetError.renderFailed }
-        
-        let bounds = CGRect(x: 0, y: 0, width: s, height: s)
-        
-        // 1. Dark hardware background
-        ctx.setFillColor(CGColor(red: 0.055, green: 0.055, blue: 0.06, alpha: 1.0))
-        ctx.fill(bounds)
-        
-        // Very subtle radial depth gradient from center to edges
-        let colors = [
-            CGColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0),
-            CGColor(red: 0.04, green: 0.04, blue: 0.045, alpha: 1.0)
-        ] as CFArray
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0]) {
-            let center = CGPoint(x: s / 2.0, y: s / 2.0)
-            ctx.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: s * 0.7, options: [])
+        _ = try run(renderer.path, [
+            URL(fileURLWithPath: "Sources/Resources/AppIcon.icon").path,
+            "--export-image", "--output-file", iconsetDir.appendingPathComponent(spec.name).path,
+            "--platform", "macOS", "--rendition", "Default",
+            "--width", String(spec.pixelSize), "--height", String(spec.pixelSize),
+            "--scale", "1", "--design-generation", "27"
+        ])
+        if spec.pixelSize == 1024 {
+            let data = try Data(contentsOf: iconsetDir.appendingPathComponent(spec.name))
+            try data.write(to: URL(fileURLWithPath: "Assets/AppIcon-macOS27.png"), options: .atomic)
         }
-        
-        // 2. Nothing Tech Micro Dot Matrix Texture (Full Bleed Grid)
-        let dotStep = max(3.0, s * 0.04)
-        let dotW = max(0.8, s * 0.009)
-        ctx.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.045))
-        for gx in stride(from: dotStep, through: s - dotStep / 2.0, by: dotStep) {
-            for gy in stride(from: dotStep, through: s - dotStep / 2.0, by: dotStep) {
-                ctx.fill(CGRect(x: gx - dotW / 2.0, y: gy - dotW / 2.0, width: dotW, height: dotW))
-            }
-        }
-        
-        // 3. Center Hardware Graphic: 4 Dot-Matrix Pixel Stems (Vocals, Drums, Bass, Other)
-        // Scaled up for bold readability in modern macOS Dock & App Switcher
-        let stemPixelCounts = [5, 8, 10, 6]
-        let maxDots = 10
-        
-        let pixelW = max(1.5, s * 0.088)
-        let pixelH = max(1.5, s * 0.072)
-        let pixelGap = max(0.8, s * 0.014)
-        let colSpacing = max(1.5, s * 0.052)
-        
-        let totalW = CGFloat(4) * pixelW + CGFloat(3) * colSpacing
-        let startX = (s - totalW) / 2.0
-        
-        let totalMaxH = CGFloat(maxDots) * pixelH + CGFloat(maxDots - 1) * pixelGap
-        let startY = (s - totalMaxH) / 2.0
-        
-        for (colIndex, count) in stemPixelCounts.enumerated() {
-            let colX = startX + CGFloat(colIndex) * (pixelW + colSpacing)
-            let colH = CGFloat(count) * pixelH + CGFloat(count - 1) * pixelGap
-            let colStartY = startY + (totalMaxH - colH) / 2.0 // vertically centered
-            
-            // Stem Colors: Bar 1 (Pure White), Bar 2 (Nothing Red), Bar 3 (Nothing Red), Bar 4 (Pure White)
-            let isRed = (colIndex == 1 || colIndex == 2)
-            let color: CGColor = isRed
-                ? CGColor(red: 1.0, green: 0.16, blue: 0.16, alpha: 1.0)
-                : CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1.0)
-            
-            ctx.setFillColor(color)
-            
-            for dotIndex in 0..<count {
-                let dotY = colStartY + CGFloat(dotIndex) * (pixelH + pixelGap)
-                let dotRect = CGRect(x: colX, y: dotY, width: pixelW, height: pixelH)
-                let dotRadius = max(0.5, min(pixelW, pixelH) * 0.22) // subtle rounded square/bar pixel
-                let dotPath = CGPath(roundedRect: dotRect, cornerWidth: dotRadius, cornerHeight: dotRadius, transform: nil)
-                ctx.addPath(dotPath)
-                ctx.fillPath()
-            }
-        }
-        
-        // 4. Red Corner LED Status Indicator Dot (Top-Right of Stems)
-        let dotSize = max(2.5, s * 0.068)
-        let col3X = startX + CGFloat(3) * (pixelW + colSpacing)
-        let col3TopY = startY + (totalMaxH - (CGFloat(6) * pixelH + CGFloat(5) * pixelGap)) / 2.0 + CGFloat(6) * pixelH + CGFloat(5) * pixelGap
-        let dotX = col3X + pixelW * 0.7
-        let dotY = col3TopY + pixelGap * 1.6
-        
-        if dotX + dotSize <= s * 0.92 && dotY + dotSize <= s * 0.92 {
-            // Outer faint glow
-            ctx.setFillColor(CGColor(red: 1.0, green: 0.16, blue: 0.16, alpha: 0.28))
-            ctx.fillEllipse(in: CGRect(x: dotX - dotSize * 0.35, y: dotY - dotSize * 0.35, width: dotSize * 1.7, height: dotSize * 1.7))
-            
-            // Solid LED
-            ctx.setFillColor(CGColor(red: 1.0, green: 0.16, blue: 0.16, alpha: 1.0))
-            ctx.fillEllipse(in: CGRect(x: dotX, y: dotY, width: dotSize, height: dotSize))
-        }
-        
-        img.unlockFocus()
-        
-        if let tiffData = img.tiffRepresentation,
-           let rep = NSBitmapImageRep(data: tiffData),
-           let png = rep.representation(using: .png, properties: [:]) {
-            let outURL = iconsetDir.appendingPathComponent(spec.name)
-            try png.write(to: outURL)
-        } else { throw AssetError.renderFailed }
     }
-    
+
     let temporaryIcon = iconsetDir.appendingPathComponent("AppIcon.icns")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
@@ -157,9 +127,23 @@ func createAppIcon() throws {
     let data = try Data(contentsOf: temporaryIcon)
     try data.write(to: URL(fileURLWithPath: "Assets/AppIcon.icns"), options: .atomic)
     try data.write(to: URL(fileURLWithPath: "Sources/Resources/AppIcon.icns"), options: .atomic)
-    print("Generated Nothing-inspired dot-matrix AppIcon.icns")
+    print("Generated macOS 27 icon preview and legacy/DMG ICNS from AppIcon.icon")
+}
+
+@discardableResult
+func run(_ executable: String, _ arguments: [String]) throws -> String {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = pipe
+    try process.run()
+    let output = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { throw AssetError.iconConversionFailed }
+    return String(decoding: output, as: UTF8.self)
 }
 
 enum AssetError: Error { case renderFailed, iconConversionFailed }
 try createDMGBackground()
-try createAppIcon()
+if !CommandLine.arguments.contains("--dmg-only") { try createAppIcon() }
