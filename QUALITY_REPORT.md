@@ -1,6 +1,19 @@
 # Verification report — v1.3.0
 
-Verified September 25–26, 2026. Local results are from an Apple silicon MacBook Pro running macOS 27.0 with Xcode 27.0. Hosted results are from GitHub Actions `macos-15` (macOS 15.7, Xcode 26.3) and `macos-26` (macOS 26.6, Xcode 26.6) runners, which fetch the pinned model (`model-htdemucs-v1`, SHA-256 `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`). The historical audit notes below are retained from the previous handoff. [Run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518) passed both hosted jobs after the audio fixes; the installer-artwork and instructions were then checked locally.
+Verified September 25–27, 2026. Local results are from an Apple silicon MacBook Pro running macOS 27.0 with Xcode 27.0. Hosted results are from GitHub Actions `macos-15` (macOS 15.7, Xcode 26.3) and `macos-26` (macOS 26.6, Xcode 26.6) runners, which fetch the pinned model (`model-htdemucs-v1`, SHA-256 `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`). The historical audit notes below are retained from the previous handoff. [Run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518) passed both hosted jobs after the audio fixes; the installer-artwork and instructions were then checked locally.
+
+## September 27 publication
+
+The release branch was merged to `main` at `b7dd394b2dbed79bab52e8c8b64fef10eff7c0e9`; [the merged CI run](https://github.com/neokumar1/Isolate/actions/runs/36337596572) passed on macOS 15 and 26. The first attempt of [the tagged release run](https://github.com/neokumar1/Isolate/actions/runs/36338458602) failed one live stem-alignment test on the hosted macOS 26 virtual audio output: two waveform readings were 0.416 and 0.389 against the test's 0.06 maximum. The retry passed all release tests, including actual model inference, and packaged the release. The same Debug alignment test also passed five fresh-process repetitions on a physical macOS 27 Mac with no failures or skips. This supports a host-dependent timing failure, but does not establish that every output device is unaffected.
+
+The published [v1.3.0 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.0) is public Latest. Its artifacts were downloaded from the GitHub draft and checked before publication: both SHA-256 values matched, the DMG and ZIP passed integrity checks, their app bundles were identical, and both app signatures passed `codesign --verify --deep --strict`. The mounted DMG contained the Applications shortcut, Finder layout, bundled model and licenses; its Finder window was inspected with the status bar visible. The app reports version 1.3.0, minimum macOS 14.0, arm64, and an ad-hoc hardened-runtime signature. An unauthenticated request to the public Latest DMG URL resolved to HTTP 200 after the expected redirect. The release remains **not notarized**.
+
+Published artifact sizes: DMG **160,864,073 bytes**, ZIP **148,389,197 bytes**. SHA-256:
+
+```text
+94ec7d120442419fd08fa1e7f8523977fe14a4f56d52c732305503562262d063  Isolate.dmg
+96cb568cdd4c8394628f28188b7e1def553855b82b0a9837afc02150ab06d3ac  Isolate-v1.3.0-macOS.zip
+```
 
 ## September 26 continuation
 
@@ -10,7 +23,7 @@ Testing three additional real songs found a fourth defect: denormalization added
 
 The app now uses a native `AppIcon.icon` package with four SVG stem layers. Xcode 27 compiles light, dark and tintable icon stacks into `Assets.car`, plus the compatibility `AppIcon.icns`. The default, dark and tinted previews were inspected, as were 16 px and 32 px renders. The standalone ICNS contains all ten standard 16–1024 px representations. macOS's system icon service successfully rendered the packaged app's icon, and its compiled compatibility ICNS was extracted and inspected. The DMG background was regenerated at 1320 × 800 px / 144 dpi with a drag arrow and system requirements. A mounted Finder-window inspection caught footer text hidden by Finder's status bar; the final image shows both requirements lines unobstructed. Xcode 26.3's asset agent crashed on the layered icon on the hosted macOS 15 image, so only that CI job builds with the committed compatibility ICNS; macOS 26 and the release package compile the layered icon. Design references: [Apple Icon Composer](https://developer.apple.com/icon-composer/) and [app-icon integration](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
 
-Current release artifacts were built from base commit `13472da629de9edff9f722fe9f3e70496752c9c7` plus the v1.3.0 release-branch changes. They are local candidates, not published releases.
+The earlier local candidate below was built from base commit `13472da629de9edff9f722fe9f3e70496752c9c7` plus the v1.3.0 release-branch changes. It is distinct from the published GitHub Actions package above.
 
 | Current-checkout check | Result |
 | --- | --- |
@@ -103,10 +116,10 @@ A polarity null test plays four stems that cancel exactly only while every playe
 3. **Fixes.** The fixes landed in three parallel waves with disjoint file ownership. Each wave ran the full unit suite with real inference before merging.
 4. **Final review.** A nine-lens review of the whole branch found 40 more confirmed issues, mostly regressions introduced by the fixes, and all were fixed. The one exception is a decision left to the owner: the tracked `CLAUDE.md` contains personal agent instructions.
 
-## Open release gates
+## Remaining verification
 
 1. **Separation on real macOS 14 and 15 Macs is unverified.** Hosted machines show Core ML's CPU path is wrong there. Which path a real Mac uses depends on its hardware, so separation may work or may be refused with a clear message. Isolate refuses paths that fail its model check. Test on a physical macOS 14 or 15 Mac, or raise the minimum to macOS 26.
 2. **Signing.** Builds are ad-hoc signed and not notarized, and the README walks through first-launch approval. Check the downloaded DMG's first launch on macOS 15 or later and on macOS 14.
 3. **Listening.** Reconstruction measures alignment and scale, not how good the stems sound. Listen to representative music before announcing.
 4. **Not automated:** physical output-device switching (Bluetooth, USB), media keys and the menu bar controller, double-click reset on macOS 26 (hosted runners there drop synthetic clicks; verified on 15 and 27), and the in-place upgrade from a real pre-1.3 library.
-5. **Publication.** The hosted macOS 15 and 26 jobs passed on [run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518). The public Latest app is still v1.2.7, without the model, and the cask is v1.2.5. After review, merge to `main`, verify the downloaded package and first launch, publish v1.3.0 as Latest, and set the cask's version and SHA-256 from the published DMG. See [RELEASE.md](RELEASE.md) and [LAUNCH.md](LAUNCH.md).
+5. **Distribution follow-up.** v1.3.0 is published as Latest with the model, and the cask now uses the published DMG's version and SHA-256. Its Ruby syntax passed, but Homebrew's full audit stopped because this Mac's Command Line Tools are older than Homebrew requires. A clean Homebrew install and the browser-download Gatekeeper flow still need testing on another Mac. See [RELEASE.md](RELEASE.md) and [LAUNCH.md](LAUNCH.md).

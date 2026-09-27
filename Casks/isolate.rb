@@ -1,6 +1,6 @@
 cask "isolate" do
-  version "1.2.5"
-  sha256 "e6a68d336be4acedd6f9c72237e7d102265fef30cc07459c1c4834258ab6c48c"
+  version "1.3.0"
+  sha256 "94ec7d120442419fd08fa1e7f8523977fe14a4f56d52c732305503562262d063"
 
   url "https://github.com/neokumar1/Isolate/releases/download/v#{version}/Isolate.dmg"
   name "Isolate"
@@ -28,6 +28,10 @@ cask "isolate" do
   ]
 
   caveats <<~EOS
+    The separation model is included. macOS 26 or later is recommended for
+    separation; on macOS 14 or 15, Isolate may refuse an incompatible Core ML
+    compute path and ask you to update.
+
     Isolate is ad-hoc signed and not notarized by Apple, so macOS asks you to
     approve its first launch:
       macOS 15 or later: open Isolate and click Done. In System Settings >

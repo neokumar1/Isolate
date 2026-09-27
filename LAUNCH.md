@@ -1,10 +1,10 @@
 # Isolate 1.3.0 launch kit
 
-Prepared September 26, 2026. This is launch copy for review, not a publication record.
+Prepared September 26, 2026; the v1.3.0 GitHub release was published September 27. The copy below is for review before posting to social media.
 
 ## Before announcing
 
-The public Latest release currently points to **v1.2.7**, which does not bundle the separation model. Publish the verified v1.3.0 artifacts and complete the publication checks in [RELEASE.md](RELEASE.md) before using the launch copy below. Verify the final download link after publication. The Homebrew cask still points to v1.2.5; update its version and checksum from the actual published DMG before recommending Homebrew.
+The public [Latest release](https://github.com/neokumar1/Isolate/releases/latest) is **v1.3.0** and bundles the separation model. Its DMG, ZIP, checksums and Finder installation window were verified after download. The repository's Homebrew cask now uses the published DMG's checksum. Before a social announcement, complete the remaining physical-Mac and fresh-download checks in [QUALITY_REPORT.md](QUALITY_REPORT.md).
 
 The app targets Apple silicon and macOS 14+, with macOS 26+ recommended for separation. Some older macOS compute paths fail the model's built-in check. Distribution is ad-hoc signed and requires first-launch approval; no Developer ID signing or notarization is claimed. Remaining verification limits are recorded in [QUALITY_REPORT.md](QUALITY_REPORT.md).
 

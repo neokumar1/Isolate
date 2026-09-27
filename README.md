@@ -10,13 +10,13 @@ Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the o
   <img alt="The Isolate window: the library sidebar on the left, four channel strips for vocals, drums, bass and other, the studio display with a 32-band spectrum above them, and the playback controls below" src="Assets/screenshot-dark.png">
 </picture>
 
-**[Download Isolate for macOS](https://github.com/neokumar1/Isolate/releases)** · Apple silicon · macOS 14 or later · Free and open source (MIT)
+**[Download Isolate.dmg](https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg)** · [Release notes and other files](https://github.com/neokumar1/Isolate/releases/latest) · Apple silicon · macOS 14 or later · Free and open source (MIT)
 
-Choose **v1.3.0 or newer** for an app that includes the separation model. Earlier public releases do not include it. If v1.3.0 is not on the releases page yet, the complete installer has not been published.
+The current v1.3.0 release includes the separation model. Earlier 1.2.x releases do not.
 
 ## Download
 
-1. On the [releases page](https://github.com/neokumar1/Isolate/releases), select **v1.3.0 or newer** and download `Isolate.dmg`.
+1. Download the latest [Isolate.dmg](https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg) (v1.3.0 or newer).
 2. Open the disk image and drag **Isolate.app** onto the **Applications** shortcut in its Finder window. Quit an older copy of Isolate before replacing it.
 3. Eject the disk image, then open Isolate from Applications and follow [First launch](#first-launch) if macOS blocks it.
 4. Drag a supported audio file or folder onto the Isolate window, or press **⌘O**. Separation happens on your Mac.
