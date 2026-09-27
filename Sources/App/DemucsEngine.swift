@@ -76,6 +76,17 @@ public actor DemucsEngine {
     /// One shared load, so a cancelled import never starts a second compile.
     private var modelLoad: Task<MLModel, Error>?
     private var modelRelease: Task<Void, Never>?
+    private struct TimingHistory: Codable {
+        var modelLoad: Double
+        var decodePerSecond: Double
+        var chunk: Double
+        var finalization: Double
+    }
+    private static let timingKey = "Isolate.SeparationTiming.v1"
+    private static var shouldPersistTiming: Bool {
+        !AppPreferences.isTesting &&
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+    }
     /// Core ML holds a large working set while the model stays loaded. Reloading
     /// from its compiled cache is quick next to a separation, so an idle model is
     /// released; a batch keeps it because each file starts before this elapses.
@@ -395,11 +406,11 @@ public actor DemucsEngine {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let startTime = CACurrentMediaTime()
         func report(_ fraction: Double, _ message: String, chunk: Int = 0, total: Int = 0,
-                    secondsPerChunk: Double = 0) {
+                    secondsPerChunk: Double = 0, remaining: Double = 0) {
             progressCallback(SplitProgressInfo(
                 fraction: fraction, currentChunk: chunk, totalChunks: total,
                 elapsedSeconds: CACurrentMediaTime() - startTime,
-                estimatedRemainingSeconds: Double(total - chunk) * secondsPerChunk,
+                estimatedRemainingSeconds: remaining,
                 statusMessage: message, secondsPerChunk: secondsPerChunk,
                 realtimeMultiplier: secondsPerChunk > 0 ? 5 / secondsPerChunk : 0
             ))
@@ -415,9 +426,25 @@ public actor DemucsEngine {
         }
         let fm = FileManager.default
         try fm.createDirectory(at: StemCache.root, withIntermediateDirectories: true)
-        try StemCache.ensureSpace(forFrames: StreamingAudio.declaredFrames(of: url))
-        report(0.01, "LOADING SEPARATION MODEL...")
+        let declaredFrames = try StreamingAudio.declaredFrames(of: url)
+        try StemCache.ensureSpace(forFrames: declaredFrames)
+        let history = Self.shouldPersistTiming
+            ? UserDefaults.standard.data(forKey: Self.timingKey)
+                .flatMap { try? JSONDecoder().decode(TimingHistory.self, from: $0) }
+            : nil
+        let expectedChunks = declaredFrames.map { ($0 + Self.hopSize - 1) / Self.hopSize + 1 }
+        let expectedDuration = declaredFrames.map { Double($0) / Self.sampleRate }
+        let knownWork = history.flatMap { past -> Double? in
+            guard let expectedChunks, let expectedDuration else { return nil }
+            return max(0, past.decodePerSecond * expectedDuration +
+                       past.chunk * Double(expectedChunks) + past.finalization)
+        } ?? 0
+        let wasModelLoaded = model != nil
+        let modelStart = CACurrentMediaTime()
+        report(0.01, "LOADING SEPARATION MODEL...",
+               remaining: knownWork > 0 ? knownWork + (model == nil ? max(0, history?.modelLoad ?? 0) : 0) : 0)
         let model = try await loadedModel()
+        let modelLoadSeconds = CACurrentMediaTime() - modelStart
         try Task.checkCancellation()
         try Self.validateModel(model)
         let staging = StemCache.root.appending(path: ".partial-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -427,13 +454,18 @@ public actor DemucsEngine {
         // shares this cache and sweeps staging; the lock marks this folder as live.
         let stagingLock = StemCache.lockStaging(staging)
         defer { if stagingLock >= 0 { close(stagingLock) } }
-        report(0.02, "DECODING AUDIO...")
+        report(0.02, "DECODING AUDIO...", remaining: knownWork)
+        let decodeStart = CACurrentMediaTime()
         let original = staging.appending(path: "original.wav")
         let stats = try StreamingAudio.decode(url, to: original)
+        let decodeSeconds = CACurrentMediaTime() - decodeStart
         let inputFile = try AVAudioFile(forReading: original)
         let chunkSize = Self.chunkSize
         let hopSize = Self.hopSize
         let totalChunks = (stats.frames + hopSize - 1) / hopSize + 1
+        let previousChunkSeconds = history?.chunk ?? 0
+        report(0.03, "PREPARING STEMS...",
+               remaining: previousChunkSeconds * Double(totalChunks) + (history?.finalization ?? 0))
         let inputArray = try MLMultiArray(shape: [1, 2, NSNumber(value: chunkSize)], dataType: .float32)
         let input = inputArray.dataPointer.assumingMemoryBound(to: Float.self)
         guard let windowBuffer = AVAudioPCMBuffer(pcmFormat: StreamingAudio.format, frameCapacity: AVAudioFrameCount(chunkSize)),
@@ -448,6 +480,8 @@ public actor DemucsEngine {
         var accumulators = (0..<8).map { _ in [Float](repeating: 0, count: chunkSize) }
         var weights = [Float](repeating: 0, count: chunkSize)
         let inferenceStart = CACurrentMediaTime()
+        var recentChunks: [Double] = []
+        var lastChunkEnd = inferenceStart
         for chunk in 0..<totalChunks {
             try Task.checkCancellation()
             let sourceStart = chunk * hopSize - hopSize
@@ -495,13 +529,39 @@ public actor DemucsEngine {
                 samples.baseAddress!.update(from: samples.baseAddress! + hopSize, count: hopSize)
                 (samples.baseAddress! + hopSize).update(repeating: 0, count: hopSize)
             }
-            let secondsPerChunk = (CACurrentMediaTime() - inferenceStart) / Double(chunk + 1)
+            let now = CACurrentMediaTime()
+            let duration = now - lastChunkEnd
+            lastChunkEnd = now
+            recentChunks.append(duration)
+            if recentChunks.count > 7 { recentChunks.removeFirst() }
+            let sorted = recentChunks.sorted()
+            let measuredPace = sorted[sorted.count / 2]
+            // The first prediction can pay a one-time compile/warm-up cost.
+            // Prefer a previous completed import until several chunks agree.
+            let etaPace = chunk < 2 && previousChunkSeconds > 0
+                ? previousChunkSeconds : measuredPace
+            let remaining = Double(totalChunks - chunk - 1) * etaPace +
+                (history?.finalization ?? 0)
             report(0.03 + 0.95 * Double(chunk + 1) / Double(totalChunks), "SEPARATING STEMS...",
-                   chunk: chunk + 1, total: totalChunks, secondsPerChunk: secondsPerChunk)
+                   chunk: chunk + 1, total: totalChunks,
+                   secondsPerChunk: measuredPace, remaining: remaining)
         }
+        let inferenceSeconds = CACurrentMediaTime() - inferenceStart
         writers.removeAll() // Close files before validating their headers.
         try Task.checkCancellation()
         try StemCache.publish(staging, to: destination)
+        let finalizationSeconds = CACurrentMediaTime() - inferenceStart - inferenceSeconds
+        let measured = TimingHistory(
+            modelLoad: wasModelLoaded ? (history?.modelLoad ?? 0) :
+                ((history?.modelLoad).map { 0.4 * $0 + 0.6 * modelLoadSeconds } ?? modelLoadSeconds),
+            decodePerSecond: decodeSeconds / max(1, Double(stats.frames) / Self.sampleRate),
+            chunk: recentChunks.count > 2 ? recentChunks.sorted()[recentChunks.count / 2] :
+                inferenceSeconds / Double(totalChunks),
+            finalization: finalizationSeconds
+        )
+        if Self.shouldPersistTiming, let data = try? JSONEncoder().encode(measured) {
+            UserDefaults.standard.set(data, forKey: Self.timingKey)
+        }
         report(1, "SEPARATION COMPLETE")
         return Self.stemNames.map { destination.appending(path: "\($0).wav") }
     }

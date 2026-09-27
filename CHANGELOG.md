@@ -2,6 +2,12 @@
 
 User-visible changes to Isolate, newest first. Release downloads are on [GitHub Releases](https://github.com/neokumar1/Isolate/releases).
 
+## [1.3.1]
+
+- Untagged songs now get on-device BPM and musical-key analysis after import. Tagged values remain authoritative, and silent or ambiguous audio stays unknown. The displayed BPM follows playback speed, while the displayed key follows semitone changes.
+- Import time remaining now starts from previous measured work on the same Mac during model loading and decoding, then adapts to the current song's recent chunk times. A first import shows that it is calibrating until it has a measured pace.
+- About Isolate now uses the standard macOS panel, shows the bundled app icon and version, and includes a GitHub repository link.
+
 ## [1.3.0]
 
 This is the first release since v1.2.7 and the first public build that includes the separation model; the v1.2.7 download did not contain it, so it could not separate songs. Your existing library carries over (see Library).

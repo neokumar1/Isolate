@@ -104,6 +104,23 @@ final class IsolateUITests: XCTestCase {
         capture(app, name: "Empty player — dark")
     }
 
+    func testNativeAboutShowsAppIconAndRepository() {
+        let app = launch()
+        app.menuBars.menuBarItems["Isolate"].click()
+        app.menuItems["About Isolate"].click()
+        let about = app.dialogs.firstMatch
+        XCTAssertTrue(about.waitForExistence(timeout: 5), "About should open as a native macOS panel")
+        XCTAssertTrue(about.images["Isolate icon"].exists, "The native panel should display the bundled app icon")
+        let repository = about.links["Isolate on GitHub"]
+        XCTAssertTrue(repository.exists, "The native panel should link to the repository")
+        let attachment = XCTAttachment(screenshot: about.screenshot())
+        attachment.name = "Native About"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.typeKey(.escape, modifierFlags: [])
+        expectGone(about, "Escape should close the native About panel")
+    }
+
     func testSettingsThemesAndKeyboardDismissal() {
         let app = launch()
         app.typeKey(",", modifierFlags: .command)
@@ -274,10 +291,10 @@ final class IsolateUITests: XCTestCase {
         if cancelImport.exists {
             app.menuBars.menuBarItems["Isolate"].click()
             app.menuItems["About Isolate"].click()
-            let about = app.staticTexts["4-STEM ON-DEVICE AUDIO SEPARATION"]
+            let about = app.dialogs.firstMatch
             if about.waitForExistence(timeout: 3) {
                 app.typeKey(.escape, modifierFlags: [])
-                expectGone(about, "Escape must close About opened over the separation")
+                expectGone(about, "Escape must close native About opened over the separation")
                 XCTAssertFalse(app.buttons["CANCELLING…"].exists, "Escape on About must not cancel the separation")
                 checkedCards.append("About")
             }

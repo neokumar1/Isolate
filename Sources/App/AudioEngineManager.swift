@@ -693,6 +693,7 @@ public final class AudioEngineManager {
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         activeSplitTask?.cancel()
         metadataTask?.cancel()
+        analysisTask?.cancel()
         let nodes = [engine.mainMixerNode, vocalMixer, drumMixer, bassMixer, otherMixer]
         let teardown: @MainActor @Sendable () -> Void = { [engine, playbackClock] in
             playbackClock.timer?.invalidate()
@@ -1031,6 +1032,7 @@ public final class AudioEngineManager {
         playbackSessionID = UUID()
         loadGeneration += 1
         metadataTask?.cancel()
+        analysisTask?.cancel()
         metadataRequestID = UUID()
         // 1. Hard stop all audio players & invalidate playback timers
         vocalPlayer.stop()
@@ -1107,7 +1109,7 @@ public final class AudioEngineManager {
         splitProgress = 0
         currentChunkNumber = 0
         totalChunkCount = 0
-        etaRemainingString = "ESTIMATING..."
+        etaRemainingString = "CALIBRATING TIME..."
         splitStatusMessage = "CHECKING AUDIO..."
         liveSpeedSubtitle = "ON-DEVICE CORE ML PROCESSING"
         // togglePlayback() ignores requests while splitting, so pause directly.
@@ -1123,9 +1125,11 @@ public final class AudioEngineManager {
                     self.currentChunkNumber = info.currentChunk
                     self.totalChunkCount = info.totalChunks
                     self.splitStatusMessage = info.statusMessage
-                    if info.secondsPerChunk > 0 {
+                    if info.estimatedRemainingSeconds > 0 {
                         let seconds = Int(ceil(info.estimatedRemainingSeconds))
-                        self.etaRemainingString = String(format: "%02d:%02d", seconds / 60, seconds % 60)
+                        self.etaRemainingString = String(format: "~%02d:%02d LEFT", seconds / 60, seconds % 60)
+                    }
+                    if info.secondsPerChunk > 0 {
                         self.liveSpeedSubtitle = String(format: "%.2fs / CHUNK • %.1fx REALTIME", info.secondsPerChunk, info.realtimeMultiplier)
                     }
                 }
@@ -1178,6 +1182,7 @@ public final class AudioEngineManager {
     }
 
     @ObservationIgnored private var metadataTask: Task<Void, Never>?
+    @ObservationIgnored private var analysisTask: Task<AudioFeatureAnalyzer.Result?, Never>?
     @ObservationIgnored private var titleOverride: String?
     private var metadataRequestID = UUID()
 
@@ -1220,6 +1225,7 @@ public final class AudioEngineManager {
 
     private func extractMetadata(url: URL) {
         metadataTask?.cancel()
+        analysisTask?.cancel()
         let requestID = UUID()
         metadataRequestID = requestID
         let asset = AVURLAsset(url: url)
@@ -1321,6 +1327,26 @@ public final class AudioEngineManager {
                 self.trackBitDepth = finalBitDepth
                 
                 self.publishNowPlayingMetadata()
+            }
+
+            guard !Task.isCancelled, foundBPM == nil || foundKey == nil,
+                  let self, self.metadataRequestID == requestID else { return }
+            // The decoded cache is local even if the imported source lived on an
+            // external drive. Analysis stays off the UI actor and is cancelled on
+            // track change; tagged values always retain precedence.
+            let analysisURL = self.audioFile?.url ?? url
+            let drumsURL = self.fileDrums?.url
+            let worker = Task.detached(priority: .utility) {
+                try? AudioFeatureAnalyzer.analyze(original: analysisURL, drums: drumsURL)
+            }
+            self.analysisTask = worker
+            guard let measured = await worker.value, !Task.isCancelled,
+                  self.metadataRequestID == requestID else { return }
+            if foundBPM == nil, let bpm = measured.bpm {
+                self.trackBPM = String(format: "%.1f BPM", bpm)
+            }
+            if foundKey == nil, let key = measured.key {
+                self.trackMusicalKey = key
             }
         }
     }

@@ -10,6 +10,10 @@ HTDemucs accepts 441,000 frames. Isolate runs sequential predictions with a 220,
 
 Model order is vocals, drums, bass, other. See [MODEL.md](MODEL.md) before replacing the model and [ARCHITECTURE.md](ARCHITECTURE.md) for the import transaction around this loop.
 
+The approximate import ETA uses the previous completed separation on the same Mac to cover model loading and decoding before a chunk has finished. Once chunks run, it uses the median of recent chunk times, which limits the effect of a slow first prediction. No time is claimed on a first import until the current Mac has measured a chunk. Test imports do not overwrite the saved timing.
+
+When BPM or key tags are absent, a background task analyzes at most the first 90 seconds of the decoded original and drum stem at roughly 11 kHz. Drum onset autocorrelation estimates tempo; spectral pitch classes compared with major/minor profiles estimate key. Confidence checks leave silent, single-tone and ambiguous audio unknown. Tagged values take precedence. Results are cached beside owned stem files, and a track change cancels the task before it can update the display. Playback speed scales the displayed BPM, and pitch shift transposes the displayed key without reanalyzing.
+
 ## Playback graph
 
 ```text

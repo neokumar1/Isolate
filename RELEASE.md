@@ -30,11 +30,11 @@ UI tests take over the mouse and keyboard, so run them on a logged-in desktop yo
 
 ## Version
 
-`project.yml` is the source of truth. Set `CFBundleShortVersionString` and `CFBundleVersion` there (1.3.0 uses `1.3.0` for both), run `xcodegen generate`, and commit the regenerated `Info.plist`. Add a `## [x.y.z]` section to [CHANGELOG.md](CHANGELOG.md); the release notes are built from it. Then check that everything agrees with the tag you intend to push:
+`project.yml` is the source of truth. Set `CFBundleShortVersionString` and `CFBundleVersion` there (1.3.1 uses `1.3.1` for both), run `xcodegen generate`, and commit the regenerated `Info.plist`. Add a `## [x.y.z]` section to [CHANGELOG.md](CHANGELOG.md); the release notes are built from it. Then check that everything agrees with the tag you intend to push:
 
 ```sh
-bash scripts/check_version.sh v1.3.0
-bash scripts/release_notes.sh v1.3.0
+bash scripts/check_version.sh v1.3.1
+bash scripts/release_notes.sh v1.3.1
 ```
 
 Never reuse a tag or overwrite a published version's artifacts.
@@ -44,7 +44,7 @@ Never reuse a tag or overwrite a published version's artifacts.
 ```sh
 ISOLATE_DIST_DIR=/private/tmp/IsolateReleaseCheck \
 ISOLATE_MODEL_PATH="$HOME/Library/Application Support/Isolate/HTDemucs.mlmodelc" \
-  bash scripts/package_release.sh v1.3.0
+  bash scripts/package_release.sh v1.3.1
 ```
 
 The script stops before building if the tag, `project.yml` and `Info.plist` disagree. It then validates the reference model, builds Release for arm64 in a temporary directory, checks the built app's version, bundles the model (the licenses are app resources), signs the app with the hardened runtime and verifies the signature, and builds the DMG. The DMG is created writable so its volume can carry the custom-icon flag, then compressed and verified. The script remounts the finished image to check its Applications shortcut, Finder artwork, bundled model and app signature. It writes `Isolate.dmg`, `Isolate-<tag>-macOS.zip` and `SHA256SUMS.txt` to the dist directory. It does not install, commit, tag, push, or publish anything. For v1.3.0 on the development Mac it produced a 160 MB DMG, a 148 MB ZIP and a 313 MB app (decimal megabytes, as Finder reports them).

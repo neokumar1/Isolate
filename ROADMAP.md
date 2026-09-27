@@ -7,7 +7,7 @@
 - [x] File and folder import with batch progress and one failure summary per batch.
 - [x] Sample-aligned stems, original comparison, faders, mute/solo, pan, three-band EQ on each stem and the master bus, speed and pitch.
 - [x] A–B practice looping with a 0.5 s minimum region and a clear-markers shortcut.
-- [x] SwiftData library in its own store, with a one-time import from pre-1.3 libraries, backups instead of deletion, folder grouping, search, rename/delete, and metadata/artwork from tags.
+- [x] SwiftData library in its own store, with a one-time import from pre-1.3 libraries, backups instead of deletion, folder grouping, search, rename/delete, metadata/artwork from tags, and measured BPM/key when tags are absent.
 - [x] Individual WAV/FLAC stem archives without clipping and current-mix WAV export, with progress and cancellation.
 - [x] Real audio regression coverage and UI smoke tests; CI runs real model inference when the model is available.
 - [x] Model-bundled, hardened-runtime packaging and draft-only release automation with user-facing notes.
@@ -22,7 +22,6 @@ These are not part of the current product contract:
 - Keeping access to imported files across launches, so macOS asks for folder access less often.
 - Sample-accurate, seamless DAW-style looping.
 - Original-only playback before separation.
-- Automatic BPM/key analysis beyond source tags.
 - MP3 encoding, multichannel export, or loop-region export.
 - Reproducible model conversion tooling and measured performance across a hardware/OS matrix.
 

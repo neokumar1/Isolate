@@ -8,7 +8,6 @@ struct IsolateApp: App {
     @Environment(\.openWindow) private var openWindow
     @State private var engineManager = AudioEngineManager()
     @State private var theme = ThemeManager.shared
-    @State private var isShowingAboutModal = false
     @State private var isShowingSettingsModal = false
     private let libraryContainer: ModelContainer
 
@@ -20,8 +19,7 @@ struct IsolateApp: App {
 
     var body: some Scene {
         WindowGroup("Isolate", id: "main", for: String.self) { _ in
-            ContentView(isShowingAboutModal: $isShowingAboutModal,
-                        isShowingSettingsModal: $isShowingSettingsModal)
+            ContentView(isShowingSettingsModal: $isShowingSettingsModal)
                 .ignoresSafeArea()
                 .preferredColorScheme(theme.preferredColorScheme)
                 .frame(minWidth: 960, minHeight: 580)
@@ -39,14 +37,18 @@ struct IsolateApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Isolate") {
-                    isShowingSettingsModal = false
-                    isShowingAboutModal = true
-                    openWindow(id: "main", value: "main")
+                    let repository = URL(string: "https://github.com/neokumar1/Isolate")!
+                    let credits = NSMutableAttributedString(string: "Isolate on GitHub")
+                    credits.addAttribute(.link, value: repository,
+                                         range: NSRange(location: 0, length: credits.length))
+                    NSApp.orderFrontStandardAboutPanel(options: [
+                        .applicationIcon: NSApp.applicationIconImage as Any,
+                        .credits: credits
+                    ])
                 }
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
-                    isShowingAboutModal = false
                     isShowingSettingsModal = true
                     openWindow(id: "main", value: "main")
                 }
@@ -54,7 +56,6 @@ struct IsolateApp: App {
             }
             CommandGroup(replacing: .newItem) {
                 Button("Import Audio…") {
-                    isShowingAboutModal = false
                     isShowingSettingsModal = false
                     engineManager.importRequested = true
                     openWindow(id: "main", value: "main")
@@ -263,7 +264,6 @@ struct ModalDotMatrixProgressBar: View {
 }
 
 struct ContentView: View {
-    @Binding var isShowingAboutModal: Bool
     @Binding var isShowingSettingsModal: Bool
     @State private var theme = ThemeManager.shared
     @State private var importer = ImportCoordinator()
@@ -325,7 +325,7 @@ struct ContentView: View {
                     }
                 }
         }
-        .disabled(engineManager.isSplitting || isShowingDeleteModal || isShowingSettingsModal || isShowingAboutModal)
+        .disabled(engineManager.isSplitting || isShowingDeleteModal || isShowingSettingsModal)
         .background(theme.background)
         .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
             importer.acceptDrop(providers, context: modelContext, engine: engineManager)
@@ -337,7 +337,6 @@ struct ContentView: View {
                 isShowingRenameModal = false
                 isShowingDeleteModal = false
                 isShowingSettingsModal = false
-                isShowingAboutModal = false
                 Task { @MainActor in
                     // Let any existing sheet close before presenting the file picker.
                     await Task.yield()
@@ -372,7 +371,7 @@ struct ContentView: View {
         .overlay {
             // Stay up between the files of a batch instead of flashing the player.
             if engineManager.isSplitting || (importer.batchCount > 1 && importer.batchIndex < importer.batchCount) {
-                SplittingProgressModal(isCovered: isShowingAboutModal || isShowingSettingsModal || isShowingDeleteModal,
+                SplittingProgressModal(isCovered: isShowingSettingsModal || isShowingDeleteModal,
                                        fileName: importer.currentFileName,
                                        batchIndex: importer.batchIndex,
                                        batchCount: importer.batchCount)
@@ -480,21 +479,6 @@ struct ContentView: View {
                         }
                     )
                 }
-            } else if isShowingAboutModal {
-                // MARK: - Window-Centered Nothing Hardware About Modal
-                ZStack {
-                    theme.modalBackdrop
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            isShowingAboutModal = false
-                        }
-                    
-                    AboutModalCard(
-                        onDismiss: {
-                            isShowingAboutModal = false
-                        }
-                    )
-                }
             } else if appMoveHelper.shouldShowMoveModal && !engineManager.isSplitting {
                 // MARK: - Window-Centered Move to Applications Prompt
                 // Dismissing only lasts for this launch; the prompt appears only
@@ -573,173 +557,6 @@ struct ContentView: View {
         MenuBarManager.shared.configure(engineManager: engineManager,
                                         playlistProvider: { library.libraryPlaybackOrder() },
                                         trackSelectHandler: selectTrack)
-    }
-}
-
-// MARK: - Nothing Hardware About Isolate Modal Card
-struct AboutModalCard: View {
-    let onDismiss: () -> Void
-    @State private var theme = ThemeManager.shared
-    @State private var isCloseHovered = false
-    @State private var isGitHubHovered = false
-    
-    var body: some View {
-        VStack(spacing: 18) {
-            // Nothing Dot-Matrix App Icon Graphic
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(theme.knobFace)
-                    .frame(width: 84, height: 84)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-                
-                // Stacked Square Pixel Stem Bars (White/Charcoal, Red, Red, White/Charcoal)
-                HStack(alignment: .bottom, spacing: 5) {
-                    VStack(spacing: 2) {
-                        ForEach(0..<5, id: \.self) { _ in
-                            Rectangle().fill(theme.spectrumBarDefault).frame(width: 6, height: 4)
-                        }
-                    }
-                    VStack(spacing: 2) {
-                        ForEach(0..<8, id: \.self) { _ in
-                            Rectangle().fill(theme.accentRed).frame(width: 6, height: 4)
-                        }
-                    }
-                    VStack(spacing: 2) {
-                        ForEach(0..<10, id: \.self) { _ in
-                            Rectangle().fill(theme.accentRed).frame(width: 6, height: 4)
-                        }
-                    }
-                    VStack(spacing: 2) {
-                        ForEach(0..<6, id: \.self) { _ in
-                            Rectangle().fill(theme.spectrumBarDefault).frame(width: 6, height: 4)
-                        }
-                    }
-                }
-                .padding(.bottom, 16)
-                .frame(width: 84, height: 84, alignment: .bottom)
-                
-                // Top-right Red Status Dot
-                Circle()
-                    .fill(theme.accentRed)
-                    .frame(width: 8, height: 8)
-                    .padding(8)
-            }
-            
-            VStack(spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("ISOLATE")
-                        .font(.custom("DotGothic16-Regular", size: 24))
-                        .fontWeight(.bold)
-                        .foregroundColor(theme.textPrimary)
-                    
-                    Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"))
-                        .font(.custom("DotGothic16-Regular", size: 13))
-                        .foregroundColor(theme.textSecondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(theme.surfaceSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(theme.border, lineWidth: 1)
-                        )
-                }
-                
-                Text("4-STEM ON-DEVICE AUDIO SEPARATION")
-                    .font(.custom("DotGothic16-Regular", size: 11))
-                    .foregroundColor(theme.textSecondary)
-                    .tracking(0.5)
-            }
-            
-            Divider()
-                .background(theme.hairline)
-                .padding(.horizontal, 8)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
-                    Text("CORE ML PROCESSING ON APPLE SILICON")
-                        .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(theme.textPrimary.opacity(0.85))
-                }
-                HStack(spacing: 8) {
-                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
-                    Text("LIVE SPECTRUM & ACCELERATE AUDIO ANALYSIS")
-                        .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(theme.textPrimary.opacity(0.85))
-                }
-                HStack(spacing: 8) {
-                    Circle().fill(theme.textMuted).frame(width: 5, height: 5)
-                    Text("100% PRIVATE & OFFLINE AUDIO PROCESSING")
-                        .font(.custom("DotGothic16-Regular", size: 11))
-                        .foregroundColor(theme.textPrimary.opacity(0.85))
-                }
-            }
-            .padding(.horizontal, 12)
-            
-            HStack(spacing: 12) {
-                // GitHub Repository Link
-                Button(action: {
-                    Haptics.playClick()
-                    if let url = URL(string: "https://github.com/neokumar1/Isolate") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "link")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("GITHUB")
-                            .font(.custom("DotGothic16-Regular", size: 13))
-                            .fontWeight(.bold)
-                    }
-                    .foregroundColor(isGitHubHovered ? theme.textPrimary : theme.textSecondary)
-                    .frame(width: 140, height: 36)
-                    .background(isGitHubHovered ? theme.surfaceHover : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(isGitHubHovered ? theme.textPrimary : theme.border, lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    if hovering && !isGitHubHovered { Haptics.playClick() }
-                    isGitHubHovered = hovering
-                }
-                
-                // Close Button
-                Button(action: {
-                    Haptics.playClick()
-                    onDismiss()
-                }) {
-                    Text("CLOSE")
-                        .font(.custom("DotGothic16-Regular", size: 13))
-                        .fontWeight(.bold)
-                        .foregroundColor(theme.surface)
-                        .frame(width: 120, height: 36)
-                        .background(isCloseHovered ? theme.textSecondary : theme.textPrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .onHover { hovering in
-                    if hovering && !isCloseHovered { Haptics.playClick() }
-                    isCloseHovered = hovering
-                }
-            }
-            .padding(.top, 6)
-        }
-        .padding(24)
-        .frame(width: 440)
-        .background(theme.modalBackground)
-        .compositingGroup()
-        .border(theme.cardBorder, width: 1)
-        .overlay(CornerBrackets())
-        .shadow(color: Color.black.opacity(theme.isDark ? 0.9 : 0.2), radius: 24, x: 0, y: 8)
     }
 }
 

@@ -2420,7 +2420,7 @@ struct HUDTopBar: View {
             
             if showsMetadata {
                 HStack(spacing: 8) {
-                    // Unknown tags stay visibly placeholder; they are never estimated.
+                    // Measured values replace missing tags once analysis finishes.
                     Text("• \(engineManager.effectiveBPM)")
                         .font(.custom("DotGothic16-Regular", size: isCompactHeight ? 8.5 : 10))
                         .foregroundColor(engineManager.effectiveBPM.contains("UNKNOWN") ? theme.textMuted : theme.textPrimary)

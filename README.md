@@ -12,7 +12,7 @@ Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the o
 
 **[Download Isolate.dmg](https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg)** · [Release notes and other files](https://github.com/neokumar1/Isolate/releases/latest) · Apple silicon · macOS 14 or later · Free and open source (MIT)
 
-The current v1.3.0 release includes the separation model. Earlier 1.2.x releases do not.
+The current v1.3.1 release includes the separation model. Earlier 1.2.x releases do not.
 
 ## Download
 
@@ -66,7 +66,7 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 
 - Four stems, always in the same order: vocals, drums, bass and other. HTDemucs runs through Core ML on your Mac. Isolate has no account, analytics or network features of its own.
 - Import files or whole folders with ⌘O or by dragging them onto the window. MP3, WAV, FLAC, M4A (AAC or ALAC), AIFF and CAF are supported. Surround files are downmixed to stereo, and iCloud Drive files that aren't on your Mac yet are downloaded first.
-- While a song separates, Isolate shows the file name, chunk count, time remaining and measured speed. You can cancel one song or a whole batch, and if you allow notifications, Isolate tells you when an import finishes while it is in the background.
+- While a song separates, Isolate shows the file name, chunk count and measured speed. Its approximate time remaining uses the last completed import on this Mac during model loading and decoding, then adjusts to the current song's recent processing speed. On the first import it calibrates before showing a time. You can cancel one song or a whole batch, and if you allow notifications, Isolate tells you when an import finishes while it is in the background.
 - Separated songs are cached by the file's exact contents. Importing the identical file again, even from a different folder, reuses its stems instead of separating it again; a copy with edited tags or artwork, or in another format, is separated again.
 
 <img alt="Separation in progress: a large percentage, the file name, the current stage and a Cancel Import button" src="Assets/screenshot-separating.png" width="640">
@@ -87,7 +87,7 @@ If you open Isolate straight from the disk image, it offers to move itself into 
 **Library**
 
 - Songs are grouped by the folder they came from and can be searched by title, file name, or the artist and album folders they sit in. Next and Previous follow the sidebar order.
-- Artist, album, artwork, BPM and key come from the file's own tags. Isolate doesn't estimate BPM or key, and shows them as unknown when the tags don't have them.
+- Artist, album and artwork come from the file's own tags. Isolate uses tagged BPM and key when present; otherwise it analyzes the imported audio on device and shows a measured estimate when the beat or tonal center is clear. Silence and ambiguous material remain unknown. The displayed BPM follows playback speed, and the key follows pitch shift.
 - Rename songs in the library. Deleting a song removes only the stems Isolate made; your original file is never changed or deleted.
 
 **Export**

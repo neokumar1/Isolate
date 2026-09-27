@@ -38,7 +38,7 @@ Memory for input and output audio is bounded by chunk size rather than track len
 
 ## Playback and UI safety
 
-The audio graph and observable UI state belong to the main actor. Each meter tap owns its mutable FFT state; value snapshots cross back to the UI. Playback completion and metadata tasks carry generation IDs so cancelled or replaced tracks cannot update current state. Artwork decoding and the source-format probe run off the main actor. Remote media callbacks enqueue main-actor work.
+The audio graph and observable UI state belong to the main actor. Each meter tap owns its mutable FFT state; value snapshots cross back to the UI. Playback completion and metadata tasks carry generation IDs so cancelled or replaced tracks cannot update current state. Artwork decoding, source-format probing and missing-tag tempo/key analysis run off the main actor. Remote media callbacks enqueue main-actor work.
 
 Exports snapshot the selected files and controls before the save panel opens, check afterwards that the same track is still loaded, and render on an independent graph in a worker task that can be cancelled. Library deletion is blocked while exporting or separating. Existing output files are replaced only after the rendered file or archive is complete.
 
@@ -46,7 +46,7 @@ Quitting asks for confirmation while a separation or export runs. Confirming dur
 
 The app uses one logical main window; automatic window tabbing is disabled. The menu bar item reopens a closed window through the scene's `openWindow`. Hosted tests and `-ui-testing` launches use separate preferences, an in-memory library, and a temporary stem cache.
 
-Track renaming uses a native sheet so its text field can accept keyboard focus while the player is blocked. Decorative corner overlays do not receive pointer events; disabled mixer controls stop participating in keyboard focus. While About, Settings or the delete card covers the separation progress, its cancel button has no keyboard shortcut, so Escape closes the card on top.
+Track renaming uses a native sheet so its text field can accept keyboard focus while the player is blocked. About uses AppKit's standard panel with the bundled icon and an attributed GitHub link. Decorative corner overlays do not receive pointer events; disabled mixer controls stop participating in keyboard focus. While Settings or the delete card covers the separation progress, its cancel button has no keyboard shortcut, so Escape closes the card on top. Escape also closes the native About panel without cancelling an import underneath.
 
 ## Files and persistence
 
