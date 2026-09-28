@@ -17,7 +17,7 @@ If you open Isolate straight from the disk image, it offers to move itself to Ap
 
 ## Homebrew
 
-The v1.3.1 cask uses the same published disk image. It lives in this repository rather than in Homebrew's main tap, so tap it by URL:
+The v1.3.2 cask uses the same published disk image. It lives in this repository rather than in Homebrew's main tap, so tap it by URL:
 
 ```sh
 brew tap neokumar1/isolate https://github.com/neokumar1/Isolate

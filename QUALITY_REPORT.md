@@ -1,8 +1,23 @@
-# Verification report — v1.3.1
+# Verification report — v1.3.2
+
+## September 27 v1.3.2 publication
+
+The public [v1.3.2 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.2) adds a Light appearance for the macOS app icon while preserving the existing Dark appearance and red center stems. The four vector shapes and their positions are unchanged. The uploaded app's compiled icon contains Aqua, Dark Aqua and tintable stacks; the compatibility ICNS uses the Light appearance. Both previews, plus small ICNS sizes, were inspected. The native About-panel icon UI test passed locally on macOS 27. [Branch CI](https://github.com/neokumar1/Isolate/actions/runs/36366222147) passed on macOS 15 and 26 on its second attempt. The first attempt hit the existing hosted virtual-audio timing failure in the unchanged stem-alignment test; its assertion was retained. The [tagged release workflow](https://github.com/neokumar1/Isolate/actions/runs/36367427034) passed on its first attempt and packaged the model-backed build from `bd2549e1d40d8f8ca2b04f5c64b3348b009a85b7`.
+
+All three uploaded files were downloaded from GitHub. Both app archives matched the uploaded `SHA256SUMS.txt`; the DMG passed `hdiutil verify`, the ZIP passed `unzip -t`, and the extracted app bundles were identical. Both signatures passed `codesign --verify --deep --strict`. The DMG contains the Applications shortcut and a 287 MB compiled separation model; its app reports version 1.3.2, minimum macOS 14.0, and arm64. Distribution remains ad-hoc signed and **not notarized**. Fresh browser-download Gatekeeper approval on macOS 14/15 and physical audio-device switching still need independent checks before a broad social announcement.
+
+Published artifact SHA-256:
+
+```text
+12950691697ad0b638142b2a0e85008f1d0b70b90723f659eb0cd18c4d5e2831  Isolate.dmg
+4933c272a2654353c3812fd338219f7606b12db1d17717ddb905063dedb7bfcc  Isolate-v1.3.2-macOS.zip
+```
+
+## v1.3.1 history
 
 ## September 27 v1.3.1 publication
 
-The [v1.3.1 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.1) is public Latest. It adds measured import-time estimates, on-device BPM/key analysis for untagged audio, and a native macOS About panel. On a physical Apple silicon Mac running macOS 27, the model-required unit suite passed **203 tests** with **1 optional real-music test skipped**; the interactive UI suite passed **7 tests**. [Branch CI](https://github.com/neokumar1/Isolate/actions/runs/36347658315) passed on macOS 15 and 26. The first attempt of the [tagged release workflow](https://github.com/neokumar1/Isolate/actions/runs/36360245853) hit the previously observed hosted-audio timing flake in the unchanged stem-alignment test. Its retry passed the model-backed unit gate and packaged the release. This does not establish timing behavior on every output device.
+The [v1.3.1 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.1) was public Latest at the time. It adds measured import-time estimates, on-device BPM/key analysis for untagged audio, and a native macOS About panel. On a physical Apple silicon Mac running macOS 27, the model-required unit suite passed **203 tests** with **1 optional real-music test skipped**; the interactive UI suite passed **7 tests**. [Branch CI](https://github.com/neokumar1/Isolate/actions/runs/36347658315) passed on macOS 15 and 26. The first attempt of the [tagged release workflow](https://github.com/neokumar1/Isolate/actions/runs/36360245853) hit the previously observed hosted-audio timing flake in the unchanged stem-alignment test. Its retry passed the model-backed unit gate and packaged the release. This does not establish timing behavior on every output device.
 
 Both GitHub release files were downloaded and matched `SHA256SUMS.txt`. The DMG passed `hdiutil verify`, the ZIP passed `unzip -t`, and their extracted app bundles matched byte for byte. Both app signatures passed `codesign --verify --deep --strict`. The mounted DMG contains the Applications shortcut, icon, Finder artwork, and bundled separation model; its app reports version 1.3.1, minimum macOS 14.0, and arm64. Distribution remains ad-hoc signed and **not notarized**. Fresh browser-download Gatekeeper approval on macOS 14/15 and physical audio-device switching still need independent checks before a broad social announcement.
 
