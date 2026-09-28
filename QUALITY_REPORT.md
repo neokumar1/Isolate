@@ -1,12 +1,27 @@
-# Verification report — v1.3.0
+# Verification report — v1.3.1
+
+## September 27 v1.3.1 publication
+
+The [v1.3.1 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.1) is public Latest. It adds measured import-time estimates, on-device BPM/key analysis for untagged audio, and a native macOS About panel. On a physical Apple silicon Mac running macOS 27, the model-required unit suite passed **203 tests** with **1 optional real-music test skipped**; the interactive UI suite passed **7 tests**. [Branch CI](https://github.com/neokumar1/Isolate/actions/runs/36347658315) passed on macOS 15 and 26. The first attempt of the [tagged release workflow](https://github.com/neokumar1/Isolate/actions/runs/36360245853) hit the previously observed hosted-audio timing flake in the unchanged stem-alignment test. Its retry passed the model-backed unit gate and packaged the release. This does not establish timing behavior on every output device.
+
+Both GitHub release files were downloaded and matched `SHA256SUMS.txt`. The DMG passed `hdiutil verify`, the ZIP passed `unzip -t`, and their extracted app bundles matched byte for byte. Both app signatures passed `codesign --verify --deep --strict`. The mounted DMG contains the Applications shortcut, icon, Finder artwork, and bundled separation model; its app reports version 1.3.1, minimum macOS 14.0, and arm64. Distribution remains ad-hoc signed and **not notarized**. Fresh browser-download Gatekeeper approval on macOS 14/15 and physical audio-device switching still need independent checks before a broad social announcement.
+
+Published artifact SHA-256:
+
+```text
+2524a330ceba0878b97eaee1d9de60728dfd94cc30f16359d94f222a340a7b5d  Isolate.dmg
+ed7d821b87d1fee451890ced2c52d90a97b7ed753f79d924c76428f7892d6a4a  Isolate-v1.3.1-macOS.zip
+```
+
+## v1.3.0 history
 
 Verified September 25–27, 2026. Local results are from an Apple silicon MacBook Pro running macOS 27.0 with Xcode 27.0. Hosted results are from GitHub Actions `macos-15` (macOS 15.7, Xcode 26.3) and `macos-26` (macOS 26.6, Xcode 26.6) runners, which fetch the pinned model (`model-htdemucs-v1`, SHA-256 `c497133349d2396a2e865827255d9ceeecc8ce0bee6e25febcac7b04187adc37`). The historical audit notes below are retained from the previous handoff. [Run 36275537518](https://github.com/neokumar1/Isolate/actions/runs/36275537518) passed both hosted jobs after the audio fixes; the installer-artwork and instructions were then checked locally.
 
-## September 27 publication
+## September 27 v1.3.0 publication
 
 The release branch was merged to `main` at `b7dd394b2dbed79bab52e8c8b64fef10eff7c0e9`; [the merged CI run](https://github.com/neokumar1/Isolate/actions/runs/36337596572) passed on macOS 15 and 26. The first attempt of [the tagged release run](https://github.com/neokumar1/Isolate/actions/runs/36338458602) failed one live stem-alignment test on the hosted macOS 26 virtual audio output: two waveform readings were 0.416 and 0.389 against the test's 0.06 maximum. The retry passed all release tests, including actual model inference, and packaged the release. The same Debug alignment test also passed five fresh-process repetitions on a physical macOS 27 Mac with no failures or skips. This supports a host-dependent timing failure, but does not establish that every output device is unaffected.
 
-The published [v1.3.0 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.0) is public Latest. Its artifacts were downloaded from the GitHub draft and checked before publication: both SHA-256 values matched, the DMG and ZIP passed integrity checks, their app bundles were identical, and both app signatures passed `codesign --verify --deep --strict`. The mounted DMG contained the Applications shortcut, Finder layout, bundled model and licenses; its Finder window was inspected with the status bar visible. The app reports version 1.3.0, minimum macOS 14.0, arm64, and an ad-hoc hardened-runtime signature. An unauthenticated request to the public Latest DMG URL resolved to HTTP 200 after the expected redirect. The release remains **not notarized**.
+The published [v1.3.0 release](https://github.com/neokumar1/Isolate/releases/tag/v1.3.0) was public Latest at the time. Its artifacts were downloaded from the GitHub draft and checked before publication: both SHA-256 values matched, the DMG and ZIP passed integrity checks, their app bundles were identical, and both app signatures passed `codesign --verify --deep --strict`. The mounted DMG contained the Applications shortcut, Finder layout, bundled model and licenses; its Finder window was inspected with the status bar visible. The app reports version 1.3.0, minimum macOS 14.0, arm64, and an ad-hoc hardened-runtime signature. An unauthenticated request to the public Latest DMG URL resolved to HTTP 200 after the expected redirect. The release remains **not notarized**.
 
 Published artifact sizes: DMG **160,864,073 bytes**, ZIP **148,389,197 bytes**. SHA-256:
 

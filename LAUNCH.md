@@ -1,10 +1,10 @@
-# Isolate 1.3.0 launch kit
+# Isolate 1.3.1 launch kit
 
-Prepared September 26, 2026; the v1.3.0 GitHub release was published September 27. The copy below is for review before posting to social media.
+Updated September 27, 2026 for the v1.3.1 GitHub release. The copy below is for review before posting to social media.
 
 ## Before announcing
 
-The public [Latest release](https://github.com/neokumar1/Isolate/releases/latest) is **v1.3.0** and bundles the separation model. Its DMG, ZIP, checksums and Finder installation window were verified after download. The repository's Homebrew cask now uses the published DMG's checksum. Before a social announcement, complete the remaining physical-Mac and fresh-download checks in [QUALITY_REPORT.md](QUALITY_REPORT.md).
+The public [Latest release](https://github.com/neokumar1/Isolate/releases/latest) is **v1.3.1** and bundles the separation model. Its DMG and ZIP were downloaded and checked against the published checksums; the app signatures, model and install layout were verified. The repository's Homebrew cask uses the published DMG's checksum. Before a social announcement, complete the remaining physical-Mac and first-launch checks in [QUALITY_REPORT.md](QUALITY_REPORT.md).
 
 The app targets Apple silicon and macOS 14+, with macOS 26+ recommended for separation. Some older macOS compute paths fail the model's built-in check. Distribution is ad-hoc signed and requires first-launch approval; no Developer ID signing or notarization is claimed. Remaining verification limits are recorded in [QUALITY_REPORT.md](QUALITY_REPORT.md).
 
@@ -18,7 +18,7 @@ The separation runs locally on your Mac with HTDemucs through Core ML. No accoun
 
 I wanted it to feel like a piece of studio hardware: dot-matrix type, four channel strips, tactile controls, and Nothing-inspired dark and light themes.
 
-Isolate 1.3.0 is free and open source. Apple silicon required; macOS 26 or later recommended. The download includes the model. This independent project is not affiliated with Nothing or Apple.
+Isolate 1.3.1 is free and open source. Apple silicon required; macOS 26 or later recommended. The download includes the model. This independent project is not affiliated with Nothing or Apple.
 
 Download and first-launch instructions: https://github.com/neokumar1/Isolate
 
