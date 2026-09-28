@@ -114,6 +114,12 @@ func createAppIcon() throws {
         if spec.pixelSize == 1024 {
             let data = try Data(contentsOf: iconsetDir.appendingPathComponent(spec.name))
             try data.write(to: URL(fileURLWithPath: "Assets/AppIcon-macOS27.png"), options: .atomic)
+            _ = try run(renderer.path, [
+                URL(fileURLWithPath: "Sources/Resources/AppIcon.icon").path,
+                "--export-image", "--output-file", URL(fileURLWithPath: "Assets/AppIcon-macOS27-Dark.png").path,
+                "--platform", "macOS", "--rendition", "Dark",
+                "--width", "1024", "--height", "1024", "--scale", "1", "--design-generation", "27"
+            ])
         }
     }
 
@@ -127,7 +133,7 @@ func createAppIcon() throws {
     let data = try Data(contentsOf: temporaryIcon)
     try data.write(to: URL(fileURLWithPath: "Assets/AppIcon.icns"), options: .atomic)
     try data.write(to: URL(fileURLWithPath: "Sources/Resources/AppIcon.icns"), options: .atomic)
-    print("Generated macOS 27 icon preview and legacy/DMG ICNS from AppIcon.icon")
+    print("Generated light/dark macOS 27 icon previews and legacy/DMG ICNS from AppIcon.icon")
 }
 
 @discardableResult

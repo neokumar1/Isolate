@@ -1,7 +1,23 @@
 {
-  "fill": {
-    "automatic-gradient": "srgb:0.07059,0.07059,0.07843,1.00000"
-  },
+  "fill-specializations": [
+    {
+      "value": {
+        "automatic-gradient": "srgb:0.96078,0.96078,0.96078,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "automatic-gradient": "srgb:0.07059,0.07059,0.07843,1.00000"
+      }
+    },
+    {
+      "appearance": "tinted",
+      "value": {
+        "automatic-gradient": "srgb:0.07059,0.07059,0.07843,1.00000"
+      }
+    }
+  ],
   "groups": [
     {
       "layers": [
@@ -10,6 +26,17 @@
           "name": "01 Vocals",
           "glass": true,
           "fill-specializations": [
+            {
+              "value": {
+                "solid": "srgb:0.07059,0.07059,0.07843,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.96078,0.96078,0.96078,1.00000"
+              }
+            },
             {
               "appearance": "tinted",
               "value": {
@@ -49,6 +76,17 @@
           "name": "04 Other",
           "glass": true,
           "fill-specializations": [
+            {
+              "value": {
+                "solid": "srgb:0.07059,0.07059,0.07843,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.96078,0.96078,0.96078,1.00000"
+              }
+            },
             {
               "appearance": "tinted",
               "value": {

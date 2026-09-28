@@ -2,6 +2,10 @@
 
 User-visible changes to Isolate, newest first. Release downloads are on [GitHub Releases](https://github.com/neokumar1/Isolate/releases).
 
+## [1.3.2]
+
+- The app icon now follows the macOS icon appearance. In Light appearance, the cover uses the same warm off-white as the former outer stems, those stems use the former charcoal cover color, and the two middle stems stay red. Dark appearance keeps the original charcoal cover and white outer stems. The layered shape, spacing, depth, and tinted rendition remain the same.
+
 ## [1.3.1]
 
 - Untagged songs now get on-device BPM and musical-key analysis after import. Tagged values remain authoritative, and silent or ambiguous audio stays unknown. The displayed BPM follows playback speed, while the displayed key follows semitone changes.

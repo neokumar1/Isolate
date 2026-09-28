@@ -30,11 +30,11 @@ UI tests take over the mouse and keyboard, so run them on a logged-in desktop yo
 
 ## Version
 
-`project.yml` is the source of truth. Set `CFBundleShortVersionString` and `CFBundleVersion` there (1.3.1 uses `1.3.1` for both), run `xcodegen generate`, and commit the regenerated `Info.plist`. Add a `## [x.y.z]` section to [CHANGELOG.md](CHANGELOG.md); the release notes are built from it. Then check that everything agrees with the tag you intend to push:
+`project.yml` is the source of truth. Set `CFBundleShortVersionString` and `CFBundleVersion` there (1.3.2 uses `1.3.2` for both), run `xcodegen generate`, and commit the regenerated `Info.plist`. Add a `## [x.y.z]` section to [CHANGELOG.md](CHANGELOG.md); the release notes are built from it. Then check that everything agrees with the tag you intend to push:
 
 ```sh
-bash scripts/check_version.sh v1.3.1
-bash scripts/release_notes.sh v1.3.1
+bash scripts/check_version.sh v1.3.2
+bash scripts/release_notes.sh v1.3.2
 ```
 
 Never reuse a tag or overwrite a published version's artifacts.
@@ -44,7 +44,7 @@ Never reuse a tag or overwrite a published version's artifacts.
 ```sh
 ISOLATE_DIST_DIR=/private/tmp/IsolateReleaseCheck \
 ISOLATE_MODEL_PATH="$HOME/Library/Application Support/Isolate/HTDemucs.mlmodelc" \
-  bash scripts/package_release.sh v1.3.1
+  bash scripts/package_release.sh v1.3.2
 ```
 
 The script stops before building if the tag, `project.yml` and `Info.plist` disagree. It then validates the reference model, builds Release for arm64 in a temporary directory, checks the built app's version, bundles the model (the licenses are app resources), signs the app with the hardened runtime and verifies the signature, and builds the DMG. The DMG is created writable so its volume can carry the custom-icon flag, then compressed and verified. The script remounts the finished image to check its Applications shortcut, Finder artwork, bundled model and app signature. It writes `Isolate.dmg`, `Isolate-<tag>-macOS.zip` and `SHA256SUMS.txt` to the dist directory. It does not install, commit, tag, push, or publish anything. For v1.3.0 on the development Mac it produced a 160 MB DMG, a 148 MB ZIP and a 313 MB app (decimal megabytes, as Finder reports them).
@@ -53,7 +53,7 @@ Default signing is ad hoc, now with the hardened runtime. For Developer ID distr
 
 The app icon's source is `Sources/Resources/AppIcon.icon`, with four SVG layers and system-rendered materials. Xcode compiles its layered representations and generates the compatibility ICNS for older macOS versions. `CFBundleIconName` and the app-icon build setting both name `AppIcon`; the separately tracked legacy ICNS is excluded from the app resource phase to avoid duplicate outputs.
 
-With **Xcode 27 selected**, run `swift scripts/generate_assets.swift` from the repository root to regenerate the macOS 27 preview, the DMG/legacy ICNS files at 16–1024 px, and the 144-dpi DMG background. Use `swift scripts/generate_assets.swift --dmg-only` while iterating on the install artwork. Commit `Assets/AppIcon-macOS27.png`, `Assets/AppIcon.icns`, `Sources/Resources/AppIcon.icns`, and `Assets/dmg_background.png` together with icon source changes. Ordinary builds use the committed sources and do not run this generator. See [Apple's Icon Composer guidance](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
+With **Xcode 27 selected**, run `swift scripts/generate_assets.swift` from the repository root to regenerate the light and dark macOS 27 previews, the DMG/legacy ICNS files at 16–1024 px, and the 144-dpi DMG background. Use `swift scripts/generate_assets.swift --dmg-only` while iterating on the install artwork. Commit `Assets/AppIcon-macOS27.png`, `Assets/AppIcon-macOS27-Dark.png`, `Assets/AppIcon.icns`, `Sources/Resources/AppIcon.icns`, and `Assets/dmg_background.png` together with icon source changes. The ICNS is the light-appearance fallback on older systems; Xcode compiles the light, dark, and tinted layered renditions for supported systems. Ordinary builds use the committed sources and do not run this generator. See [Apple's Icon Composer guidance](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
 
 ## GitHub Actions
 

@@ -12,7 +12,7 @@ Isolate is a native macOS stem player for Apple silicon. It runs HTDemucs, the o
 
 **[Download Isolate.dmg](https://github.com/neokumar1/Isolate/releases/latest/download/Isolate.dmg)** · [Release notes and other files](https://github.com/neokumar1/Isolate/releases/latest) · Apple silicon · macOS 14 or later · Free and open source (MIT)
 
-The current v1.3.1 release includes the separation model. Earlier 1.2.x releases do not.
+The current v1.3.2 release includes the separation model. Earlier 1.2.x releases do not.
 
 ## Download
 
